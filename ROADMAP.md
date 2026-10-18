@@ -1,6 +1,6 @@
 # Open PDF Editor Roadmap
 
-Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends with a tested, notarised GitHub release (`make release`). After each phase, work stops until the go-ahead for the next. Tick items as they land, and note anything deferred or changed under the item.
+Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, machine setup and release process. Work goes phase by phase. Each phase from 1 onwards ends with a tested, notarised GitHub release (`make release`). After each phase, work stops until the go-ahead for the next. Tick items as they land, and note anything deferred or changed under the item.
 
 ## Decisions
 

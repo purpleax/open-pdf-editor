@@ -22,7 +22,7 @@ A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.c
 
 ## Download
 
-Releases will appear on the [Releases page](https://github.com/purpleax/open-pdf-editor/releases) as a signed and notarised DMG. Once installed, the app updates itself.
+Download the latest DMG from the [Releases page](https://github.com/purpleax/open-pdf-editor/releases). It is signed and notarised, and once installed the app updates itself.
 
 ## Building from source
 
@@ -45,14 +45,17 @@ Other targets:
 | Command | What it does |
 | --- | --- |
 | `make test` | Generates the test PDFs and runs the engine and layout tests |
-| `make selftest` | Builds a separate test copy of the app and runs it through annotating, saving snapshots to `build/selftest` |
+| `make selftest` | Builds a separate test copy of the app and runs it through annotating and page management, saving a log and snapshots to `build/selftest` |
 | `make smoke PDF=file.pdf` | Renders page 1 of a PDF to `build/smoke.png` with MuPDF |
 | `make install` | Copies the app to /Applications |
 | `make dmg` | Builds the DMG and zip in `dist/`, notarised when signing is set up |
 | `make release VERSION=x.y.z` | Publishes a release and updates the appcast (maintainers) |
+| `make hooks` | Uses the repository's git hooks (pushes to `main` go through `make release`) |
 | `make distclean` | Removes all build output, including MuPDF's |
 
 ## Project layout
+
+[DEVELOPMENT.md](DEVELOPMENT.md) covers setting up a Mac (including for releases), how the code fits together, the rules that keep it safe, testing and releasing.
 
 | Path | Contents |
 | --- | --- |
