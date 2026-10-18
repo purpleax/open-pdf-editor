@@ -46,11 +46,28 @@ public final class EngineDocument: @unchecked Sendable {
     }
 
     public var isPDF: Bool { opdf_is_pdf(handle) }
-    public var needsPassword: Bool { opdf_needs_password(handle) }
+
+    private let unlockLock = NSLock()
+    private var unlocked = false
+
+    /// True until the document is unlocked. (MuPDF answers this by trying an
+    /// empty password, so it isn't asked again once a password has worked.)
+    public var needsPassword: Bool {
+        unlockLock.withLock {
+            if unlocked { return false }
+            let needs = opdf_needs_password(handle)
+            if !needs { unlocked = true }
+            return needs
+        }
+    }
 
     /// True when the password unlocks the document.
     public func authenticate(password: String) -> Bool {
-        opdf_authenticate(handle, password)
+        unlockLock.withLock {
+            let ok = opdf_authenticate(handle, password)
+            if ok { unlocked = true }
+            return ok
+        }
     }
 
     public func pageCount() throws -> Int {

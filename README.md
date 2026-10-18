@@ -2,13 +2,15 @@
 
 A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.com) engine. It aims to cover what commercial editors such as Foxit PDF Editor do: viewing, annotation, forms, page management, editing, redaction, signing and OCR, in a native macOS app.
 
-**Status:** version 0.1.0 is a viewer. Annotation, forms, page management and editing follow phase by phase: see [ROADMAP.md](ROADMAP.md) for the plan and [SPEC.md](SPEC.md) for the full feature list.
+**Status:** version 0.2.0 views and annotates PDFs. Page management, forms and editing follow phase by phase: see [ROADMAP.md](ROADMAP.md) for the plan and [SPEC.md](SPEC.md) for the full feature list.
 
 ## What it does today
 
 - Sharp rendering at any zoom, with continuous, single-page and two-page layouts, Fit Width, Fit Page and rotation
 - Thumbnails, outline, search results, attachments and layers in the sidebar; document properties in the inspector
 - Find with highlighted matches, text selection and copy, links, Back and Forward
+- Highlights, underlines, strikethroughs, notes, text boxes, shapes, arrows, freehand drawing and stamps, with a Comments list for replies and review status
+- Undo that survives saving; autosave with Versions; saves keep digital signatures valid
 - Password-protected PDFs, printing, window tabs, full screen, Dark Mode and VoiceOver
 - Automatic updates
 
@@ -42,6 +44,7 @@ Other targets:
 | Command | What it does |
 | --- | --- |
 | `make test` | Generates the test PDFs and runs the engine and layout tests |
+| `make selftest` | Builds a separate test copy of the app and runs it through annotating, saving snapshots to `build/selftest` |
 | `make smoke PDF=file.pdf` | Renders page 1 of a PDF to `build/smoke.png` with MuPDF |
 | `make install` | Copies the app to /Applications |
 | `make dmg` | Builds the DMG and zip in `dist/`, notarised when signing is set up |

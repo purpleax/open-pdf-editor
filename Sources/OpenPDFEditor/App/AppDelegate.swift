@@ -19,7 +19,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // There are no untitled PDFs: when the app starts (or is reopened from
     // the Dock) with no documents, show the Open panel instead, as Preview does.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
-        true
+        #if SELFTEST
+        if ProcessInfo.processInfo.environment["OPDF_SELFTEST"] != nil { return false }
+        #endif
+        return true
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if SELFTEST
+        SelfTest.run()
+        #endif
     }
 
     func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {

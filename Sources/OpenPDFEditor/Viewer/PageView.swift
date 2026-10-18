@@ -23,6 +23,9 @@ final class PageView: NSView {
     private let searchLayer = CAShapeLayer()
     private let currentMatchLayer = CAShapeLayer()
     private let selectionLayer = CAShapeLayer()
+    private let draftLayer = CAShapeLayer()
+    private let outlineLayer = CAShapeLayer()
+    private let handleLayer = CAShapeLayer()
 
     private var tileLayers: [RenderKey: CALayer] = [:]
     private var tickets: [RenderKey: RenderTicket] = [:]
@@ -56,6 +59,18 @@ final class PageView: NSView {
             if multiply { shape.compositingFilter = "multiplyBlendMode" }
             layer.addSublayer(shape)
         }
+        // Annotation editing: a shape being drawn, and the selection outline and grips.
+        for shape in [draftLayer, outlineLayer, handleLayer] {
+            shape.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull(), "strokeColor": NSNull(), "lineWidth": NSNull()]
+            shape.fillColor = nil
+            shape.zPosition = 10
+            layer.addSublayer(shape)
+        }
+        outlineLayer.lineDashPattern = [4, 3]
+        outlineLayer.lineWidth = 1
+        handleLayer.fillColor = NSColor.white.cgColor
+        handleLayer.lineWidth = 1
+        applyAccentColor()
     }
 
     @available(*, unavailable)
@@ -69,7 +84,7 @@ final class PageView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for sub in [previewLayer, tileContainer, searchLayer, currentMatchLayer, selectionLayer] {
+        for sub in [previewLayer, tileContainer, searchLayer, currentMatchLayer, selectionLayer, draftLayer, outlineLayer, handleLayer] {
             sub.frame = bounds
         }
         CATransaction.commit()
@@ -80,7 +95,15 @@ final class PageView: NSView {
     @discardableResult
     func configure(page: Int, rotation: Int, revision: Int) -> Bool {
         guard page != self.page || rotation != self.rotation || revision != self.revision else { return false }
-        clear()
+        if page == self.page && rotation == self.rotation {
+            // The same page, redrawn after an edit: keep showing the old
+            // images until the new ones arrive, so nothing flickers.
+            previewTicket?.cancel()
+            for ticket in tickets.values { ticket.cancel() }
+            tickets.removeAll()
+        } else {
+            clear()
+        }
         self.page = page
         self.rotation = rotation
         self.revision = revision
@@ -110,6 +133,9 @@ final class PageView: NSView {
         searchLayer.path = nil
         currentMatchLayer.path = nil
         selectionLayer.path = nil
+        draftLayer.path = nil
+        outlineLayer.path = nil
+        handleLayer.path = nil
         CATransaction.commit()
         currentLevel = nil
         page = -1
@@ -195,8 +221,8 @@ final class PageView: NSView {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for (key, layer) in tileLayers {
-            guard case let .tile(_, level, _, _, _, _) = key else { continue }
-            let isCurrent = level == currentLevel
+            guard case let .tile(_, level, _, _, _, revision) = key else { continue }
+            let isCurrent = level == currentLevel && revision == self.revision
             let drop: Bool
             if isCurrent {
                 drop = needed.map { !$0.contains(key) } ?? false
@@ -232,10 +258,52 @@ final class PageView: NSView {
         return path
     }
 
+    // MARK: Annotation editing
+
+    /// The selected annotation's outline and grips (page space), or none.
+    /// `zoom` keeps the grips the same size on screen.
+    func setAnnotationSelection(outline: CGPath?, handles: [CGPoint], transform: CGAffineTransform, zoom: CGFloat) {
+        var t = transform
+        outlineLayer.path = outline?.copy(using: &t)
+        guard !handles.isEmpty else {
+            handleLayer.path = nil
+            return
+        }
+        let size = 7 / max(zoom, 0.05)
+        let path = CGMutablePath()
+        for point in handles {
+            let p = point.applying(transform)
+            path.addRect(CGRect(x: p.x - size / 2, y: p.y - size / 2, width: size, height: size))
+        }
+        handleLayer.path = path
+        outlineLayer.lineWidth = 1 / max(zoom, 0.05)
+        handleLayer.lineWidth = 1 / max(zoom, 0.05)
+        outlineLayer.lineDashPattern = [NSNumber(value: 4 / max(zoom, 0.05)), NSNumber(value: 3 / max(zoom, 0.05))]
+    }
+
+    /// A shape being drawn or moved (page space), in the tool's colour.
+    func setDraft(_ path: CGPath?, color: NSColor, lineWidth: CGFloat, transform: CGAffineTransform, dashed: Bool = false) {
+        var t = transform
+        draftLayer.path = path?.copy(using: &t)
+        draftLayer.strokeColor = color.cgColor
+        draftLayer.lineWidth = max(lineWidth, 0.5)
+        draftLayer.lineDashPattern = dashed ? [4, 3] : nil
+        draftLayer.lineCap = .round
+        draftLayer.lineJoin = .round
+    }
+
+    private func applyAccentColor() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            outlineLayer.strokeColor = NSColor.controlAccentColor.cgColor
+            handleLayer.strokeColor = NSColor.controlAccentColor.cgColor
+        }
+    }
+
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         effectiveAppearance.performAsCurrentDrawingAppearance {
             selectionLayer.fillColor = NSColor.selectedTextBackgroundColor.withAlphaComponent(0.6).cgColor
         }
+        applyAccentColor()
     }
 }

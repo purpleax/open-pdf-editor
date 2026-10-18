@@ -3,7 +3,7 @@ import Foundation
 import MuPDFBridge
 
 /// An RGB colour with components from 0 to 1.
-public struct RGBColor: Equatable, Hashable, Sendable {
+public struct PDFColor: Equatable, Hashable, Sendable {
     public var red, green, blue: CGFloat
     public init(red: CGFloat, green: CGFloat, blue: CGFloat) {
         self.red = red
@@ -11,11 +11,11 @@ public struct RGBColor: Equatable, Hashable, Sendable {
         self.blue = blue
     }
 
-    public static let yellow = RGBColor(red: 1, green: 0.85, blue: 0)
-    public static let red = RGBColor(red: 0.9, green: 0.1, blue: 0.1)
-    public static let green = RGBColor(red: 0.1, green: 0.65, blue: 0.2)
-    public static let blue = RGBColor(red: 0.1, green: 0.35, blue: 0.9)
-    public static let black = RGBColor(red: 0, green: 0, blue: 0)
+    public static let yellow = PDFColor(red: 1, green: 0.85, blue: 0)
+    public static let red = PDFColor(red: 0.9, green: 0.1, blue: 0.1)
+    public static let green = PDFColor(red: 0.1, green: 0.65, blue: 0.2)
+    public static let blue = PDFColor(red: 0.1, green: 0.35, blue: 0.9)
+    public static let black = PDFColor(red: 0, green: 0, blue: 0)
 }
 
 /// An annotation as the PDF has it. Geometry is in page space.
@@ -62,8 +62,8 @@ public struct Annotation: Equatable, Sendable, Identifiable {
     public let id: Int
     public var kind: Kind
     public var rect: CGRect
-    public var color: RGBColor?
-    public var interiorColor: RGBColor?
+    public var color: PDFColor?
+    public var interiorColor: PDFColor?
     public var opacity: CGFloat
     public var borderWidth: CGFloat
     public var flags: Int
@@ -85,7 +85,7 @@ public struct Annotation: Equatable, Sendable, Identifiable {
     public var line: (CGPoint, CGPoint)?
     public var lineEndings: (start: LineEnding, end: LineEnding)
     public var fontSize: CGFloat
-    public var textColor: RGBColor?
+    public var textColor: PDFColor?
 
     public static func == (a: Annotation, b: Annotation) -> Bool {
         a.page == b.page && a.id == b.id && a.kind == b.kind && a.rect == b.rect && a.color == b.color
@@ -102,13 +102,13 @@ public struct Annotation: Equatable, Sendable, Identifiable {
     init(page: Int, _ a: opdf_annot) {
         // Rounded, so colours written from Double come back equal.
         func r(_ v: Float) -> CGFloat { CGFloat((Double(v) * 10000).rounded() / 10000) }
-        func color(_ n: Int32, _ c: (Float, Float, Float, Float)) -> RGBColor? {
+        func color(_ n: Int32, _ c: (Float, Float, Float, Float)) -> PDFColor? {
             switch n {
-            case 1: RGBColor(red: r(c.0), green: r(c.0), blue: r(c.0))
-            case 3: RGBColor(red: r(c.0), green: r(c.1), blue: r(c.2))
+            case 1: PDFColor(red: r(c.0), green: r(c.0), blue: r(c.0))
+            case 3: PDFColor(red: r(c.0), green: r(c.1), blue: r(c.2))
             case 4:
                 // CMYK, roughly.
-                RGBColor(red: CGFloat((1 - c.0) * (1 - c.3)), green: CGFloat((1 - c.1) * (1 - c.3)),
+                PDFColor(red: CGFloat((1 - c.0) * (1 - c.3)), green: CGFloat((1 - c.1) * (1 - c.3)),
                          blue: CGFloat((1 - c.2) * (1 - c.3)))
             default: nil
             }
@@ -165,8 +165,8 @@ public struct AnnotationChange: Sendable {
     public var kind: Annotation.Kind
     public var rect: CGRect?
     /// Set to `.some(nil)` to remove the colour.
-    public var color: RGBColor??
-    public var interiorColor: RGBColor??
+    public var color: PDFColor??
+    public var interiorColor: PDFColor??
     public var opacity: CGFloat?
     public var borderWidth: CGFloat?
     public var contents: String?
@@ -176,7 +176,7 @@ public struct AnnotationChange: Sendable {
     public var ink: [[CGPoint]]?
     public var line: (CGPoint, CGPoint)?
     public var lineEndings: (Annotation.LineEnding, Annotation.LineEnding)?
-    public var font: (size: CGFloat, color: RGBColor)?
+    public var font: (size: CGFloat, color: PDFColor)?
 
     public init(kind: Annotation.Kind) {
         self.kind = kind
@@ -280,7 +280,7 @@ extension EngineDocument {
             spec.rect = opdf_rect(rect)
             fields |= UInt32(OPDF_FIELD_RECT)
         }
-        func rgb(_ c: RGBColor?) -> (Int32, (Float, Float, Float)) {
+        func rgb(_ c: PDFColor?) -> (Int32, (Float, Float, Float)) {
             guard let c else { return (0, (0, 0, 0)) }
             return (3, (Float(c.red), Float(c.green), Float(c.blue)))
         }

@@ -21,6 +21,8 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     let find: FindController
     let scrollView = NSScrollView()
     let pagesView: PagesView
+    let annotations: AnnotationController
+    private var editor: AnnotationEditor?
 
     static let minZoom: CGFloat = 0.1
     static let maxZoom: CGFloat = 32
@@ -39,12 +41,25 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     var onStateChange: (() -> Void)?
     /// Called when the text selection changes.
     var onSelectionChange: (() -> Void)?
+    /// Called when the selected annotation changes.
+    var onAnnotationSelectionChange: ((AnnotationRef?) -> Void)?
+    /// Called when the tool changes (a one-off tool going back to Select).
+    var onToolChange: ((AnnotationTool) -> Void)?
+
+    var tool: AnnotationTool {
+        get { pagesView.tool }
+        set {
+            pagesView.tool = newValue
+            onToolChange?(newValue)
+        }
+    }
 
     init(model: DocumentModel) {
         self.model = model
         renderer = TileRenderer(model: model)
         find = FindController(model: model)
         pagesView = PagesView(model: model, renderer: renderer)
+        annotations = AnnotationController(model: model)
         displayMode = Self.savedDisplayMode
         super.init(nibName: nil, bundle: nil)
     }
@@ -68,6 +83,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
         scrollView.borderType = .noBorder
         view = scrollView
         pagesView.delegate = self
+        pagesView.annotations = annotations
         pagesView.accessibilityPages.focusHandler = { [weak self] page in
             guard let self, !self.isVisible(page: page) else { return }
             self.go(to: ViewLocation(page: page), record: false)
@@ -96,12 +112,19 @@ final class ViewerController: NSViewController, PagesViewDelegate {
                 }
             }
         }
+        center.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.pagesView.updateVisible()
+                self.pagesView.refreshAnnotationSelection()
+            }
+        }
         center.addObserver(forName: DocumentModel.renderingDidChange, object: model, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.renderer.reset()
                 self.pagesView.selection = nil
-                self.pagesView.reloadPages(revision: self.model.revision)
+                self.pagesView.reloadPages()
             }
         }
         find.onChange = { [weak self] in
@@ -158,7 +181,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
 
     private func relayout() {
         let layout = PageLayout(sizes: pageSizes, mode: displayMode, spread: shownSpread)
-        pagesView.apply(layout: layout, rotation: rotation, revision: model.revision)
+        pagesView.apply(layout: layout, rotation: rotation)
     }
 
     private var layout: PageLayout { pagesView.layout }
@@ -486,6 +509,44 @@ final class ViewerController: NSViewController, PagesViewDelegate {
         } else {
             step(pages: offset)
         }
+    }
+
+    func pagesView(_ view: PagesView, didSelect annotation: AnnotationRef?) {
+        onAnnotationSelectionChange?(annotation)
+    }
+
+    func pagesView(_ view: PagesView, edit annotation: AnnotationRef) {
+        editAnnotation(annotation)
+    }
+
+    func pagesView(_ view: PagesView, didUse tool: AnnotationTool) {
+        self.tool = .select
+    }
+
+    // MARK: Annotations
+
+    /// Opens the popover for an annotation's text.
+    func editAnnotation(_ ref: AnnotationRef) {
+        guard let a = annotations.annotation(ref), let rect = pagesView.convert(a.rect, fromPage: ref.page) else { return }
+        // Make sure it's on screen first.
+        if !visibleArea.intersects(rect) { go(to: ViewLocation(page: ref.page, point: a.rect.origin), record: true) }
+        editor?.close()
+        let editor = AnnotationEditor(ref: ref, controller: annotations)
+        self.editor = editor
+        editor.show(relativeTo: pagesView.convert(a.rect, fromPage: ref.page) ?? rect, of: pagesView) { [weak self, weak editor] in
+            if self?.editor === editor { self?.editor = nil }
+        }
+    }
+
+    /// Selects an annotation and shows it.
+    func reveal(_ ref: AnnotationRef) {
+        guard let a = annotations.annotation(ref) else { return }
+        if let viewRect = pagesView.convert(a.rect, fromPage: ref.page), !visibleArea.insetBy(dx: 10, dy: 10).contains(viewRect) {
+            go(to: ViewLocation(page: ref.page, point: CGPoint(x: a.rect.minX - 20, y: a.rect.minY - 40)), record: true)
+        }
+        if tool != .select { tool = .select }
+        pagesView.selectedAnnotation = ref
+        view.window?.makeFirstResponder(pagesView)
     }
 
     func pagesView(_ view: PagesView, goToEnd end: Bool) {

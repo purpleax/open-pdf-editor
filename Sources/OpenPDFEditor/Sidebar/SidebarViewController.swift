@@ -2,13 +2,14 @@ import AppKit
 import PDFCore
 
 enum SidebarTab: Int, CaseIterable {
-    case thumbnails, outline, search, attachments, layers
+    case thumbnails, outline, search, comments, attachments, layers
 
     var title: String {
         switch self {
         case .thumbnails: "Thumbnails"
         case .outline: "Outline"
         case .search: "Search Results"
+        case .comments: "Comments"
         case .attachments: "Attachments"
         case .layers: "Layers"
         }
@@ -19,6 +20,7 @@ enum SidebarTab: Int, CaseIterable {
         case .thumbnails: "square.grid.2x2"
         case .outline: "list.bullet.indent"
         case .search: "magnifyingglass"
+        case .comments: "text.bubble"
         case .attachments: "paperclip"
         case .layers: "square.3.layers.3d"
         }
@@ -36,6 +38,7 @@ final class SidebarViewController: NSViewController {
     private(set) lazy var thumbnails = ThumbnailsViewController(viewer: viewer)
     private(set) lazy var outline = OutlineViewController(viewer: viewer)
     private(set) lazy var searchResults = SearchResultsViewController(viewer: viewer)
+    private(set) lazy var comments = CommentsViewController(viewer: viewer)
     private(set) lazy var attachments = AttachmentsViewController(model: viewer.model)
     private(set) lazy var layers = LayersViewController(model: viewer.model)
 
@@ -57,7 +60,7 @@ final class SidebarViewController: NSViewController {
         for tab in SidebarTab.allCases {
             tabs.setImage(NSImage(systemSymbolName: tab.symbol, accessibilityDescription: tab.title), forSegment: tab.rawValue)
             tabs.setToolTip(tab.title, forSegment: tab.rawValue)
-            tabs.setWidth(32, forSegment: tab.rawValue)
+            tabs.setWidth(28, forSegment: tab.rawValue)
         }
         tabs.target = self
         tabs.action = #selector(tabChanged(_:))
@@ -105,6 +108,7 @@ final class SidebarViewController: NSViewController {
         case .thumbnails: thumbnails
         case .outline: outline
         case .search: searchResults
+        case .comments: comments
         case .attachments: attachments
         case .layers: layers
         }
@@ -127,6 +131,15 @@ final class SidebarViewController: NSViewController {
 
     func findDidChange() {
         searchResults.reload()
+    }
+
+    func pagesDidChange(_ pages: Set<Int>?) {
+        comments.reload(pages: pages)
+        thumbnails.reload(pages: pages)
+    }
+
+    func annotationSelectionDidChange(_ ref: AnnotationRef?) {
+        comments.select(ref)
     }
 }
 

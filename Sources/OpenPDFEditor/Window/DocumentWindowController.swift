@@ -9,6 +9,7 @@ private extension NSToolbarItem.Identifier {
     static let displayMode = Self("DisplayMode")
     static let rotate = Self("Rotate")
     static let search = Self("Search")
+    static let markup = Self("Markup")
 }
 
 /// A document window: sidebar, pages and inspector in a split view, with a
@@ -16,12 +17,14 @@ private extension NSToolbarItem.Identifier {
 @MainActor
 final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate,
     NSMenuItemValidation, NSToolbarItemValidation, NSSearchFieldDelegate, NSTextFieldDelegate {
-    private var viewer: ViewerController?
-    private var sidebar: SidebarViewController?
-    private var inspector: DocumentInfoViewController?
+    private(set) var viewer: ViewerController?
+    private(set) var sidebar: SidebarViewController?
+    private(set) var inspector: InspectorViewController?
+    private let markupBar = MarkupBarViewController()
+    private var markupAccessory: NSTitlebarAccessoryViewController?
     private var split: NSSplitViewController?
     private var sidebarItem: NSSplitViewItem?
-    private var inspectorItem: NSSplitViewItem?
+    private(set) var inspectorItem: NSSplitViewItem?
 
     private let pageField = NSTextField()
     private let pageCountLabel = NSTextField(labelWithString: "")
@@ -70,10 +73,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     // MARK: Building the window
 
     private func showDocument() {
-        guard let document = editorDocument, let engine = document.engine, let window else { return }
+        guard let document = editorDocument, let window else { return }
         let model: DocumentModel
         do {
-            model = try DocumentModel(engine: engine)
+            model = try document.makeModel()
         } catch {
             let label = placeholderLabel("This document couldn’t be read.\n\(error)")
             let controller = NSViewController()
@@ -84,7 +87,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         }
         let viewer = ViewerController(model: model)
         let sidebar = SidebarViewController(viewer: viewer)
-        let inspector = DocumentInfoViewController(viewer: viewer, fileURL: document.fileURL)
+        let inspector = InspectorViewController(viewer: viewer, fileURL: document.fileURL)
         self.viewer = viewer
         self.sidebar = sidebar
         self.inspector = inspector
@@ -115,6 +118,20 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
         viewer.onStateChange = { [weak self] in self?.viewerStateDidChange() }
         viewer.find.onChange = { [weak self] in self?.findDidChange() }
+        viewer.onToolChange = { [weak self] tool in self?.markupBar.setTool(tool) }
+        viewer.onAnnotationSelectionChange = { [weak self] ref in
+            self?.inspector?.show(ref)
+            self?.sidebar?.annotationSelectionDidChange(ref)
+        }
+        markupBar.onToolChosen = { [weak self] tool in self?.viewer?.tool = tool }
+        setUpMarkupBar()
+        NotificationCenter.default.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] note in
+            let pages = note.userInfo?["pages"] as? Set<Int>
+            MainActor.assumeIsolated {
+                self?.sidebar?.pagesDidChange(pages)
+                self?.inspector?.refresh()
+            }
+        }
         NotificationCenter.default.addObserver(forName: DocumentModel.renderingDidChange, object: model, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.sidebar?.renderingDidChange() }
         }
@@ -139,7 +156,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .pageNavigation, .pageNumber, .flexibleSpace,
-         .zoom, .zoomMode, .displayMode, .rotate, .search, .inspectorTrackingSeparator, .toggleInspector]
+         .zoom, .zoomMode, .displayMode, .rotate, .markup, .search, .inspectorTrackingSeparator, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -216,6 +233,15 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             item.searchField.searchMenuTemplate = searchMenu()
             item.preferredWidthForSearchField = 160
             searchItem = item
+            return item
+        case .markup:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Markup"
+            item.paletteLabel = "Markup"
+            item.toolTip = "Show Markup Toolbar"
+            item.image = NSImage(systemSymbolName: "pencil.tip.crop.circle", accessibilityDescription: "Markup")
+            item.action = #selector(toggleMarkupBar(_:))
+            item.target = self
             return item
         case .print:
             let item = NSToolbarItem(itemIdentifier: identifier)
@@ -474,10 +500,70 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         }
     }
 
+    // MARK: Annotating
+
+    private func setUpMarkupBar() {
+        guard markupAccessory == nil, let window else { return }
+        let accessory = NSTitlebarAccessoryViewController()
+        accessory.layoutAttribute = .bottom
+        accessory.view = markupBar.view
+        accessory.isHidden = !UserDefaults.standard.bool(forKey: "ShowMarkupBar")
+        window.addTitlebarAccessoryViewController(accessory)
+        markupAccessory = accessory
+    }
+
+    @objc func toggleMarkupBar(_ sender: Any?) {
+        guard let accessory = markupAccessory else { return }
+        accessory.animator().isHidden.toggle()
+        UserDefaults.standard.set(!accessory.isHidden, forKey: "ShowMarkupBar")
+        if accessory.isHidden { viewer?.tool = .select }
+    }
+
+    /// Tools menu: the menu item's tag is the tool's index.
+    @objc func chooseTool(_ sender: NSMenuItem) {
+        guard AnnotationTool.allCases.indices.contains(sender.tag), let viewer else { return }
+        let tool = AnnotationTool.allCases[sender.tag]
+        if markupAccessory?.isHidden == true, tool != .select { toggleMarkupBar(sender) }
+        // A text tool with text already selected marks it straight away.
+        if tool.marksText, let selection = viewer.pagesView.selection, !selection.isEmpty {
+            do {
+                _ = try viewer.annotations.markText(tool, selection: selection)
+                viewer.pagesView.selection = nil
+            } catch {
+                NSSound.beep()
+            }
+            return
+        }
+        viewer.tool = tool
+    }
+
+    @objc func flattenAnnotations(_ sender: Any?) {
+        guard let viewer, let window else { return }
+        let alert = NSAlert()
+        alert.messageText = "Flatten all annotations?"
+        alert.informativeText = "Highlights, notes, shapes, drawings and stamps become part of the pages and can no longer be changed. Replies are removed. You can undo this until you close the document."
+        alert.addButton(withTitle: "Flatten")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            do {
+                try viewer.model.edit("Flatten Annotations", pages: Set(0..<viewer.model.pageCount)) { try $0.flattenAnnotations() }
+                viewer.pagesView.selectedAnnotation = nil
+            } catch {
+                NSAlert(error: error).beginSheetModal(for: window)
+            }
+        }
+    }
+
+    @objc func showComments(_ sender: Any?) { showSidebar(.comments) }
+
     // MARK: Validation
 
+    private var tagOfValidatedItem = -1
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        validate(item.action, setState: { item.state = $0 ? .on : .off })
+        tagOfValidatedItem = item.tag
+        return validate(item.action, setState: { item.state = $0 ? .on : .off })
     }
 
     func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
@@ -509,6 +595,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(showThumbnails(_:)): setState(sidebar?.tab == .thumbnails && sidebarItem?.isCollapsed == false)
         case #selector(showOutline(_:)): setState(sidebar?.tab == .outline && sidebarItem?.isCollapsed == false)
         case #selector(showSearchResults(_:)): setState(sidebar?.tab == .search && sidebarItem?.isCollapsed == false)
+        case #selector(showComments(_:)): setState(sidebar?.tab == .comments && sidebarItem?.isCollapsed == false)
+        case #selector(toggleMarkupBar(_:)): setState(markupAccessory?.isHidden == false)
+        case #selector(chooseTool(_:)):
+            setState(AnnotationTool.allCases.indices.contains(tagOfValidatedItem) && viewer.tool == AnnotationTool.allCases[tagOfValidatedItem])
+            return viewer.model.engine.isPDF
+        case #selector(flattenAnnotations(_:)):
+            return (0..<viewer.model.pageCount).contains { !viewer.model.annotations(page: $0).isEmpty }
         case #selector(showAttachments(_:)): setState(sidebar?.tab == .attachments && sidebarItem?.isCollapsed == false)
         case #selector(showLayers(_:)): setState(sidebar?.tab == .layers && sidebarItem?.isCollapsed == false)
         case #selector(showDocumentInfo(_:)): setState(inspectorItem?.isCollapsed == false)
@@ -519,6 +612,18 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     }
 
     // MARK: Window
+
+    /// The document was reverted to another version: start again with it.
+    func documentDidRevert() {
+        let page = viewer?.currentPage
+        viewer?.find.cancel()
+        viewer = nil
+        sidebar = nil
+        inspector = nil
+        window?.contentViewController = nil
+        start()
+        if let page { viewer?.go(toPage: min(page, (viewer?.model.pageCount ?? 1) - 1)) }
+    }
 
     override func encodeRestorableState(with coder: NSCoder) {
         super.encodeRestorableState(with: coder)

@@ -38,6 +38,12 @@ protocol PagesViewDelegate: AnyObject {
     func pagesView(_ view: PagesView, scrollByPages pages: CGFloat)
     func pagesView(_ view: PagesView, goToPageOffset offset: Int)
     func pagesView(_ view: PagesView, goToEnd end: Bool)
+    /// The selected annotation changed.
+    func pagesView(_ view: PagesView, didSelect annotation: AnnotationRef?)
+    /// Open the editor for an annotation's text (a new note, a double-click).
+    func pagesView(_ view: PagesView, edit annotation: AnnotationRef)
+    /// A tool that doesn't stay chosen has been used.
+    func pagesView(_ view: PagesView, didUse tool: AnnotationTool)
 }
 
 /// The scroll view's document view: lays out page views for the visible
@@ -50,7 +56,6 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     private(set) var layout: PageLayout
     private(set) var rotation = 0
-    private(set) var revision = 0
     private var pageViews: [Int: PageView] = [:]
     private var reusable: [PageView] = []
 
@@ -70,6 +75,33 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     lazy var accessibilityPages = PageAccessibility(view: self)
 
+    /// Finds and changes annotations (set by the viewer).
+    var annotations: AnnotationController?
+    /// The markup tool in use.
+    var tool: AnnotationTool = .select {
+        didSet {
+            gesture = .none
+            if tool != .select { selectedAnnotation = nil }
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    var selectedAnnotation: AnnotationRef? {
+        didSet {
+            guard selectedAnnotation != oldValue else { return }
+            refreshAnnotationSelection()
+            delegate?.pagesView(self, didSelect: selectedAnnotation)
+        }
+    }
+
+    enum AnnotationGesture {
+        case none
+        /// Drawing with a tool: a shape from `start`, or a pen stroke.
+        case create(page: Int, start: CGPoint, current: CGPoint, points: [CGPoint])
+        case move(AnnotationRef, start: CGPoint, current: CGPoint)
+        case resize(AnnotationRef, AnnotationHandle, current: CGPoint)
+    }
+    var gesture = AnnotationGesture.none
+
     init(model: DocumentModel, renderer: TileRenderer) {
         self.model = model
         self.renderer = renderer
@@ -86,10 +118,9 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     // MARK: Layout
 
-    func apply(layout: PageLayout, rotation: Int, revision: Int) {
+    func apply(layout: PageLayout, rotation: Int) {
         self.layout = layout
         self.rotation = rotation
-        self.revision = revision
         setFrameSize(layout.size)
         for (page, view) in pageViews where layout.frames[page] == nil {
             recycle(view)
@@ -113,11 +144,12 @@ final class PagesView: NSView, NSMenuItemValidation {
             guard let frame = layout.frames[page] else { continue }
             let view = pageViews[page] ?? dequeue()
             if view.frame != frame { view.frame = frame }
-            let changed = view.configure(page: page, rotation: rotation, revision: revision)
+            let changed = view.configure(page: page, rotation: rotation, revision: model.revision(page: page))
             if pageViews[page] == nil || changed {
                 pageViews[page] = view
                 applyHighlights(to: view, page: page)
                 applySelection(to: view, page: page)
+                applyAnnotationSelection(to: view, page: page)
             }
         }
         let deviceScale = scroll.magnification * (window?.backingScaleFactor ?? 2)
@@ -139,8 +171,7 @@ final class PagesView: NSView, NSMenuItemValidation {
     }
 
     /// Forgets every page view, e.g. after a layer changes what pages show.
-    func reloadPages(revision: Int) {
-        self.revision = revision
+    func reloadPages() {
         for view in pageViews.values { recycle(view) }
         pageViews.removeAll()
         updateVisible()
@@ -229,23 +260,23 @@ final class PagesView: NSView, NSMenuItemValidation {
         switch item.action {
         case #selector(copy(_:)): return selection.map { !$0.isEmpty } ?? false
         case #selector(selectAll(_:)): return model.pageCount > 0
+        case #selector(delete(_:)): return selectedAnnotation != nil
         default: return true
         }
     }
 
     // MARK: Mouse
 
-    private func pageAndPoint(at location: NSPoint) -> (page: Int, point: CGPoint)? {
+    func pageAndPoint(at location: NSPoint) -> (page: Int, point: CGPoint)? {
         guard let page = layout.page(nearest: location), let point = convert(location, toPage: page) else { return nil }
         return (page, point)
     }
 
-    private func link(at point: CGPoint, page: Int) -> PageLink? {
+    func link(at point: CGPoint, page: Int) -> PageLink? {
         model.links(page: page).first { $0.rect.contains(point) }
     }
 
-    override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
+    func textMouseDown(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
         guard let (page, point) = pageAndPoint(at: location) else { return }
         pendingLink = nil
@@ -280,7 +311,7 @@ final class PagesView: NSView, NSMenuItemValidation {
         }
     }
 
-    override func mouseDragged(with event: NSEvent) {
+    func textMouseDragged(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
         if let pending = pendingLink, hypot(location.x - pending.point.x, location.y - pending.point.y) > 3 {
             pendingLink = nil
@@ -309,7 +340,7 @@ final class PagesView: NSView, NSMenuItemValidation {
         selection = current
     }
 
-    override func mouseUp(with event: NSEvent) {
+    func textMouseUp(with event: NSEvent) {
         if let pending = pendingLink {
             pendingLink = nil
             if selection?.isEmpty ?? true { selection = nil }
@@ -331,6 +362,14 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     private func updateCursor(_ event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
+        if tool != .select && !tool.marksText {
+            NSCursor.crosshair.set()
+            return
+        }
+        if tool == .select, let cursor = annotationCursor(at: location) {
+            cursor.set()
+            return
+        }
         guard let page = layout.pages(in: CGRect(origin: location, size: CGSize(width: 1, height: 1))).first,
               let point = convert(location, toPage: page) else {
             NSCursor.arrow.set()
@@ -383,7 +422,18 @@ final class PagesView: NSView, NSMenuItemValidation {
     override func scrollToEndOfDocument(_ sender: Any?) { delegate?.pagesView(self, goToEnd: true) }
     override func moveToBeginningOfDocument(_ sender: Any?) { delegate?.pagesView(self, goToEnd: false) }
     override func moveToEndOfDocument(_ sender: Any?) { delegate?.pagesView(self, goToEnd: true) }
-    override func cancelOperation(_ sender: Any?) { selection = nil }
+    override func cancelOperation(_ sender: Any?) {
+        if case .none = gesture {} else {
+            gesture = .none
+            clearDrafts()
+            return
+        }
+        if selectedAnnotation != nil { selectedAnnotation = nil } else { selection = nil }
+    }
+
+    override func deleteBackward(_ sender: Any?) { deleteSelectedAnnotation() }
+    override func deleteForward(_ sender: Any?) { deleteSelectedAnnotation() }
+    @objc func delete(_ sender: Any?) { deleteSelectedAnnotation() }
 
     // MARK: Accessibility
 

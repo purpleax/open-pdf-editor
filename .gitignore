@@ -1,4 +1,5 @@
 .build/
+.build-selftest/
 build/
 dist/
 Frameworks/

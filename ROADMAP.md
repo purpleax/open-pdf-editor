@@ -75,13 +75,18 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 ## Phase 2: Annotations (0.2.0)
 
-- [ ] Highlight, underline, strikethrough
-- [ ] Sticky notes and text boxes
-- [ ] Shapes, lines and arrows, freehand drawing
-- [ ] Stamps
-- [ ] Annotation list with replies, status and filters
-- [ ] Undo and redo through MuPDF's journal; incremental save
-- [ ] Flatten annotations
+- [x] Highlight, underline, strikethrough
+  - Drag across text with the tool, or pick the tool (Tools menu) with text already selected.
+- [x] Sticky notes and text boxes
+  - A popover edits the comment or the box's text when it is placed, and on double-click.
+- [x] Shapes, lines and arrows, freehand drawing
+- [x] Stamps (MuPDF's standard stamps: Approved, Draft, Confidential and the rest)
+- [x] Annotation list with replies, status and filters (sidebar Comments tab, ⌥⌘4)
+  - Filters by type, author and review status; reply, set Accepted / Rejected / Cancelled / Completed, or delete from the buttons or the context menu.
+- [x] Undo and redo through MuPDF's journal; incremental save
+  - Autosave in place with Versions; undo survives saving (see Decisions).
+- [x] Flatten annotations (Tools › Flatten Annotations…, undoable)
+- [x] Added: select, move and resize annotations (handles; line end points); the inspector edits colour, fill, opacity, line width, text size and comment; markup bar (⇧⌘A) with per-tool colour, width, text size and stamp; Delete key; `make selftest`, a scripted run through annotating in a separate test build
 
 ## Phase 3: Pages (0.3.0)
 
@@ -125,6 +130,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **0.2.0**: Annotations. Highlight, underline and strike through text; add notes, text boxes, rectangles, ovals, lines, arrows, freehand drawings and stamps from the new markup toolbar (⇧⌘A). Select an annotation to move or resize it, or change its colour, fill, opacity, line width and text in the inspector. The new Comments sidebar lists every annotation with replies and review status, and filters by type, author and status. Everything can be undone, even after saving; documents save automatically, with File › Revert To for earlier versions. Saving adds your changes to the end of the file, so digital signatures stay valid. Tools › Flatten Annotations makes them part of the pages.
 
 - **0.1.1**: Security fixes. PDFs with impossibly large pages can no longer crash the app or use up memory, and a deeply nested outline can no longer crash it. Saving an attachment now asks first when the file could contain an app or a script, and saved attachments are checked by macOS before they open. A document with a malformed date no longer crashes the inspector. Only real PDFs are opened, and a rare crash after showing or hiding a layer is fixed.
 - **0.1.0**: The first release: a fast PDF viewer built on MuPDF. Pages render sharply at any zoom, with continuous, single-page and two-page layouts, Fit Width, Fit Page and rotation. The sidebar has page thumbnails, the outline, search results with highlighted matches, attachments you can save and layers you can show or hide. Select and copy text, follow links, go back and forward, open password-protected PDFs, print, and see the document's properties in the inspector. Works in tabs, full screen and Dark Mode, with VoiceOver, and updates itself.

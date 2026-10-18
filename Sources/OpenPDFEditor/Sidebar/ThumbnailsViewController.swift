@@ -40,6 +40,14 @@ final class ThumbnailsViewController: NSViewController, NSTableViewDataSource, N
         showCurrentPage()
     }
 
+    /// Redraws the thumbnails of pages that changed (nil: all).
+    func reload(pages: Set<Int>?) {
+        guard isViewLoaded else { return }
+        guard let pages else { return reload() }
+        let rows = IndexSet(pages.filter { $0 < table.numberOfRows })
+        table.reloadData(forRowIndexes: rows, columnIndexes: [0])
+    }
+
     func showCurrentPage() {
         let page = viewer.currentPage
         guard page < table.numberOfRows, table.selectedRow != page else { return }
@@ -65,7 +73,7 @@ final class ThumbnailsViewController: NSViewController, NSTableViewDataSource, N
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = (tableView.makeView(withIdentifier: ThumbnailCell.identifier, owner: nil) as? ThumbnailCell) ?? ThumbnailCell()
         cell.show(page: row, size: thumbnailSize(row), renderer: viewer.renderer, rotation: viewer.rotation,
-                  revision: viewer.model.revision)
+                  revision: viewer.model.revision(page: row))
         return cell
     }
 

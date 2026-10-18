@@ -33,6 +33,11 @@ enum MainMenu {
         recent.submenu = recentMenu
         file.addItem(.separator())
         file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        file.addItem(withTitle: "Save", action: #selector(NSDocument.save(_:)), keyEquivalent: "s")
+        file.addItem(withTitle: "Duplicate", action: #selector(NSDocument.duplicate(_:)), keyEquivalent: "S")
+        file.addItem(withTitle: "Rename…", action: #selector(NSDocument.rename(_:)), keyEquivalent: "")
+        file.addItem(withTitle: "Move To…", action: #selector(NSDocument.move(_:)), keyEquivalent: "")
+        file.addItem(withTitle: "Revert To", action: #selector(NSDocument.revertToSaved(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Show in Finder", action: #selector(AppDelegate.showInFinder(_:)), keyEquivalent: "")
         file.addItem(.separator())
         file.addItem(withTitle: "Page Setup…", action: #selector(NSDocument.runPageLayout(_:)), keyEquivalent: "P")
@@ -45,6 +50,7 @@ enum MainMenu {
         edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Delete", action: #selector(PagesView.delete(_:)), keyEquivalent: "")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.addItem(.separator())
         let findItem = edit.addItem(withTitle: "Find", action: nil, keyEquivalent: "")
@@ -86,6 +92,7 @@ enum MainMenu {
             ("Thumbnails", #selector(DocumentWindowController.showThumbnails(_:))),
             ("Outline", #selector(DocumentWindowController.showOutline(_:))),
             ("Search Results", #selector(DocumentWindowController.showSearchResults(_:))),
+            ("Comments", #selector(DocumentWindowController.showComments(_:))),
             ("Attachments", #selector(DocumentWindowController.showAttachments(_:))),
             ("Layers", #selector(DocumentWindowController.showLayers(_:))),
         ].enumerated() {
@@ -94,6 +101,7 @@ enum MainMenu {
         view.addItem(withTitle: "Document Info", action: #selector(DocumentWindowController.showDocumentInfo(_:)), keyEquivalent: "i")
             .keyEquivalentModifierMask = [.command, .option]
         view.addItem(.separator())
+        view.addItem(withTitle: "Show Markup Toolbar", action: #selector(DocumentWindowController.toggleMarkupBar(_:)), keyEquivalent: "A")
         view.addItem(withTitle: "Show Toolbar", action: #selector(NSWindow.toggleToolbarShown(_:)), keyEquivalent: "t")
             .keyEquivalentModifierMask = [.command, .option]
         view.addItem(withTitle: "Customize Toolbar…", action: #selector(NSWindow.runToolbarCustomizationPalette(_:)), keyEquivalent: "")
@@ -115,6 +123,18 @@ enum MainMenu {
         go.addItem(.separator())
         go.addItem(withTitle: "Back", action: #selector(DocumentWindowController.goBack(_:)), keyEquivalent: "[")
         go.addItem(withTitle: "Forward", action: #selector(DocumentWindowController.goForward(_:)), keyEquivalent: "]")
+
+        let tools = submenu(in: main, title: "Tools")
+        for (index, tool) in AnnotationTool.allCases.enumerated() {
+            let item = tools.addItem(withTitle: tool.title, action: #selector(DocumentWindowController.chooseTool(_:)),
+                                     keyEquivalent: tool.keyEquivalent)
+            item.keyEquivalentModifierMask = [.command, .control]
+            item.tag = index
+            item.image = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil)
+            if tool == .select || tool == .note || tool == .stamp { tools.addItem(.separator()) }
+        }
+        tools.addItem(.separator())
+        tools.addItem(withTitle: "Flatten Annotations…", action: #selector(DocumentWindowController.flattenAnnotations(_:)), keyEquivalent: "")
 
         let window = submenu(in: main, title: "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

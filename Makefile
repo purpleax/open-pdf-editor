@@ -3,7 +3,7 @@ APP := build/Open PDF Editor.app
 EXE := OpenPDFEditor
 SWIFT_BUILD := swift build -c release --arch arm64
 
-.PHONY: mupdf build icon smoke corpus test install dmg release hooks clean distclean
+.PHONY: mupdf build icon smoke corpus test selftest install dmg release hooks clean distclean
 
 # MuPDF as Frameworks/MuPDF.xcframework (skipped when up to date).
 mupdf:
@@ -49,6 +49,18 @@ TESTING_MACROS := $(shell xcode-select -p)/usr/lib/swift/host/plugins/testing/li
 test: corpus
 	swift build --arch arm64 --build-tests -Xswiftc -load-plugin-library -Xswiftc "$(TESTING_MACROS)"
 	$(if $(UPDATE_GOLDEN),UPDATE_GOLDEN=1) swift test --arch arm64 --skip-build
+
+# Scripted annotation run in a separate build (never released): snapshots
+# and a log in build/selftest.
+selftest: build corpus
+	swift build -c release --arch arm64 --scratch-path .build-selftest -Xswiftc -DSELFTEST
+	rm -rf build/selftest && mkdir -p build/selftest
+	ditto "$(APP)" "build/selftest/Self Test.app"
+	cp "$$(swift build -c release --arch arm64 --scratch-path .build-selftest --show-bin-path)/$(EXE)" "build/selftest/Self Test.app/Contents/MacOS/$(EXE)"
+	scripts/sign-app.sh "build/selftest/Self Test.app"
+	OPDF_SELFTEST="$(CURDIR)/build/corpus/text.pdf" OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest" \
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES
+	cat build/selftest/log.txt
 
 # Copy the app to /Applications.
 install: build
