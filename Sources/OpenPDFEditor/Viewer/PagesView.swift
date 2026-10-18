@@ -21,9 +21,10 @@ struct TextSelection: Equatable {
     /// The selected characters on a page.
     func range(onPage page: Int, count: Int) -> Range<Int>? {
         guard page >= start.page && page <= end.page else { return nil }
-        let lower = page == start.page ? start.caret : 0
-        let upper = page == end.page ? end.caret : count
-        return lower < upper ? lower..<min(upper, count) : nil
+        // Clamped: the page's text may have changed since the selection was made.
+        let lower = min(page == start.page ? start.caret : 0, count)
+        let upper = min(page == end.page ? end.caret : count, count)
+        return lower < upper ? lower..<upper : nil
     }
 }
 
@@ -342,7 +343,7 @@ final class PagesView: NSView, NSMenuItemValidation {
         } else {
             if model.cachedText(page: page) == nil {
                 let model = self.model
-                DispatchQueue.global(qos: .userInitiated).async { _ = model.text(page: page) }
+                EngineExecutor.background.async(.low) { _ = model.text(page: page) }
             }
             NSCursor.arrow.set()
         }

@@ -123,6 +123,10 @@ final class PageView: NSView {
         let level = TileRenderer.level(forScale: deviceScale)
         let scale = TileRenderer.scale(forLevel: level)
         let pixelSize = CGSize(width: (size.width * scale).rounded(.up), height: (size.height * scale).rounded(.up))
+        // Page sizes are capped by the engine; this keeps the integer maths
+        // below safe whatever happens.
+        guard pixelSize.width.isFinite, pixelSize.height.isFinite,
+              pixelSize.width < 1e9, pixelSize.height < 1e9 else { return }
         let tilePoints = CGFloat(TileRenderer.tileSize) / scale
         let area = visible.intersection(bounds).insetBy(dx: -tilePoints / 2, dy: -tilePoints / 2).intersection(bounds)
 

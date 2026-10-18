@@ -164,9 +164,54 @@ function makeLong() {
 	doc.save(out + "/long.pdf", "compress,garbage")
 }
 
+// --- Hostile files, for the security tests ----------------------------------
+
+// Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
+// /UserUnit to about 1e23 points.
+function makeHuge() {
+	var doc = newDocument()
+	addTextPage(doc, [0, 0, 1, 10000000], [])
+	var p = addTextPage(doc, [0, 0, 1000, 1000], [[10, 20, 12, "User unit"]])
+	var page = doc.findPage(p)
+	var box = doc.newArray()
+	box.push(0); box.push(0); box.push(9e18); box.push(9e18)
+	page.put("MediaBox", box)
+	page.put("UserUnit", 10000)
+	doc.save(out + "/huge.pdf", "compress")
+}
+
+// An outline nested 5,000 levels deep.
+function makeDeepOutline() {
+	var doc = newDocument()
+	addTextPage(doc, LETTER, [[72, 90, 24, "Deep outline"]])
+	var outlines = doc.addObject(doc.newDictionary())
+	outlines.put("Type", doc.newName("Outlines"))
+	var parent = outlines
+	for (var i = 0; i < 5000; i++) {
+		var item = doc.addObject(doc.newDictionary())
+		item.put("Title", doc.newString("Level " + (i + 1)))
+		item.put("Parent", parent)
+		parent.put("First", item)
+		parent.put("Last", item)
+		parent = item
+	}
+	doc.getTrailer().get("Root").put("Outlines", outlines)
+	doc.save(out + "/deep-outline.pdf", "compress")
+}
+
+// An HTML file with a .pdf name: must not open in another engine.
+function makeNotAPDF() {
+	var buffer = new Buffer()
+	buffer.write("<html><body><h1>Not a PDF</h1><p>Some text.</p></body></html>\n")
+	buffer.save(out + "/not-a-pdf.pdf")
+}
+
 makeText()
+makeHuge()
+makeDeepOutline()
+makeNotAPDF()
 makeMixed()
 makeAttachments()
 makeLayers()
 makeLong()
-print("corpus: wrote text, encrypted, mixed, attachments, layers and long PDFs to " + out)
+print("corpus: wrote the test PDFs to " + out)

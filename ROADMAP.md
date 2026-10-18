@@ -57,6 +57,19 @@ Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends w
 - [x] Test corpus and render tests (`make test`)
 - [x] Added: links (pages in the document, and web and mail links), Back and Forward (⌘[ ⌘]), Go to Page (⌥⌘G), and windows reopening at the same page and zoom
 
+## 0.1.1: Security fixes
+
+From the first release-time security review (all findings above Low fixed, plus the cheap Low ones):
+
+- [x] Page sizes capped at 200,000 points and every render at 16,384 pixels a side and 64 megapixels, so absurd pages can't crash the app or exhaust memory (Medium)
+- [x] Saved attachments are quarantined (and the app sets LSFileQuarantineEnabled), with a warning before saving apps, scripts, installers, disk images and archives, and cleaned file names (Medium)
+- [x] Document work runs on threads with 16 MB stacks instead of GCD's 512 KB, and outlines deeper than 256 levels are refused before MuPDF walks them (Medium)
+- [x] Only MuPDF's PDF handler is registered, so a file named .pdf can't open in its HTML or other engines (Low)
+- [x] Layer changes clear cached text and the selection, and selections are clamped to the page's text (Low)
+- [x] Ad hoc signing works with macOS's bash 3.2 (build fix)
+- [x] Found on the second pass: document dates with impossible time zones crashed the inspector; dates are now range-checked (Medium). Saving an attachment over an existing file goes through a temporary file, so a failed save leaves the old file in place (Low)
+- Left for later (Low): printing re-reads the file with PDFKit; some engine calls run on the main thread; external links open on one click without showing the address; Sparkle feed signing.
+
 ## Phase 2: Annotations (0.2.0)
 
 - [ ] Highlight, underline, strikethrough
@@ -110,4 +123,5 @@ Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends w
 
 Each entry is the release notes for that version, written for users.
 
+- **0.1.1**: Security fixes. PDFs with impossibly large pages can no longer crash the app or use up memory, and a deeply nested outline can no longer crash it. Saving an attachment now asks first when the file could contain an app or a script, and saved attachments are checked by macOS before they open. A document with a malformed date no longer crashes the inspector. Only real PDFs are opened, and a rare crash after showing or hiding a layer is fixed.
 - **0.1.0**: The first release: a fast PDF viewer built on MuPDF. Pages render sharply at any zoom, with continuous, single-page and two-page layouts, Fit Width, Fit Page and rotation. The sidebar has page thumbnails, the outline, search results with highlighted matches, attachments you can save and layers you can show or hide. Select and copy text, follow links, go back and forward, open password-protected PDFs, print, and see the document's properties in the inspector. Works in tabs, full screen and Dark Mode, with VoiceOver, and updates itself.

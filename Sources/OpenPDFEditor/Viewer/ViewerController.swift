@@ -100,6 +100,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.renderer.reset()
+                self.pagesView.selection = nil
                 self.pagesView.reloadPages(revision: self.model.revision)
             }
         }

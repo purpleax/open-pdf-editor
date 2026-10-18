@@ -1,4 +1,5 @@
 import AppKit
+import CoreServices
 import PDFCore
 import UniformTypeIdentifiers
 
@@ -48,7 +49,7 @@ final class AttachmentsViewController: NSViewController, NSTableViewDataSource, 
         embedPlaceholder(empty, in: root)
         view = root
         let engine = model.engine
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        EngineExecutor.background.async(.high) { [weak self] in
             let items = (try? engine.attachments()) ?? []
             DispatchQueue.main.async {
                 guard let self else { return }
@@ -65,8 +66,8 @@ final class AttachmentsViewController: NSViewController, NSTableViewDataSource, 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let item = items[row]
         let cell = NSTableCellView()
-        let icon = NSImageView(image: NSWorkspace.shared.icon(for: UTType(filenameExtension: (item.filename as NSString).pathExtension) ?? .data))
-        let name = NSTextField(labelWithString: item.filename)
+        let icon = NSImageView(image: NSWorkspace.shared.icon(for: UTType(filenameExtension: (AttachmentSafety.cleanFilename(item.filename) as NSString).pathExtension) ?? .data))
+        let name = NSTextField(labelWithString: AttachmentSafety.cleanFilename(item.filename))
         name.lineBreakMode = .byTruncatingMiddle
         let detail = NSTextField(labelWithString: item.size.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) } ?? "")
         detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -88,7 +89,7 @@ final class AttachmentsViewController: NSViewController, NSTableViewDataSource, 
             detail.topAnchor.constraint(equalTo: name.bottomAnchor),
         ])
         cell.textField = name
-        cell.setAccessibilityLabel("\(item.filename), \(detail.stringValue)")
+        cell.setAccessibilityLabel("\(name.stringValue), \(detail.stringValue)")
         return cell
     }
 
@@ -100,12 +101,45 @@ final class AttachmentsViewController: NSViewController, NSTableViewDataSource, 
         let row = table.clickedRow >= 0 ? table.clickedRow : table.selectedRow
         guard row >= 0, let window = view.window else { return }
         let item = items[row]
+        let name = AttachmentSafety.cleanFilename((item.filename as NSString).lastPathComponent)
+        guard AttachmentSafety.isRisky(name) else {
+            chooseDestination(for: item, name: name, in: window)
+            return
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "“\(name)” could contain an app or a script."
+        alert.informativeText = "Files embedded in a PDF come from whoever made it. Save this one only if you trust that person. macOS will check it before it opens."
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Save Anyway…")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertSecondButtonReturn else { return }
+            self?.chooseDestination(for: item, name: name, in: window)
+        }
+    }
+
+    private func chooseDestination(for item: Attachment, name: String, in window: NSWindow) {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = (item.filename as NSString).lastPathComponent
+        panel.nameFieldStringValue = name
+        let source = sourceURL
         panel.beginSheetModal(for: window) { [model] response in
             guard response == .OK, let url = panel.url else { return }
+            // Written beside the destination under a hidden name, quarantined,
+            // then moved into place: a failed save leaves any file that was
+            // there untouched.
+            let temporary = url.deletingLastPathComponent()
+                .appendingPathComponent(".\(UUID().uuidString).attachment")
             do {
-                try model.engine.saveAttachment(named: item.name, to: url)
+                defer { try? FileManager.default.removeItem(at: temporary) }
+                try model.engine.saveAttachment(named: item.name, to: temporary)
+                try Self.quarantine(temporary, like: source)
+                if FileManager.default.fileExists(atPath: url.path) {
+                    _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+                } else {
+                    try FileManager.default.moveItem(at: temporary, to: url)
+                }
+                // Moving keeps the attributes; make sure the final file has them.
+                try Self.quarantine(url, like: source)
             } catch {
                 let alert = NSAlert()
                 alert.messageText = "The attachment couldn’t be saved."
@@ -113,5 +147,26 @@ final class AttachmentsViewController: NSViewController, NSTableViewDataSource, 
                 alert.beginSheetModal(for: window)
             }
         }
+    }
+
+    /// The PDF this panel belongs to, for its quarantine details.
+    private var sourceURL: URL? {
+        view.window?.windowController?.document.flatMap { ($0 as? NSDocument)?.fileURL }
+    }
+
+    /// Marks a saved attachment as downloaded, so Gatekeeper checks it before
+    /// it opens: with the PDF's own quarantine details when it has them.
+    private static func quarantine(_ url: URL, like source: URL?) throws {
+        var properties = source.flatMap { try? $0.resourceValues(forKeys: [.quarantinePropertiesKey]).quarantineProperties } ?? nil
+        if properties == nil {
+            properties = [
+                kLSQuarantineAgentNameKey as String: "Open PDF Editor",
+                kLSQuarantineTypeKey as String: kLSQuarantineTypeOtherDownload as String,
+            ]
+        }
+        var values = URLResourceValues()
+        values.quarantineProperties = properties
+        var target = url
+        try target.setResourceValues(values)
     }
 }

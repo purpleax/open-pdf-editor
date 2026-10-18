@@ -36,8 +36,6 @@ final class TileRenderer: @unchecked Sendable {
 
     let model: DocumentModel
 
-    private let queue: OperationQueue
-    private let previewQueue: OperationQueue
     private let lock = NSLock()
 
     private struct Entry {
@@ -51,7 +49,6 @@ final class TileRenderer: @unchecked Sendable {
 
     private final class Job: @unchecked Sendable {
         let cookie = RenderCookie()
-        var operation: Operation?
         var waiting: [Int: @MainActor @Sendable (CGImage) -> Void] = [:]
     }
     private var jobs: [RenderKey: Job] = [:]
@@ -59,14 +56,6 @@ final class TileRenderer: @unchecked Sendable {
 
     init(model: DocumentModel) {
         self.model = model
-        queue = OperationQueue()
-        queue.name = "Tile rendering"
-        queue.maxConcurrentOperationCount = max(2, ProcessInfo.processInfo.activeProcessorCount - 2)
-        queue.qualityOfService = .userInitiated
-        previewQueue = OperationQueue()
-        previewQueue.name = "Preview rendering"
-        previewQueue.maxConcurrentOperationCount = 2
-        previewQueue.qualityOfService = .userInitiated
     }
 
     static func scale(forLevel level: Int) -> CGFloat {
@@ -91,7 +80,7 @@ final class TileRenderer: @unchecked Sendable {
 
     /// Renders `key` unless it is cached; `completion` runs on the main thread.
     @discardableResult
-    func request(_ key: RenderKey, priority: Operation.QueuePriority = .normal,
+    func request(_ key: RenderKey, priority: EngineExecutor.Priority = .normal,
                  completion: @escaping @MainActor @Sendable (CGImage) -> Void) -> RenderTicket? {
         if let image = cached(key) {
             MainActor.assumeIsolated { completion(image) }
@@ -102,20 +91,15 @@ final class TileRenderer: @unchecked Sendable {
             let ticket = RenderTicket(key: key, renderer: self, id: nextTicket)
             if let job = jobs[key] {
                 job.waiting[ticket.id] = completion
-                if priority.rawValue > (job.operation?.queuePriority.rawValue ?? 0) {
-                    job.operation?.queuePriority = priority
-                }
                 return ticket
             }
             let job = Job()
             job.waiting[ticket.id] = completion
-            let operation = BlockOperation { [weak self, job] in
+            jobs[key] = job
+            // Large-stack threads: rendering runs MuPDF's recursive interpreter.
+            EngineExecutor.render.async(priority) { [weak self, job] in
                 self?.run(key, job: job)
             }
-            operation.queuePriority = priority
-            job.operation = operation
-            jobs[key] = job
-            if case .preview = key { previewQueue.addOperation(operation) } else { queue.addOperation(operation) }
             return ticket
         }
     }
@@ -125,7 +109,6 @@ final class TileRenderer: @unchecked Sendable {
             guard let job = jobs[ticket.key] else { return }
             job.waiting[ticket.id] = nil
             if job.waiting.isEmpty {
-                job.operation?.cancel()
                 job.cookie.cancel()
                 jobs[ticket.key] = nil
             }
@@ -135,10 +118,7 @@ final class TileRenderer: @unchecked Sendable {
     /// Drops every cached image and pending render.
     func reset() {
         lock.withLock {
-            for job in jobs.values {
-                job.operation?.cancel()
-                job.cookie.cancel()
-            }
+            for job in jobs.values { job.cookie.cancel() }
             jobs.removeAll()
             cache.removeAll()
             cacheCost = 0
@@ -182,8 +162,10 @@ final class TileRenderer: @unchecked Sendable {
             return try model.engine.render(list, bounds: bounds, scale: scale, rotation: rotation, rect: rect, cookie: cookie)
         case let .preview(page, width, rotation, _):
             let bounds = model.pageBounds[page]
-            let unrotatedWidth = rotation % 180 == 0 ? bounds.width : bounds.height
-            let scale = CGFloat(width) / max(unrotatedWidth, 1)
+            // `width` pixels wide, and never more than 1.6 times that tall, so a
+            // very tall, thin page doesn't make a huge preview.
+            let shown = rotation % 180 == 0 ? bounds.size : CGSize(width: bounds.height, height: bounds.width)
+            let scale = min(CGFloat(width) / max(shown.width, 1), CGFloat(width) * 1.6 / max(shown.height, 1))
             let list = try model.displayList(page: page)
             let full = bounds.applying(EngineDocument.pageTransform(bounds: bounds, scale: scale, rotation: rotation))
             return try model.engine.render(list, bounds: bounds, scale: scale, rotation: rotation,

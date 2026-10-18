@@ -39,4 +39,5 @@ check_signing() {
     fi
 }
 
-sign() { codesign --force --sign "$SIGN_ID" "${SIGN_FLAGS[@]}" "$@"; }
+# The odd expansion keeps macOS's bash 3.2 happy with an empty array under set -u.
+sign() { codesign --force --sign "$SIGN_ID" ${SIGN_FLAGS[@]+"${SIGN_FLAGS[@]}"} "$@"; }

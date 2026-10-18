@@ -2,10 +2,22 @@
 
 #include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
+#include <limits.h>
 #include <math.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+
+// MuPDF's PDF handler (not in its public headers; declared the same way in
+// its own sources). Only PDF is registered: MuPDF sniffs content, so with
+// every handler a file named .pdf could open in its HTML, EPUB, XPS or
+// image engines instead.
+extern fz_document_handler pdf_document_handler;
+
+// Outlines deeper or larger than this are not loaded: MuPDF walks them
+// recursively, so a hostile file could exhaust the stack.
+#define MAX_OUTLINE_DEPTH 256
+#define MAX_OUTLINE_ITEMS 100000
 
 // Cloned contexts for rendering display lists in parallel.
 #define POOL_SIZE 8
@@ -147,7 +159,7 @@ opdf_doc *opdf_open(const char *path, opdf_error *err) {
     }
     make_quiet(d->ctx);
     fz_try(d->ctx) {
-        fz_register_document_handlers(d->ctx);
+        fz_register_document_handler(d->ctx, &pdf_document_handler);
         d->doc = fz_open_document(d->ctx, path);
     }
     fz_catch(d->ctx) {
@@ -265,6 +277,7 @@ bool opdf_page_bounds_all(opdf_doc *d, opdf_rect *out, int count, opdf_error *er
 char *opdf_metadata(opdf_doc *d, const char *key) {
     char *result = NULL;
     char small[512];
+    fz_var(result);
     lock_doc(d);
     fz_try(d->ctx) {
         int needed = fz_lookup_metadata(d->ctx, d->doc, key, small, sizeof small);
@@ -339,8 +352,16 @@ bool opdf_list_render(opdf_doc *d, opdf_list *list, opdf_rect bounds, float scal
                       int x, int y, int width, int height, unsigned char *samples,
                       opdf_cookie *cookie, opdf_error *err) {
     clear_error(err);
-    if (!list || !samples || width <= 0 || height <= 0 || !(scale > 0)) {
+    if (!list || !samples || width <= 0 || height <= 0 || !(scale > 0) || !isfinite(scale)) {
         set_message(err, "Nothing to render");
+        return false;
+    }
+    // Backstop for the caller's limits: no int overflow in the area, and no
+    // more than 64 megapixels (the caller allocates width * height * 4).
+    if (x < -(INT_MAX / 2) || y < -(INT_MAX / 2) ||
+        (int64_t)x + width > INT_MAX || (int64_t)y + height > INT_MAX ||
+        (int64_t)width * (int64_t)height > (int64_t)64 * 1024 * 1024) {
+        set_message(err, "Render area out of range");
         return false;
     }
     int slot;
@@ -566,6 +587,27 @@ static void walk_outline(fz_context *ctx, fz_document *doc, outline_buffer *buf,
     }
 }
 
+// Walks a PDF outline without recursion. False when it is deeper or larger
+// than the limits (cycles hit the item limit).
+static bool outline_within_limits(fz_context *ctx, pdf_document *pdf) {
+    pdf_obj *next_at[MAX_OUTLINE_DEPTH];
+    int depth = 0, items = 0;
+    pdf_obj *node = pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/Outlines/First");
+    while (node) {
+        if (++items > MAX_OUTLINE_ITEMS) return false;
+        pdf_obj *child = pdf_dict_get(ctx, node, PDF_NAME(First));
+        if (child) {
+            if (depth + 1 >= MAX_OUTLINE_DEPTH) return false;
+            next_at[depth++] = pdf_dict_get(ctx, node, PDF_NAME(Next));
+            node = child;
+            continue;
+        }
+        node = pdf_dict_get(ctx, node, PDF_NAME(Next));
+        while (!node && depth > 0) node = next_at[--depth];
+    }
+    return true;
+}
+
 opdf_outline_item *opdf_outline_load(opdf_doc *d, int *count, opdf_error *err) {
     clear_error(err);
     *count = 0;
@@ -575,6 +617,9 @@ opdf_outline_item *opdf_outline_load(opdf_doc *d, int *count, opdf_error *err) {
     fz_var(outline);
     lock_doc(d);
     fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (pdf && !outline_within_limits(ctx, pdf))
+            fz_throw(ctx, FZ_ERROR_LIMIT, "The outline is nested too deeply to show");
         outline = fz_load_outline(ctx, d->doc);
         walk_outline(ctx, d->doc, &buf, outline, 0);
     }

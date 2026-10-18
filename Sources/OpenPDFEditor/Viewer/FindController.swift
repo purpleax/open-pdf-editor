@@ -61,7 +61,7 @@ final class FindController {
         self.token = token
         let model = self.model
         let options = self.options
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        EngineExecutor.background.async { [weak self] in
             var batch: [SearchMatch] = []
             var lastFlush = Date()
             let count = model.pageCount

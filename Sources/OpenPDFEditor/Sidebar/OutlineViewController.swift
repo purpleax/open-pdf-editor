@@ -39,7 +39,7 @@ final class OutlineViewController: NSViewController, NSOutlineViewDataSource, NS
     private func load() {
         empty.stringValue = "Loading…"
         let engine = viewer.model.engine
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        EngineExecutor.background.async(.high) { [weak self] in
             let roots = (try? engine.outline()) ?? []
             DispatchQueue.main.async {
                 guard let self else { return }

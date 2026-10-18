@@ -73,9 +73,13 @@ final class DocumentModel: @unchecked Sendable {
     /// Turns a layer on or off and invalidates everything rendered.
     func toggleLayer(_ index: Int) throws {
         try engine.toggleLayer(index)
+        // Layers change what pages draw and what text they have.
         lock.withLock {
             lists.removeAll()
             listOrder.removeAll()
+            texts.removeAll()
+            textOrder.removeAll()
+            linkCache.removeAll()
             _revision += 1
         }
         DispatchQueue.main.async {

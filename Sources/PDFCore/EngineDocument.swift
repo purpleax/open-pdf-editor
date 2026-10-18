@@ -60,15 +60,35 @@ public final class EngineDocument: @unchecked Sendable {
         return Int(count)
     }
 
+    /// The largest page side accepted, in points. PDF allows 14,400 units
+    /// scaled by /UserUnit; MuPDF has no upper limit, so a hostile file can
+    /// declare pages of 1e22 points.
+    public static let maxPageSide: CGFloat = 200_000
+    /// Renders larger than this (per side, and in total) are refused.
+    public static let maxRenderSide = 16_384
+    public static let maxRenderPixels = 64 * 1024 * 1024
+
     /// Every page's bounds in page space (MuPDF's coordinates: points, y down,
-    /// the page's own rotation applied).
+    /// the page's own rotation applied), made safe with `sanitized(_:)`.
     public func pageBounds() throws -> [CGRect] {
         let count = try pageCount()
         guard count > 0 else { return [] }
         var rects = [opdf_rect](repeating: opdf_rect(), count: count)
         var error = opdf_error()
         guard opdf_page_bounds_all(handle, &rects, Int32(count), &error) else { throw EngineError(error) }
-        return rects.map(CGRect.init)
+        return rects.map { Self.sanitized(CGRect($0)) }
+    }
+
+    /// Page bounds the viewer can work with: finite, at least 1 point and at
+    /// most `maxPageSide` per side (larger pages are cropped), and with an
+    /// origin in a sane range. Pages that fail any of this become Letter size.
+    public static func sanitized(_ rect: CGRect) -> CGRect {
+        let values = [rect.origin.x, rect.origin.y, rect.width, rect.height]
+        let letter = CGRect(x: 0, y: 0, width: 612, height: 792)
+        guard values.allSatisfy(\.isFinite), rect.width >= 1, rect.height >= 1,
+              abs(rect.minX) <= 1e7, abs(rect.minY) <= 1e7 else { return letter }
+        return CGRect(x: rect.minX, y: rect.minY,
+                      width: min(rect.width, maxPageSide), height: min(rect.height, maxPageSide))
     }
 
     /// Metadata by MuPDF key: "format", "encryption", "info:Title", "info:Author", ...
@@ -100,9 +120,19 @@ public final class EngineDocument: @unchecked Sendable {
     /// scale and rotation) as an opaque image.
     public func render(_ list: DisplayList, bounds: CGRect, scale: CGFloat, rotation: Int,
                        rect: CGRect, cookie: RenderCookie? = nil) throws -> CGImage {
+        // Everything here may come from a hostile file: check before converting.
+        let limit = CGFloat(Int32.max / 2)
+        guard rect.minX.isFinite, rect.minY.isFinite, rect.maxX.isFinite, rect.maxY.isFinite,
+              scale.isFinite, scale > 0,
+              rect.minX >= -limit, rect.minY >= -limit, rect.maxX <= limit, rect.maxY <= limit else {
+            throw EngineError(code: -1, message: "Render area out of range")
+        }
         let x = Int(rect.minX.rounded(.down)), y = Int(rect.minY.rounded(.down))
         let width = Int(rect.maxX.rounded(.up)) - x, height = Int(rect.maxY.rounded(.up)) - y
         guard width > 0, height > 0 else { throw EngineError(code: -1, message: "Empty render area") }
+        guard width <= Self.maxRenderSide, height <= Self.maxRenderSide, width * height <= Self.maxRenderPixels else {
+            throw EngineError(code: -1, message: "Render area too large (\(width) × \(height) pixels)")
+        }
         let bytesPerRow = width * 4
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bytesPerRow * height)
         var error = opdf_error()

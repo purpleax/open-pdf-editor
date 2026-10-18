@@ -64,8 +64,8 @@ final class DocumentInfoViewController: NSViewController {
             ("Author", meta("info:Author")),
             ("Subject", meta("info:Subject")),
             ("Keywords", meta("info:Keywords")),
-            ("Created", meta("info:CreationDate").map { pdfDate($0).map(dates.string) ?? $0 }),
-            ("Modified", meta("info:ModDate").map { pdfDate($0).map(dates.string) ?? $0 }),
+            ("Created", meta("info:CreationDate").map { PDFDate.parse($0).map(dates.string) ?? $0 }),
+            ("Modified", meta("info:ModDate").map { PDFDate.parse($0).map(dates.string) ?? $0 }),
             ("Application", meta("info:Creator")),
             ("PDF Producer", meta("info:Producer")),
             ("Version", meta("format")),
@@ -116,36 +116,6 @@ final class DocumentInfoViewController: NSViewController {
         let imperial = "\(inches(size.width)) × \(inches(size.height)) in"
         return Locale.current.measurementSystem == .metric ? metric : "\(imperial) (\(metric))"
     }
-}
-
-/// Parses a PDF date: D:YYYYMMDDHHmmSSOHH'mm' with everything after the
-/// year optional.
-func pdfDate(_ string: String) -> Date? {
-    var s = Substring(string.trimmingCharacters(in: .whitespaces))
-    if s.hasPrefix("D:") { s = s.dropFirst(2) }
-    let digits = s.prefix { $0.isNumber }
-    guard digits.count >= 4 else { return nil }
-    func part(_ offset: Int, _ length: Int, _ fallback: Int) -> Int {
-        guard digits.count >= offset + length else { return fallback }
-        let start = digits.index(digits.startIndex, offsetBy: offset)
-        return Int(digits[start..<digits.index(start, offsetBy: length)]) ?? fallback
-    }
-    var components = DateComponents()
-    components.year = part(0, 4, 0)
-    components.month = part(4, 2, 1)
-    components.day = part(6, 2, 1)
-    components.hour = part(8, 2, 0)
-    components.minute = part(10, 2, 0)
-    components.second = part(12, 2, 0)
-    var rest = s.dropFirst(digits.count)
-    var offset = 0
-    if let sign = rest.first, sign == "+" || sign == "-" {
-        rest = rest.dropFirst()
-        let numbers = rest.split(whereSeparator: { !$0.isNumber }).map { Int($0) ?? 0 }
-        offset = ((numbers.first ?? 0) * 3600 + (numbers.dropFirst().first ?? 0) * 60) * (sign == "-" ? -1 : 1)
-    }
-    components.timeZone = TimeZone(secondsFromGMT: offset)
-    return Calendar(identifier: .gregorian).date(from: components)
 }
 
 private final class FlippedView: NSView {
