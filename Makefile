@@ -43,11 +43,11 @@ corpus: mupdf
 
 # Engine tests: text, search, outline, links, attachments, layers, passwords,
 # and renders compared with Tests/PDFCoreTests/Golden (UPDATE_GOLDEN=1 rewrites them).
-# With the Command Line Tools, SwiftPM sometimes fails to load the Swift
-# Testing macro plugin on the first build after other targets change; a
-# second build always works. So: build (once more if needed), then run.
+# With the Command Line Tools, SwiftPM's macro plugin server often fails to
+# load Swift Testing's macros, so the compiler loads the library itself.
+TESTING_MACROS := $(shell xcode-select -p)/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib
 test: corpus
-	swift build --arch arm64 --build-tests >/dev/null 2>&1 || swift build --arch arm64 --build-tests
+	swift build --arch arm64 --build-tests -Xswiftc -load-plugin-library -Xswiftc "$(TESTING_MACROS)"
 	$(if $(UPDATE_GOLDEN),UPDATE_GOLDEN=1) swift test --arch arm64 --skip-build
 
 # Copy the app to /Applications.
