@@ -17,9 +17,9 @@ final class EditorDocument: NSDocument, EditRecorder {
     var password: String?
     /// The document once unlocked; nil while a password is needed.
     private(set) var model: DocumentModel? {
-        didSet { isUnlocked = model != nil }
+        didSet { isUnlocked = model?.isEditable ?? false }
     }
-    /// `model != nil`, readable from write(to:ofType:).
+    /// Unlocked and editable, readable from write(to:ofType:).
     nonisolated(unsafe) private var isUnlocked = false
 
     override nonisolated class var readableTypes: [String] { ["com.adobe.pdf"] }
@@ -95,7 +95,7 @@ final class EditorDocument: NSDocument, EditRecorder {
     // MARK: Saving
 
     override func write(to url: URL, ofType typeName: String) throws {
-        // Locked and never unlocked: nothing can have changed; copy the file.
+        // Locked, or view-only: nothing can have changed; copy the file.
         guard isUnlocked, let engine else {
             guard let source = fileURL else { throw CocoaError(.fileWriteUnknown) }
             try FileManager.default.copyItem(at: source, to: url)

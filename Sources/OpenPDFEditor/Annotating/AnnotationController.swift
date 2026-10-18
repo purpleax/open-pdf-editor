@@ -17,6 +17,7 @@ enum AnnotationHandle: CaseIterable {
 @MainActor
 final class AnnotationController {
     let model: DocumentModel
+    private var loading = Set<Int>()
 
     init(model: DocumentModel) {
         self.model = model
@@ -41,8 +42,15 @@ final class AnnotationController {
         let list: [Annotation]
         if cachedOnly {
             guard let cached = model.cachedAnnotations(page: page) else {
-                let model = self.model
-                EngineExecutor.background.async(.low) { _ = model.annotations(page: page) }
+                // One load per page at a time, however often the mouse moves.
+                if !loading.contains(page) {
+                    loading.insert(page)
+                    let model = self.model
+                    EngineExecutor.background.async(.low) { [weak self] in
+                        _ = model.annotations(page: page)
+                        DispatchQueue.main.async { self?.loading.remove(page) }
+                    }
+                }
                 return nil
             }
             list = cached.filter { !$0.isReply && !$0.isHidden }

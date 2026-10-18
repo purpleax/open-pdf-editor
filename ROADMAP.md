@@ -86,6 +86,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] Undo and redo through MuPDF's journal; incremental save
   - Autosave in place with Versions; undo survives saving (see Decisions).
 - [x] Flatten annotations (Tools › Flatten Annotations…, undoable)
+- [x] Security review before release: one High (a damaged file repaired mid-session could lose edits) and two Medium (saves upsetting undo; geometry amplification) fixed, with the cheap Lows; see the commit "Fix 0.2.0 review findings"
+  - Left for later (Low): preparing a large PDF for editing runs at open on the main thread (about 1.6 s for a million objects); deleting a reply chain of tens of thousands is slow; a same-length in-place rewrite of the open file isn't detected
 - [x] Added: select, move and resize annotations (handles; line end points); the inspector edits colour, fill, opacity, line width, text size and comment; markup bar (⇧⌘A) with per-tool colour, width, text size and stamp; Delete key; `make selftest`, a scripted run through annotating in a separate test build
 
 ## Phase 3: Pages (0.3.0)

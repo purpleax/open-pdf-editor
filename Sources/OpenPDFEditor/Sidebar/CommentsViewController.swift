@@ -187,8 +187,11 @@ final class CommentsViewController: NSViewController, NSOutlineViewDataSource, N
             var threads: [Int: Thread] = [:]
             var order: [Int] = []
             for a in list where !a.isReply && ![.popup, .link, .widget].contains(a.kind) {
-                threads[a.id] = Thread(a)
-                order.append(a.id)
+                // Annotations without an object number (id 0) can't be told
+                // apart by id: give each its own key.
+                let key = a.id == 0 ? -(order.count + 1) : a.id
+                threads[key] = Thread(a)
+                order.append(key)
             }
             for a in list where a.isReply {
                 guard let parent = a.inReplyTo, let thread = threads[parent] else { continue }
