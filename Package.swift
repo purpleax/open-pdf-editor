@@ -30,7 +30,10 @@ let package = Package(
             name: "OpenPDFEditor",
             dependencies: ["PDFCore", .product(name: "Sparkle", package: "Sparkle")],
             path: "Sources/OpenPDFEditor",
-            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]
+            linkerSettings: [
+                .linkedFramework("PDFKit"),
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
         ),
         // Command-line check that MuPDF opens and renders: pdfsmoke in.pdf out.png [page]
         .executableTarget(

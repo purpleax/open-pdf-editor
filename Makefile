@@ -3,7 +3,7 @@ APP := build/Open PDF Editor.app
 EXE := OpenPDFEditor
 SWIFT_BUILD := swift build -c release --arch arm64
 
-.PHONY: mupdf build smoke corpus test install dmg release hooks clean distclean
+.PHONY: mupdf build icon smoke corpus test install dmg release hooks clean distclean
 
 # MuPDF as Frameworks/MuPDF.xcframework (skipped when up to date).
 mupdf:
@@ -19,12 +19,17 @@ build: mupdf
 	mkdir -p "$(APP)/Contents/MacOS" "$(APP)/Contents/Resources" "$(APP)/Contents/Frameworks"
 	cp "$(BIN)/$(EXE)" "$(APP)/Contents/MacOS/$(EXE)"
 	cp Resources/Info.plist "$(APP)/Contents/Info.plist"
+	cp Resources/AppIcon.icns "$(APP)/Contents/Resources/AppIcon.icns"
 	scripts/acknowledgements.sh > "$(APP)/Contents/Resources/Acknowledgements.txt"
 	# Sparkle, thinned to arm64; its XPC services are only for sandboxed apps.
 	ditto --arch arm64 "$(BIN)/Sparkle.framework" "$(APP)/Contents/Frameworks/Sparkle.framework"
 	rm -rf "$(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" \
 	       "$(APP)/Contents/Frameworks/Sparkle.framework/XPCServices"
 	scripts/sign-app.sh "$(APP)"
+
+# Regenerate Resources/AppIcon.icns.
+icon:
+	swift scripts/make-icon.swift Resources/AppIcon.icns
 
 # Render page 1 of a PDF to build/smoke.png:  make smoke PDF=file.pdf
 smoke: mupdf
