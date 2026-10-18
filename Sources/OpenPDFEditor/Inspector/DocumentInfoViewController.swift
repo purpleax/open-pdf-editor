@@ -6,7 +6,7 @@ import PDFCore
 final class DocumentInfoViewController: NSViewController {
     let viewer: ViewerController
     let fileURL: URL?
-    private let grid = NSGridView()
+    private let list = NSStackView()
     private var pageSizeField: NSTextField?
 
     init(viewer: ViewerController, fileURL: URL?) {
@@ -21,9 +21,10 @@ final class DocumentInfoViewController: NSViewController {
     override func loadView() {
         let title = NSTextField(labelWithString: "Document")
         title.font = .boldSystemFont(ofSize: NSFont.systemFontSize + 1)
-        grid.rowSpacing = 6
-        grid.columnSpacing = 8
-        let stack = NSStackView(views: [title, grid])
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = 10
+        let stack = NSStackView(views: [title, list])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
@@ -77,18 +78,27 @@ final class DocumentInfoViewController: NSViewController {
             rows.append(("File Size", size.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }))
             rows.append(("Location", url.deletingLastPathComponent().path))
         }
+        // Each property's name above its value, which suits a narrow panel.
         for (label, value) in rows {
-            let name = NSTextField(labelWithString: label + ":")
+            let name = NSTextField(labelWithString: label)
+            name.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
             name.textColor = .secondaryLabelColor
-            name.alignment = .right
             let field = NSTextField(wrappingLabelWithString: value ?? "—")
             field.isSelectable = true
-            field.preferredMaxLayoutWidth = 170
+            field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             if label == "Page Size" { pageSizeField = field }
-            grid.addRow(with: [name, field])
+            let pair = NSStackView(views: [name, field])
+            pair.orientation = .vertical
+            pair.alignment = .leading
+            pair.spacing = 1
+            list.addArrangedSubview(pair)
+            pair.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+            field.widthAnchor.constraint(equalTo: pair.widthAnchor).isActive = true
+            pair.setAccessibilityElement(true)
+            pair.setAccessibilityRole(.group)
+            pair.setAccessibilityLabel(label)
         }
-        grid.column(at: 0).xPlacement = .trailing
-        grid.rowAlignment = .firstBaseline
+        if let stack = list.superview { list.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true }
         pageDidChange()
     }
 

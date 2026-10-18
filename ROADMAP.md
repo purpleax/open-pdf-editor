@@ -30,23 +30,31 @@ Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends w
 - [x] Sparkle linked, with Check for Updates… in the app menu and an EdDSA key in the Keychain
 - [x] Signing, packaging (DMG and zip, notarised) and release scripts adapted from mdview, plus the appcast
 - [x] Public repository on GitHub, pushed
-- [ ] App icon
+- [x] App icon (`make icon`)
 
 ## Phase 1: Viewer (0.1.0)
 
-- [ ] Tiled page view rendering at the screen's scale, with a page cache and low-resolution placeholders
-- [ ] Continuous, single-page and two-page layouts; fit to width, fit to page, actual size; zoom with pinch and ⌘+/⌘−
-- [ ] Rotate view
-- [ ] Thumbnails sidebar and outline sidebar
-- [ ] Find with highlighted results and a results list
-- [ ] Text selection and copy
-- [ ] Password-protected PDFs
-- [ ] Document properties, attachments and layers panels
-- [ ] Print
-- [ ] Window tabs, toolbar, full screen, Dark Mode
-- [ ] VoiceOver reads page text
-- [ ] About window with the open-source licences
-- [ ] Test corpus and render tests
+- [x] Tiled page view rendering at the screen's scale, with a page cache and low-resolution placeholders
+  - Pages are layers: a 320-pixel preview of the whole page under 512-pixel tiles for the current zoom; tiles of the previous zoom stay until the new ones arrive. Zoom is the scroll view's magnification.
+- [x] Continuous, single-page and two-page layouts; fit to width, fit to page, actual size; zoom with pinch and ⌘+/⌘−
+  - Two-page layouts can show the cover page on its own (on by default). Fit Page in two-page layouts fits a full spread.
+- [x] Rotate view
+- [x] Thumbnails sidebar and outline sidebar
+- [x] Find with highlighted results and a results list
+  - Match Case and Whole Words; accents are ignored; matches across line breaks are found.
+- [x] Text selection and copy
+  - Drag, double-click for a word, triple-click for a paragraph, Shift-click to extend, across pages.
+- [x] Password-protected PDFs
+- [x] Document properties, attachments and layers panels
+  - Properties are in the inspector (⌥⌘I); attachments and layers are sidebar tabs. Attachments can be saved, not opened.
+- [x] Print
+- [x] Window tabs, toolbar, full screen, Dark Mode
+  - Dark Mode uses the system's colours (pages stay white); not yet checked by eye.
+- [x] VoiceOver reads page text
+  - Every page is a text element with its lines and character positions, including pages off screen; not yet tried with VoiceOver itself.
+- [x] About window with the open-source licences (Help › Acknowledgements)
+- [x] Test corpus and render tests (`make test`)
+- [x] Added: links (pages in the document, and web and mail links), Back and Forward (⌘[ ⌘]), Go to Page (⌥⌘G), and windows reopening at the same page and zoom
 
 ## Phase 2: Annotations (0.2.0)
 
@@ -100,3 +108,5 @@ Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends w
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **0.1.0**: The first release: a fast PDF viewer built on MuPDF. Pages render sharply at any zoom, with continuous, single-page and two-page layouts, Fit Width, Fit Page and rotation. The sidebar has page thumbnails, the outline, search results with highlighted matches, attachments you can save and layers you can show or hide. Select and copy text, follow links, go back and forward, open password-protected PDFs, print, and see the document's properties in the inspector. Works in tabs, full screen and Dark Mode, with VoiceOver, and updates itself.

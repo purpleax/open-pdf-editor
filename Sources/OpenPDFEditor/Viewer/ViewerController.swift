@@ -86,6 +86,16 @@ final class ViewerController: NSViewController, PagesViewDelegate {
                 self.onStateChange?()
             }
         }
+        // Scrollers switch between overlay and always-visible (e.g. when a
+        // mouse is connected), changing the width a fit zoom must use.
+        center.addObserver(forName: NSScroller.preferredScrollerStyleDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                DispatchQueue.main.async {
+                    if self.zoomMode != .custom { self.applyZoomMode(keeping: self.anchor()) }
+                }
+            }
+        }
         center.addObserver(forName: DocumentModel.renderingDidChange, object: model, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }

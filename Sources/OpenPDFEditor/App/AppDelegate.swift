@@ -27,6 +27,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// The tab bar's + button: there are no new PDFs to make yet, so it opens one.
+    @objc func newWindowForTab(_ sender: Any?) {
+        NSDocumentController.shared.openDocument(sender)
+    }
+
     @objc func showAbout(_ sender: Any?) {
         let credits = NSMutableAttributedString(
             string: "Free software under the GNU Affero General Public License 3.0.\n",

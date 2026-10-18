@@ -97,7 +97,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         let contentItem = NSSplitViewItem(viewController: viewer)
         contentItem.minimumThickness = 300
         let inspectorItem = NSSplitViewItem(inspectorWithViewController: inspector)
-        inspectorItem.minimumThickness = 240
+        inspectorItem.minimumThickness = 220
         inspectorItem.maximumThickness = 360
         inspectorItem.isCollapsed = true
         split.addSplitViewItem(sidebarItem)

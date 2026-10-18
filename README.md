@@ -2,7 +2,15 @@
 
 A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.com) engine. It aims to cover what commercial editors such as Foxit PDF Editor do: viewing, annotation, forms, page management, editing, redaction, signing and OCR, in a native macOS app.
 
-**Status:** early development. The foundations are in place and the first public version, a viewer, is next. See [ROADMAP.md](ROADMAP.md) for the plan and [SPEC.md](SPEC.md) for the full feature list.
+**Status:** version 0.1.0 is a viewer. Annotation, forms, page management and editing follow phase by phase: see [ROADMAP.md](ROADMAP.md) for the plan and [SPEC.md](SPEC.md) for the full feature list.
+
+## What it does today
+
+- Sharp rendering at any zoom, with continuous, single-page and two-page layouts, Fit Width, Fit Page and rotation
+- Thumbnails, outline, search results, attachments and layers in the sidebar; document properties in the inspector
+- Find with highlighted matches, text selection and copy, links, Back and Forward
+- Password-protected PDFs, printing, window tabs, full screen, Dark Mode and VoiceOver
+- Automatic updates
 
 ## Requirements
 
@@ -33,6 +41,7 @@ Other targets:
 
 | Command | What it does |
 | --- | --- |
+| `make test` | Generates the test PDFs and runs the engine and layout tests |
 | `make smoke PDF=file.pdf` | Renders page 1 of a PDF to `build/smoke.png` with MuPDF |
 | `make install` | Copies the app to /Applications |
 | `make dmg` | Builds the DMG and zip in `dist/`, notarised when signing is set up |
@@ -45,7 +54,8 @@ Other targets:
 | --- | --- |
 | `Sources/MuPDFBridge` | C wrappers around MuPDF that turn its exceptions into error values |
 | `Sources/PDFCore` | Swift types over the bridge, shared by the app and tools |
-| `Sources/OpenPDFEditor` | The AppKit app |
+| `Sources/OpenPDFEditor` | The AppKit app: viewer, sidebar, inspector, window and menus |
+| `Tests` | Engine and layout tests, golden images, and the script that generates the test PDFs |
 | `Sources/pdfsmoke` | A command-line check that MuPDF opens and renders a document |
 | `thirdparty/mupdf` | MuPDF, as a git submodule |
 | `scripts` | MuPDF build, signing, packaging and release scripts |
