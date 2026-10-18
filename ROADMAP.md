@@ -19,6 +19,7 @@ Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends w
 | Digital signatures | MuPDF's signer callbacks backed by Security.framework (CMS) and Keychain identities; verification against the system trust store. No bundled OpenSSL. | 2026-10-18 |
 | Printing | The saved PDF handed to PDFKit's print operation, for the native print panel | 2026-10-18 |
 | Undo | MuPDF's document journal, bridged to `NSUndoManager` | 2026-10-18 |
+| Security review | Before every release, a separate review acting as a security researcher scans the code (the C bridge, PDF parsing, links, attachments, the update path and release scripts). Findings above Low are fixed before publishing. | 2026-10-18 |
 | Saving | Incremental saves by default (keeps signatures valid). Redaction and Reduce File Size force a full rewrite with garbage collection. | 2026-10-18 |
 
 ## Phase 0: Foundations
