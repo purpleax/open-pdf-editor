@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Open PDF Editor</title>
+    <link>https://github.com/purpleax/open-pdf-editor</link>
+    <description>Updates for Open PDF Editor</description>
+    <language>en</language>
+    <item>
+      <title>Open PDF Editor 0.1.0</title>
+      <pubDate>Sun, 18 Oct 2026 12:38:23 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.1.0</link>
+      <sparkle:version>1</sparkle:version>
+      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.1.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">The first release: a fast PDF viewer built on MuPDF. Pages render sharply at any zoom, with continuous, single-page and two-page layouts, Fit Width, Fit Page and rotation. The sidebar has page thumbnails, the outline, search results with highlighted matches, attachments you can save and layers you can show or hide. Select and copy text, follow links, go back and forward, open password-protected PDFs, print, and see the document's properties in the inspector. Works in tabs, full screen and Dark Mode, with VoiceOver, and updates itself.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.1.0/Open-PDF-Editor-0.1.0.zip" sparkle:edSignature="n1Jj2xeRn93CSLf/Ndamu4w1qp9MTHhiovS6/SKmI1HXiUK5yiu+Qe5RH3hVzzdI9DYPW6efXdShdDE2QcbbCA==" length="30776264" type="application/octet-stream"/>
+    </item>
+  </channel>
+</rss>
