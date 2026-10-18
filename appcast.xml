@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 0.1.1</title>
-      <pubDate>Sun, 18 Oct 2026 13:10:04 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.1.1</link>
-      <sparkle:version>2</sparkle:version>
-      <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
+      <title>Open PDF Editor 0.2.0</title>
+      <pubDate>Sun, 18 Oct 2026 20:47:27 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.2.0</link>
+      <sparkle:version>3</sparkle:version>
+      <sparkle:shortVersionString>0.2.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.1.1</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Security fixes. PDFs with impossibly large pages can no longer crash the app or use up memory, and a deeply nested outline can no longer crash it. Saving an attachment now asks first when the file could contain an app or a script, and saved attachments are checked by macOS before they open. A document with a malformed date no longer crashes the inspector. Only real PDFs are opened, and a rare crash after showing or hiding a layer is fixed.</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.1.1/Open-PDF-Editor-0.1.1.zip" sparkle:edSignature="559x5j2zRcz6xioLp5CWfvZ1x5++K4CecQGaxCcNfp8xoqg88WbcMV+QkY2+VVsashZ39d6dKZ1CXNiJ3QG+Cg==" length="30653559" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.2.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Annotations. Highlight, underline and strike through text; add notes, text boxes, rectangles, ovals, lines, arrows, freehand drawings and stamps from the new markup toolbar (⇧⌘A). Select an annotation to move or resize it, or change its colour, fill, opacity, line width and text in the inspector. The new Comments sidebar lists every annotation with replies and review status, and filters by type, author and status. Everything can be undone, even after saving; documents save automatically, with File › Revert To for earlier versions. Saving adds your changes to the end of the file, so digital signatures stay valid. Tools › Flatten Annotations makes them part of the pages.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.2.0/Open-PDF-Editor-0.2.0.zip" sparkle:edSignature="0bjaClcRayI3FLV5J8m2091ArPC519W4dgRyP+TeBKrBFn4Cez/c4zBvK5ZxrRPe7SsnbVywCbu4hoyIprPaDg==" length="31176827" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
