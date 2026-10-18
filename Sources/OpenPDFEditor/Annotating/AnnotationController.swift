@@ -34,9 +34,22 @@ final class AnnotationController {
     }
 
     /// The topmost annotation at a point in page space. `tolerance` (points)
-    /// widens thin things like lines.
-    func hit(_ point: CGPoint, page: Int, tolerance: CGFloat) -> Annotation? {
-        for annotation in visibleAnnotations(page: page).reversed() where contains(annotation, point, tolerance) {
+    /// widens thin things like lines. With `cachedOnly` (the cursor, as the
+    /// mouse moves) nothing is loaded; the page's annotations are fetched in
+    /// the background instead.
+    func hit(_ point: CGPoint, page: Int, tolerance: CGFloat, cachedOnly: Bool = false) -> Annotation? {
+        let list: [Annotation]
+        if cachedOnly {
+            guard let cached = model.cachedAnnotations(page: page) else {
+                let model = self.model
+                EngineExecutor.background.async(.low) { _ = model.annotations(page: page) }
+                return nil
+            }
+            list = cached.filter { !$0.isReply && !$0.isHidden }
+        } else {
+            list = visibleAnnotations(page: page)
+        }
+        for annotation in list.reversed() where contains(annotation, point, tolerance) {
             return annotation
         }
         return nil
@@ -70,7 +83,11 @@ final class AnnotationController {
     // MARK: Selection geometry
 
     func canMove(_ a: Annotation) -> Bool {
-        !a.kind.isTextMarkup && a.flags & 0x80 == 0   // not Locked
+        model.isEditable && !a.isReadOnly && !a.kind.isTextMarkup && a.flags & 0x80 == 0   // not Locked
+    }
+
+    func canEdit(_ a: Annotation) -> Bool {
+        model.isEditable && !a.isReadOnly
     }
 
     func canResize(_ a: Annotation) -> Bool {
@@ -240,6 +257,7 @@ final class AnnotationController {
     }
 
     func delete(_ ref: AnnotationRef) throws {
+        if let a = annotation(ref), !canEdit(a) { throw EngineError(code: -1, message: "This annotation can’t be changed.") }
         try model.edit("Delete", pages: [ref.page]) { try $0.deleteAnnotation(page: ref.page, id: ref.id, actionName: "Delete") }
     }
 

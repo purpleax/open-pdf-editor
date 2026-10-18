@@ -33,6 +33,10 @@ struct opdf_doc {
     pthread_mutex_t mupdf_locks[FZ_LOCK_MAX];
     fz_locks_context locks;
 
+    // Set by opdf_prepare_for_editing.
+    bool edits_prepared;
+    bool repaired_before_edits;
+
     pthread_mutex_t pool_lock;
     pthread_cond_t pool_cond;
     fz_context *pool[POOL_SIZE];
@@ -871,6 +875,7 @@ static int annot_id(fz_context *ctx, pdf_annot *annot) {
 }
 
 static pdf_annot *find_annot(fz_context *ctx, pdf_page *page, int id) {
+    if (id <= 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This annotation can't be changed");
     for (pdf_annot *a = pdf_first_annot(ctx, page); a; a = pdf_next_annot(ctx, a))
         if (annot_id(ctx, a) == id) return a;
     fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such annotation");
@@ -886,9 +891,10 @@ static pdf_page *load_pdf_page(fz_context *ctx, fz_document *doc, int number) {
     return pdf;
 }
 
-static void fill_annot(fz_context *ctx, pdf_annot *a, opdf_annot *o) {
+static void fill_annot(fz_context *ctx, pdf_annot *a, opdf_annot *o, int *budget) {
     pdf_obj *obj = pdf_annot_obj(ctx, a);
     o->id = annot_id(ctx, a);
+    o->read_only = o->id == 0;
     o->type = pdf_annot_type(ctx, a);
     o->rect = rect_to(annot_rect(ctx, a));
     pdf_annot_color(ctx, a, &o->color_n, o->color);
@@ -911,6 +917,12 @@ static void fill_annot(fz_context *ctx, pdf_annot *a, opdf_annot *o) {
 
     if (pdf_annot_has_quad_points(ctx, a)) {
         int n = pdf_annot_quad_point_count(ctx, a);
+        if (n > OPDF_MAX_QUADS || n > *budget) {
+            n = n > OPDF_MAX_QUADS ? OPDF_MAX_QUADS : n;
+            if (n > *budget) n = *budget > 0 ? *budget : 0;
+            o->read_only = true;
+        }
+        *budget -= n;
         if (n > 0) {
             o->quads = checked_calloc(ctx, (size_t)n * 8, sizeof(float));
             o->quad_count = n;
@@ -923,14 +935,28 @@ static void fill_annot(fz_context *ctx, pdf_annot *a, opdf_annot *o) {
     }
     if (pdf_annot_has_ink_list(ctx, a)) {
         int strokes = pdf_annot_ink_list_count(ctx, a);
+        if (strokes > OPDF_MAX_INK_STROKES) {
+            strokes = OPDF_MAX_INK_STROKES;
+            o->read_only = true;
+        }
         if (strokes > 0) {
             o->ink_counts = checked_calloc(ctx, (size_t)strokes, sizeof(int));
             o->ink_stroke_count = strokes;
+            // Points are counted against this annotation's and the page's limits.
+            int allowed = *budget < OPDF_MAX_INK_POINTS ? *budget : OPDF_MAX_INK_POINTS;
+            if (allowed < 0) allowed = 0;
             size_t total = 0;
             for (int i = 0; i < strokes; i++) {
-                o->ink_counts[i] = pdf_annot_ink_list_stroke_count(ctx, a, i);
-                total += (size_t)(o->ink_counts[i] > 0 ? o->ink_counts[i] : 0);
+                int n = pdf_annot_ink_list_stroke_count(ctx, a, i);
+                if (n < 0) n = 0;
+                if ((size_t)n > (size_t)allowed - total) {
+                    n = (int)((size_t)allowed - total);
+                    o->read_only = true;
+                }
+                o->ink_counts[i] = n;
+                total += (size_t)n;
             }
+            *budget -= (int)total;
             o->ink_points = checked_calloc(ctx, total * 2, sizeof(float));
             size_t k = 0;
             for (int i = 0; i < strokes; i++)
@@ -974,8 +1000,14 @@ opdf_annot *opdf_annots_load(opdf_doc *d, int page_number, int *count, opdf_erro
     fz_try(ctx) {
         page = fz_load_page(ctx, d->doc, page_number);
         pdf_page *pp = pdf_page_from_fz_page(ctx, page);
-        for (pdf_annot *a = pp ? pdf_first_annot(ctx, pp) : NULL; a; a = pdf_next_annot(ctx, a)) {
+        int budget = OPDF_MAX_PAGE_POINTS;
+        for (pdf_annot *a = pp ? pdf_first_annot(ctx, pp) : NULL; a && n < OPDF_MAX_ANNOTS_PER_PAGE; a = pdf_next_annot(ctx, a)) {
             if (!listed_type(pdf_annot_type(ctx, a))) continue;
+            // An object listed twice in /Annots is listed here once.
+            int id = annot_id(ctx, a);
+            bool seen = false;
+            for (int i = 0; i < n && id != 0 && !seen; i++) seen = items[i].id == id;
+            if (seen) continue;
             if (n == capacity) {
                 int grown = capacity ? capacity * 2 : 16;
                 opdf_annot *bigger = realloc(items, (size_t)grown * sizeof *items);
@@ -985,7 +1017,7 @@ opdf_annot *opdf_annots_load(opdf_doc *d, int page_number, int *count, opdf_erro
             }
             memset(&items[n], 0, sizeof items[n]);
             n++;
-            fill_annot(ctx, a, &items[n - 1]);
+            fill_annot(ctx, a, &items[n - 1], &budget);
         }
     }
     fz_always(ctx)
@@ -1090,11 +1122,17 @@ int opdf_annot_create(opdf_doc *d, int page_number, const opdf_annot_spec *spec,
     fz_var(annot);
     WITH_PAGE_OPERATION(d, page_number, operation, err, {
         annot = pdf_create_annot(ctx, pp, (enum pdf_annot_type)spec->type);
-        apply_spec(ctx, annot, spec, fields);
-        pdf_update_annot(ctx, annot);
-        id = annot_id(ctx, annot);
-        pdf_drop_annot(ctx, annot);
-        annot = NULL;
+        fz_try(ctx) {
+            apply_spec(ctx, annot, spec, fields);
+            pdf_update_annot(ctx, annot);
+            id = annot_id(ctx, annot);
+        }
+        fz_always(ctx) {
+            pdf_drop_annot(ctx, annot);
+            annot = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
     });
     if (err && err->code) id = 0;
     return id;
@@ -1122,6 +1160,19 @@ bool opdf_annot_transform(opdf_doc *d, int page_number, int id, opdf_matrix matr
     fz_var(points);
     WITH_PAGE_OPERATION(d, page_number, operation, err, {
         pdf_annot *a = find_annot(ctx, pp, id);
+        if (pdf_annot_has_quad_points(ctx, a) && pdf_annot_quad_point_count(ctx, a) > OPDF_MAX_QUADS)
+            fz_throw(ctx, FZ_ERROR_LIMIT, "This annotation is too large to change");
+        if (pdf_annot_has_ink_list(ctx, a)) {
+            int strokes = pdf_annot_ink_list_count(ctx, a), points = 0;
+            if (strokes > OPDF_MAX_INK_STROKES) fz_throw(ctx, FZ_ERROR_LIMIT, "This annotation is too large to change");
+            for (int i = 0; i < strokes; i++) {
+                int c = pdf_annot_ink_list_stroke_count(ctx, a, i);
+                if (c < 0 || c > OPDF_MAX_INK_POINTS - points) fz_throw(ctx, FZ_ERROR_LIMIT, "This annotation is too large to change");
+                points += c;
+            }
+        }
+        if (pdf_annot_has_vertices(ctx, a) && pdf_annot_vertex_count(ctx, a) > OPDF_MAX_INK_POINTS)
+            fz_throw(ctx, FZ_ERROR_LIMIT, "This annotation is too large to change");
         if (pdf_annot_has_quad_points(ctx, a)) {
             int n = pdf_annot_quad_point_count(ctx, a);
             if (n > 0) {
@@ -1170,37 +1221,67 @@ bool opdf_annot_transform(opdf_doc *d, int page_number, int id, opdf_matrix matr
 
 bool opdf_annot_delete(opdf_doc *d, int page_number, int id, const char *operation, opdf_error *err) {
     clear_error(err);
-    int *doomed = NULL;
+    pdf_annot **annots = NULL;
+    int *parent = NULL;
+    bool *doomed = NULL;
+    fz_var(annots);
+    fz_var(parent);
     fz_var(doomed);
     WITH_PAGE_OPERATION(d, page_number, operation, err, {
         (void)find_annot(ctx, pp, id);
-        // The annotation, its replies, their replies, ...
-        int total = 0;
-        for (pdf_annot *a = pdf_first_annot(ctx, pp); a; a = pdf_next_annot(ctx, a)) total++;
-        doomed = checked_calloc(ctx, (size_t)total + 1, sizeof *doomed);
+        // The annotation, its replies, their replies, ...: each annotation's
+        // parent is found once, then marks spread down level by level.
         int n = 0;
-        doomed[n++] = id;
-        bool grew = true;
-        while (grew) {
-            grew = false;
-            for (pdf_annot *a = pdf_first_annot(ctx, pp); a; a = pdf_next_annot(ctx, a)) {
-                int self = annot_id(ctx, a);
-                int parent = pdf_to_num(ctx, pdf_dict_get(ctx, pdf_annot_obj(ctx, a), PDF_NAME(IRT)));
-                if (!parent) continue;
-                bool listed = false, parent_listed = false;
-                for (int i = 0; i < n; i++) {
-                    if (doomed[i] == self) listed = true;
-                    if (doomed[i] == parent) parent_listed = true;
+        for (pdf_annot *a = pdf_first_annot(ctx, pp); a; a = pdf_next_annot(ctx, a)) n++;
+        annots = checked_calloc(ctx, (size_t)n, sizeof *annots);
+        parent = checked_calloc(ctx, (size_t)n, sizeof *parent);
+        doomed = checked_calloc(ctx, (size_t)n, sizeof *doomed);
+        int *ids = checked_calloc(ctx, (size_t)n, sizeof *ids);
+        int *irt = checked_calloc(ctx, (size_t)n, sizeof *irt);
+        int i = 0;
+        for (pdf_annot *a = pdf_first_annot(ctx, pp); a && i < n; a = pdf_next_annot(ctx, a), i++) {
+            annots[i] = a;
+            ids[i] = annot_id(ctx, a);
+            irt[i] = pdf_to_num(ctx, pdf_dict_get(ctx, pdf_annot_obj(ctx, a), PDF_NAME(IRT)));
+            doomed[i] = ids[i] == id;
+        }
+        // Parent indices through a sorted copy of the ids: O(n log n).
+        int *order = checked_calloc(ctx, (size_t)n, sizeof *order);
+        for (i = 0; i < n; i++) order[i] = i;
+        for (int gap = n / 2; gap > 0; gap /= 2)   // shell sort by id
+            for (i = gap; i < n; i++)
+                for (int j = i; j >= gap && ids[order[j - gap]] > ids[order[j]]; j -= gap) {
+                    int t = order[j]; order[j] = order[j - gap]; order[j - gap] = t;
                 }
-                if (parent_listed && !listed && n <= total) {
-                    doomed[n++] = self;
-                    grew = true;
-                }
+        for (i = 0; i < n; i++) {
+            parent[i] = -1;
+            if (irt[i] <= 0) continue;
+            int lo = 0, hi = n - 1;
+            while (lo <= hi) {
+                int mid = (lo + hi) / 2, v = ids[order[mid]];
+                if (v == irt[i]) { parent[i] = order[mid]; break; }
+                if (v < irt[i]) lo = mid + 1; else hi = mid - 1;
             }
         }
-        for (int i = n - 1; i >= 0; i--)
-            pdf_delete_annot(ctx, pp, find_annot(ctx, pp, doomed[i]));
+        free(order);
+        free(ids);
+        free(irt);
+        // Each pass marks one more level; a chain of n needs at most n passes,
+        // and cycles stop when nothing changes.
+        bool changed = true;
+        for (int pass = 0; changed && pass <= n; pass++) {
+            changed = false;
+            for (i = 0; i < n; i++)
+                if (!doomed[i] && parent[i] >= 0 && doomed[parent[i]]) {
+                    doomed[i] = true;
+                    changed = true;
+                }
+        }
+        for (i = n - 1; i >= 0; i--)
+            if (doomed[i]) pdf_delete_annot(ctx, pp, annots[i]);
     });
+    free(annots);
+    free(parent);
     free(doomed);
     return !(err && err->code);
 }
@@ -1215,15 +1296,21 @@ int opdf_annot_reply(opdf_doc *d, int page_number, int parent, const char *autho
         pdf_annot *p = find_annot(ctx, pp, parent);
         fz_rect r = annot_rect(ctx, p);
         reply = pdf_create_annot(ctx, pp, PDF_ANNOT_TEXT);
-        pdf_set_annot_rect(ctx, reply, fz_make_rect(r.x0, r.y0, r.x0 + 20, r.y0 + 20));
-        pdf_set_annot_contents(ctx, reply, contents ? contents : "");
-        if (author) pdf_set_annot_author(ctx, reply, author);
-        pdf_dict_put(ctx, pdf_annot_obj(ctx, reply), PDF_NAME(IRT), pdf_annot_obj(ctx, p));
-        pdf_set_annot_modification_date(ctx, reply, (int64_t)time(NULL));
-        pdf_update_annot(ctx, reply);
-        id = annot_id(ctx, reply);
-        pdf_drop_annot(ctx, reply);
-        reply = NULL;
+        fz_try(ctx) {
+            pdf_set_annot_rect(ctx, reply, fz_make_rect(r.x0, r.y0, r.x0 + 20, r.y0 + 20));
+            pdf_set_annot_contents(ctx, reply, contents ? contents : "");
+            if (author) pdf_set_annot_author(ctx, reply, author);
+            pdf_dict_put(ctx, pdf_annot_obj(ctx, reply), PDF_NAME(IRT), pdf_annot_obj(ctx, p));
+            pdf_set_annot_modification_date(ctx, reply, (int64_t)time(NULL));
+            pdf_update_annot(ctx, reply);
+            id = annot_id(ctx, reply);
+        }
+        fz_always(ctx) {
+            pdf_drop_annot(ctx, reply);
+            reply = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
     });
     if (err && err->code) id = 0;
     return id;
@@ -1251,6 +1338,8 @@ bool opdf_annot_set_status(opdf_doc *d, int page_number, int parent, const char 
         } else {
             pdf_annot *target = existing;
             if (!target) {
+                // Held by the page's annotation list too; this reference is
+                // dropped below, or when the operation fails.
                 created = pdf_create_annot(ctx, pp, PDF_ANNOT_TEXT);
                 target = created;
                 fz_rect r = annot_rect(ctx, p);
@@ -1260,16 +1349,20 @@ bool opdf_annot_set_status(opdf_doc *d, int page_number, int parent, const char 
                 pdf_dict_puts_drop(ctx, pdf_annot_obj(ctx, target), "StateModel", pdf_new_text_string(ctx, "Review"));
                 pdf_set_annot_flags(ctx, target, PDF_ANNOT_IS_HIDDEN | PDF_ANNOT_IS_NO_VIEW | PDF_ANNOT_IS_PRINT);
             }
-            pdf_dict_puts_drop(ctx, pdf_annot_obj(ctx, target), "State", pdf_new_text_string(ctx, state));
-            char text[256];
-            fz_snprintf(text, sizeof text, "%s set by %s", state, who);
-            pdf_set_annot_contents(ctx, target, text);
-            pdf_set_annot_modification_date(ctx, target, (int64_t)time(NULL));
-            pdf_update_annot(ctx, target);
-        }
-        if (created) {
-            pdf_drop_annot(ctx, created);
-            created = NULL;
+            fz_try(ctx) {
+                pdf_dict_puts_drop(ctx, pdf_annot_obj(ctx, target), "State", pdf_new_text_string(ctx, state));
+                char text[256];
+                fz_snprintf(text, sizeof text, "%s set by %s", state, who);
+                pdf_set_annot_contents(ctx, target, text);
+                pdf_set_annot_modification_date(ctx, target, (int64_t)time(NULL));
+                pdf_update_annot(ctx, target);
+            }
+            fz_always(ctx) {
+                if (created) pdf_drop_annot(ctx, created);
+                created = NULL;
+            }
+            fz_catch(ctx)
+                fz_rethrow(ctx);
         }
     });
     return !(err && err->code);
@@ -1325,43 +1418,54 @@ bool opdf_save(opdf_doc *d, const char *path, opdf_error *err) {
     lock_doc(d);
     fz_try(ctx) {
         pdf_document *pdf = pdf_specifics(ctx, d->doc);
-        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
-        if (pdf->file && pdf_can_be_saved_incrementally(ctx, pdf)) {
-            // The original bytes...
-            out = fz_new_output_with_path(ctx, path, 0);
-            chunk = fz_malloc(ctx, 1 << 16);
-            fz_seek(ctx, pdf->file, 0, SEEK_SET);
-            size_t n;
-            while ((n = fz_read(ctx, pdf->file, chunk, 1 << 16)) > 0)
-                fz_write_data(ctx, out, chunk, n);
-            fz_close_output(ctx, out);
-            fz_drop_output(ctx, out);
-            out = NULL;
-            // ...then the changes, as a snapshot: an incremental update that
-            // doesn't finalise the document. MuPDF then counts the changes as
-            // saved, so the next snapshot would hold only newer ones and
-            // expect to be appended to this file; restoring the count makes
-            // every save the original plus all the changes, and leaves the
-            // undo journal exactly as it was.
-            int sections = pdf->num_incremental_sections;
-            if (sections > 0) {
-                pdf_write_options opts = pdf_default_write_options;
-                opts.do_incremental = 1;
-                opts.do_snapshot = 1;
-                opts.dont_regenerate_id = 1;
-                fz_try(ctx)
-                    pdf_save_document(ctx, pdf, path, &opts);
-                fz_always(ctx)
-                    pdf->num_incremental_sections = sections;
-                fz_catch(ctx)
-                    fz_rethrow(ctx);
-            }
-        } else {
-            // Repaired files can't take incremental updates: write it whole.
+        if (!pdf || !pdf->file) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        // MuPDF repairs a damaged file when it first trips over it, and a
+        // repair throws away the changes made so far. opdf_prepare_for_editing
+        // makes that happen before any change; if it happened anyway, the
+        // edits are gone from the document and saving would lose them.
+        if (d->edits_prepared && pdf_was_repaired(ctx, pdf) && !d->repaired_before_edits)
+            fz_throw(ctx, FZ_ERROR_FORMAT, "The document is damaged, and MuPDF had to repair it after it was changed. To keep your work, the document wasn't saved.");
+        if (!pdf_can_be_saved_incrementally(ctx, pdf))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "This document can't be saved.");
+        // The saved file starts with the bytes the document was opened from.
+        // If another app rewrote the file in place since, they're different.
+        fz_seek(ctx, pdf->file, 0, SEEK_END);
+        if (fz_tell(ctx, pdf->file) != pdf->file_size)
+            fz_throw(ctx, FZ_ERROR_FORMAT, "The file was changed by another app while it was open. Close it and open it again.");
+
+        // The original bytes...
+        out = fz_new_output_with_path(ctx, path, 0);
+        chunk = fz_malloc(ctx, 1 << 16);
+        fz_seek(ctx, pdf->file, 0, SEEK_SET);
+        size_t n;
+        while ((n = fz_read(ctx, pdf->file, chunk, 1 << 16)) > 0)
+            fz_write_data(ctx, out, chunk, n);
+        fz_close_output(ctx, out);
+        fz_drop_output(ctx, out);
+        out = NULL;
+        // ...then the changes, as a snapshot: an incremental update that
+        // doesn't finalise the document. MuPDF then counts the changes as
+        // saved, so the next snapshot would hold only newer ones and expect
+        // to be appended to this file: restoring the count makes every save
+        // the original plus all the changes. Saving is itself an operation
+        // MuPDF would journal; with the journal set aside, undo and redo are
+        // exactly as they were.
+        int sections = pdf->num_incremental_sections;
+        if (sections > 0) {
+            pdf_journal *journal = pdf->journal;
+            pdf->journal = NULL;
             pdf_write_options opts = pdf_default_write_options;
-            opts.do_compress = 1;
-            opts.do_use_objstms = 1;
-            pdf_save_document(ctx, pdf, path, &opts);
+            opts.do_incremental = 1;
+            opts.do_snapshot = 1;
+            opts.dont_regenerate_id = 1;
+            fz_try(ctx)
+                pdf_save_document(ctx, pdf, path, &opts);
+            fz_always(ctx) {
+                pdf->journal = journal;
+                pdf->num_incremental_sections = sections;
+            }
+            fz_catch(ctx)
+                fz_rethrow(ctx);
         }
         ok = true;
     }
@@ -1375,13 +1479,80 @@ bool opdf_save(opdf_doc *d, const char *path, opdf_error *err) {
     return ok;
 }
 
+bool opdf_prepare_for_editing(opdf_doc *d, const char *password, bool *repaired, opdf_error *err) {
+    clear_error(err);
+    *repaired = false;
+    fz_context *ctx = d->ctx;
+    fz_buffer *buf = NULL;
+    fz_output *out = NULL;
+    fz_stream *stm = NULL;
+    pdf_document *fresh = NULL;
+    bool ok = false;
+    fz_var(buf);
+    fz_var(out);
+    fz_var(stm);
+    fz_var(fresh);
+    fz_var(ok);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (pdf && !d->edits_prepared) {
+            // Load every object: any repair happens now, before changes exist.
+            pdf_check_document(ctx, pdf);
+            if (pdf_was_repaired(ctx, pdf)) {
+                // Write the repaired document out whole and work on that copy
+                // from now on, so it saves incrementally and can't need
+                // repairing again.
+                buf = fz_new_buffer(ctx, 1 << 20);
+                out = fz_new_output_with_buffer(ctx, buf);
+                pdf_journal *journal = pdf->journal;
+                pdf->journal = NULL;
+                fz_try(ctx)
+                    pdf_write_document(ctx, pdf, out, NULL);
+                fz_always(ctx)
+                    pdf->journal = journal;
+                fz_catch(ctx)
+                    fz_rethrow(ctx);
+                fz_close_output(ctx, out);
+                stm = fz_open_buffer(ctx, buf);
+                fresh = pdf_open_document_with_stream(ctx, stm);
+                if (pdf_needs_password(ctx, fresh) && !(password && pdf_authenticate_password(ctx, fresh, password)))
+                    fz_throw(ctx, FZ_ERROR_ARGUMENT, "Could not unlock the repaired document");
+                pdf_check_document(ctx, fresh);
+                if (pdf_was_repaired(ctx, fresh))
+                    fz_throw(ctx, FZ_ERROR_FORMAT, "The document is too damaged to edit");
+                pdf_enable_journal(ctx, fresh);
+                fz_drop_document(ctx, d->doc);
+                d->doc = (fz_document *)fresh;
+                fresh = NULL;
+                *repaired = true;
+            }
+            d->repaired_before_edits = pdf_was_repaired(ctx, pdf_specifics(ctx, d->doc));
+        }
+        d->edits_prepared = true;
+        ok = true;
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, out);
+        fz_drop_stream(ctx, stm);
+        fz_drop_buffer(ctx, buf);
+        fz_drop_document(ctx, (fz_document *)fresh);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    unlock_doc(d);
+    return ok;
+}
+
 bool opdf_flatten_annotations(opdf_doc *d, opdf_error *err) {
     clear_error(err);
     fz_context *ctx = d->ctx;
     pdf_page *page = NULL;
+    pdf_annot **replies = NULL;
     int began = 0;
     bool ok = false;
     fz_var(page);
+    fz_var(replies);
     fz_var(began);
     fz_var(ok);
     lock_doc(d);
@@ -1394,15 +1565,18 @@ bool opdf_flatten_annotations(opdf_doc *d, opdf_error *err) {
         int pages = pdf_count_pages(ctx, pdf);
         for (int i = 0; i < pages; i++) {
             page = pdf_load_page(ctx, pdf, i);
-            bool removed = true;
-            while (removed) {
-                removed = false;
-                for (pdf_annot *a = pdf_first_annot(ctx, page); a; a = pdf_next_annot(ctx, a))
-                    if (is_reply(ctx, a)) {
-                        pdf_delete_annot(ctx, page, a);
-                        removed = true;
-                        break;
-                    }
+            // Collected in one pass, then deleted.
+            int n = 0;
+            for (pdf_annot *a = pdf_first_annot(ctx, page); a; a = pdf_next_annot(ctx, a))
+                if (is_reply(ctx, a)) n++;
+            if (n > 0) {
+                replies = checked_calloc(ctx, (size_t)n, sizeof *replies);
+                int k = 0;
+                for (pdf_annot *a = pdf_first_annot(ctx, page); a && k < n; a = pdf_next_annot(ctx, a))
+                    if (is_reply(ctx, a)) replies[k++] = a;
+                for (int j = 0; j < k; j++) pdf_delete_annot(ctx, page, replies[j]);
+                free(replies);
+                replies = NULL;
             }
             fz_drop_page(ctx, (fz_page *)page);
             page = NULL;
@@ -1412,8 +1586,10 @@ bool opdf_flatten_annotations(opdf_doc *d, opdf_error *err) {
         began = 0;
         ok = true;
     }
-    fz_always(ctx)
+    fz_always(ctx) {
         fz_drop_page(ctx, (fz_page *)page);
+        free(replies);
+    }
     fz_catch(ctx) {
         set_error(err, ctx);
         if (began) {

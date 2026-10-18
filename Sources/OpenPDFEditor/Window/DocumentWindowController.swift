@@ -596,12 +596,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(showOutline(_:)): setState(sidebar?.tab == .outline && sidebarItem?.isCollapsed == false)
         case #selector(showSearchResults(_:)): setState(sidebar?.tab == .search && sidebarItem?.isCollapsed == false)
         case #selector(showComments(_:)): setState(sidebar?.tab == .comments && sidebarItem?.isCollapsed == false)
-        case #selector(toggleMarkupBar(_:)): setState(markupAccessory?.isHidden == false)
+        case #selector(toggleMarkupBar(_:)):
+            setState(markupAccessory?.isHidden == false)
+            return viewer.model.isEditable
         case #selector(chooseTool(_:)):
             setState(AnnotationTool.allCases.indices.contains(tagOfValidatedItem) && viewer.tool == AnnotationTool.allCases[tagOfValidatedItem])
-            return viewer.model.engine.isPDF
+            return viewer.model.isEditable
         case #selector(flattenAnnotations(_:)):
-            return (0..<viewer.model.pageCount).contains { !viewer.model.annotations(page: $0).isEmpty }
+            return viewer.model.isEditable
         case #selector(showAttachments(_:)): setState(sidebar?.tab == .attachments && sidebarItem?.isCollapsed == false)
         case #selector(showLayers(_:)): setState(sidebar?.tab == .layers && sidebarItem?.isCollapsed == false)
         case #selector(showDocumentInfo(_:)): setState(inspectorItem?.isCollapsed == false)

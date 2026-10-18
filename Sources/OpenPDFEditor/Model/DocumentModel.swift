@@ -37,8 +37,13 @@ final class DocumentModel: @unchecked Sendable {
 
     @MainActor weak var editRecorder: EditRecorder?
 
-    init(engine: EngineDocument) throws {
+    /// False for documents that can be viewed but not changed (damaged
+    /// beyond repair, or not PDF).
+    let isEditable: Bool
+
+    init(engine: EngineDocument, isEditable: Bool) throws {
         self.engine = engine
+        self.isEditable = isEditable
         pageBounds = try engine.pageBounds()
     }
 
@@ -99,6 +104,11 @@ final class DocumentModel: @unchecked Sendable {
         return annotations
     }
 
+    /// The page's annotations if already loaded (for the cursor, which mustn't load).
+    func cachedAnnotations(page: Int) -> [Annotation]? {
+        lock.withLock { annotationCache[page] }
+    }
+
     func annotation(page: Int, id: Int) -> Annotation? {
         annotations(page: page).first { $0.id == id }
     }
@@ -108,6 +118,7 @@ final class DocumentModel: @unchecked Sendable {
     @MainActor
     @discardableResult
     func edit<T>(_ actionName: String, pages: Set<Int>, _ body: (EngineDocument) throws -> T) throws -> T {
+        guard isEditable else { throw EngineError(code: -1, message: "This document can’t be changed.") }
         let result = try body(engine)
         pagesChanged(pages)
         editRecorder?.didEdit(actionName: actionName, pages: pages)

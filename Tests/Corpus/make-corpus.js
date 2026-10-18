@@ -231,6 +231,82 @@ function makeDeepOutline() {
 	doc.save(out + "/deep-outline.pdf", "compress")
 }
 
+// Three pages with a classic xref table, which make-corpus.sh then damages:
+// one entry for page 3 points to the wrong place (lazy.pdf).
+function makeLazySource() {
+	var doc = newDocument()
+	for (var i = 1; i <= 3; i++) addTextPage(doc, LETTER, [[72, 90, 24, "Lazy page " + i]])
+	doc.save(out + "/lazy-source.pdf", "")
+}
+
+// The text document with an xref stream, as most modern PDFs have.
+function makeXrefStream() {
+	var doc = new PDFDocument(out + "/text.pdf")
+	doc.save(out + "/xrefstream.pdf", "compress,objstms")
+}
+
+// One 20,000-point stroke referenced 1,000 times in an /InkList.
+function makeInkBomb() {
+	var doc = newDocument()
+	addTextPage(doc, LETTER, [[72, 90, 24, "Ink bomb"]])
+	var stroke = doc.newArray()
+	for (var i = 0; i < 20000; i++) { stroke.push(100 + (i % 400)); stroke.push(100 + (i % 500)) }
+	var strokeRef = doc.addObject(stroke)
+	var ink = doc.newArray()
+	for (var j = 0; j < 1000; j++) ink.push(strokeRef)
+	var annot = doc.newDictionary()
+	annot.put("Type", doc.newName("Annot"))
+	annot.put("Subtype", doc.newName("Ink"))
+	var rect = doc.newArray(); rect.push(100); rect.push(100); rect.push(500); rect.push(600)
+	annot.put("Rect", rect)
+	annot.put("InkList", ink)
+	var annots = doc.newArray(); annots.push(doc.addObject(annot))
+	doc.findPage(0).put("Annots", annots)
+	doc.save(out + "/inkbomb.pdf", "compress")
+}
+
+// A direct (unnumbered) annotation, and one object listed twice in /Annots.
+function makeDupes() {
+	var doc = newDocument()
+	addTextPage(doc, LETTER, [[72, 90, 24, "Duplicates"]])
+	function square(x) {
+		var d = doc.newDictionary()
+		d.put("Type", doc.newName("Annot"))
+		d.put("Subtype", doc.newName("Square"))
+		var r = doc.newArray(); r.push(x); r.push(500); r.push(x + 80); r.push(580)
+		d.put("Rect", r)
+		return d
+	}
+	var annots = doc.newArray()
+	annots.push(square(72))                       // direct
+	var shared = doc.addObject(square(200))
+	annots.push(shared)
+	annots.push(shared)                           // twice
+	doc.findPage(0).put("Annots", annots)
+	doc.save(out + "/dupes.pdf", "compress")
+}
+
+// A note with a chain of 3,000 replies, each replying to the last.
+function makeReplyChain() {
+	var doc = newDocument()
+	addTextPage(doc, LETTER, [[72, 90, 24, "Reply chain"]])
+	var annots = doc.newArray()
+	var previous = null
+	for (var i = 0; i <= 3000; i++) {
+		var d = doc.newDictionary()
+		d.put("Type", doc.newName("Annot"))
+		d.put("Subtype", doc.newName("Text"))
+		var r = doc.newArray(); r.push(300); r.push(300); r.push(320); r.push(320)
+		d.put("Rect", r)
+		d.put("Contents", doc.newString(i == 0 ? "Root" : "Reply " + i))
+		if (previous) d.put("IRT", previous)
+		previous = doc.addObject(d)
+		annots.push(previous)
+	}
+	doc.findPage(0).put("Annots", annots)
+	doc.save(out + "/chain.pdf", "compress")
+}
+
 // An HTML file with a .pdf name: must not open in another engine.
 function makeNotAPDF() {
 	var buffer = new Buffer()
@@ -239,6 +315,11 @@ function makeNotAPDF() {
 }
 
 makeText()
+makeXrefStream()
+makeLazySource()
+makeInkBomb()
+makeDupes()
+makeReplyChain()
 makeSigned()
 makeHuge()
 makeDeepOutline()

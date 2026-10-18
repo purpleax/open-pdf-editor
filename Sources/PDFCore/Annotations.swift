@@ -86,6 +86,9 @@ public struct Annotation: Equatable, Sendable, Identifiable {
     public var lineEndings: (start: LineEnding, end: LineEnding)
     public var fontSize: CGFloat
     public var textColor: PDFColor?
+    /// Too large (cut short when read) or without an object of its own: shown
+    /// but not changeable.
+    public var isReadOnly: Bool
 
     public static func == (a: Annotation, b: Annotation) -> Bool {
         a.page == b.page && a.id == b.id && a.kind == b.kind && a.rect == b.rect && a.color == b.color
@@ -156,6 +159,7 @@ public struct Annotation: Equatable, Sendable, Identifiable {
         lineEndings = (LineEnding(rawValue: Int(a.line_start)) ?? .none, LineEnding(rawValue: Int(a.line_end)) ?? .none)
         fontSize = CGFloat(a.font_size)
         textColor = color(a.text_color_n, a.text_color)
+        isReadOnly = a.read_only
     }
 }
 
@@ -238,6 +242,17 @@ extension EngineDocument {
     public func setStatus(page: Int, of parent: Int, author: String, state: String?) throws {
         var error = opdf_error()
         guard opdf_annot_set_status(handle, Int32(page), Int32(parent), author, state, &error) else { throw EngineError(error) }
+    }
+
+    /// Call once unlocked, before any change: makes MuPDF repair a damaged
+    /// file now rather than mid-edit (which would lose the changes), and
+    /// works on a repaired copy if it had to. True when it was repaired.
+    @discardableResult
+    public func prepareForEditing(password: String?) throws -> Bool {
+        var error = opdf_error()
+        var repaired = false
+        guard opdf_prepare_for_editing(handle, password, &repaired, &error) else { throw EngineError(error) }
+        return repaired
     }
 
     public var canUndo: Bool { opdf_can_undo(handle) }

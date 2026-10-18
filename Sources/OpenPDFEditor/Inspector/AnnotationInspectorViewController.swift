@@ -120,6 +120,11 @@ final class AnnotationInspectorViewController: NSViewController, NSTextViewDeleg
             return
         }
         view.isHidden = false
+        let editable = viewer.annotations.canEdit(a)
+        for control in [colorWell, fillWell, fillCheckbox, opacitySlider, widthPopup, sizePopup, deleteButton] as [NSControl] {
+            control.isEnabled = editable
+        }
+        commentView.isEditable = editable
         titleLabel.stringValue = a.kind == .stamp && !a.iconName.isEmpty ? "Stamp: \(a.iconName)" : a.kind.name
         var detail = [a.author]
         if let date = a.modified { detail.append(date.formatted(date: .abbreviated, time: .shortened)) }

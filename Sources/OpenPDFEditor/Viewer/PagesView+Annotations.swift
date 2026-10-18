@@ -17,6 +17,7 @@ extension PagesView {
             return
         }
         let onPage = layout.frames[page]?.contains(location) == true
+        if !model.isEditable && tool != .select { tool = .select }
         switch tool {
         case .select:
             if let ref = selectedAnnotation, ref.page == page, let a = annotations.annotation(ref),
@@ -241,11 +242,11 @@ extension PagesView {
     func annotationCursor(at location: NSPoint) -> NSCursor? {
         guard let annotations, let (page, point) = pageAndPoint(at: location),
               layout.frames[page]?.contains(location) == true else { return nil }
-        if let ref = selectedAnnotation, ref.page == page, let a = annotations.annotation(ref),
+        if let ref = selectedAnnotation, ref.page == page, let a = annotations.model.cachedAnnotations(page: page)?.first(where: { $0.id == ref.id }),
            annotations.handles(for: a).contains(where: { hypot($0.1.x - point.x, $0.1.y - point.y) <= tolerance }) {
             return .crosshair
         }
-        if let a = annotations.hit(point, page: page, tolerance: tolerance) {
+        if let a = annotations.hit(point, page: page, tolerance: tolerance, cachedOnly: true) {
             return annotations.canMove(a) ? .openHand : .arrow
         }
         return nil

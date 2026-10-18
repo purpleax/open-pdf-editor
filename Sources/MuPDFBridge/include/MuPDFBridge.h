@@ -208,9 +208,22 @@ typedef struct {
     float font_size;     // FreeText
     int text_color_n;
     float text_color[4];
+    // Can't be changed here: its geometry was too large and has been cut
+    // short, or it has no object number of its own (id 0).
+    bool read_only;
 } opdf_annot;
 
-// Every annotation on a page except links, popups and form fields.
+// Limits on what is read from a file, so a crafted file can't make the app
+// allocate or loop without bound. Annotations over a limit are cut short
+// and marked read-only.
+#define OPDF_MAX_ANNOTS_PER_PAGE 5000
+#define OPDF_MAX_QUADS 10000
+#define OPDF_MAX_INK_STROKES 1000
+#define OPDF_MAX_INK_POINTS 100000
+#define OPDF_MAX_PAGE_POINTS 500000
+
+// Every annotation on a page except links, popups and form fields (at most
+// OPDF_MAX_ANNOTS_PER_PAGE, each listed once).
 opdf_annot *opdf_annots_load(opdf_doc *doc, int page, int *count, opdf_error *err);
 void opdf_annots_free(opdf_annot *items, int count);
 
@@ -270,6 +283,14 @@ int opdf_annot_reply(opdf_doc *doc, int page, int parent, const char *author, co
 bool opdf_annot_set_status(opdf_doc *doc, int page, int parent, const char *author, const char *state, opdf_error *err);
 
 // --- Undo, saving, flattening ---------------------------------------------
+
+// Call once the document is unlocked and before any change. Loads every
+// object so that MuPDF repairs a damaged file now: a repair later would
+// throw away the changes made since opening. A repaired file is rewritten
+// in memory and reopened from there (password: for encrypted files), so it
+// can be saved incrementally like any other. *repaired says whether that
+// happened.
+bool opdf_prepare_for_editing(opdf_doc *doc, const char *password, bool *repaired, opdf_error *err);
 
 bool opdf_can_undo(opdf_doc *doc);
 bool opdf_can_redo(opdf_doc *doc);

@@ -47,7 +47,17 @@ final class EditorDocument: NSDocument, EditRecorder {
     func makeModel() throws -> DocumentModel {
         if let model { return model }
         guard let engine else { throw CocoaError(.fileReadUnknown) }
-        let model = try DocumentModel(engine: engine)
+        // Before any change: a damaged file is repaired (and copied) now. If
+        // even that fails, the document opens for viewing only.
+        var editable = engine.isPDF
+        if editable {
+            do {
+                try engine.prepareForEditing(password: password)
+            } catch {
+                editable = false
+            }
+        }
+        let model = try DocumentModel(engine: engine, isEditable: editable)
         model.editRecorder = self
         self.model = model
         return model
@@ -117,17 +127,20 @@ final class EditorDocument: NSDocument, EditRecorder {
     /// ranges and scaling, from a copy that includes unsaved changes.
     override func printOperation(withSettings printSettings: [NSPrintInfo.AttributeKey: Any]) throws -> NSPrintOperation {
         var url = fileURL
+        var copy: URL?
+        // Removed on every way out; PDFKit has read it by then.
+        defer { if let copy { try? FileManager.default.removeItem(at: copy) } }
         if model != nil, let engine, hasUnautosavedChanges || isDocumentEdited {
-            let copy = FileManager.default.temporaryDirectory.appendingPathComponent("print-\(UUID().uuidString).pdf")
-            try engine.save(to: copy)
-            url = copy
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("print-\(UUID().uuidString).pdf")
+            copy = temporary
+            try engine.save(to: temporary)
+            url = temporary
         }
         guard let url, let pdf = PDFDocument(url: url) else {
             throw NSError(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError, userInfo: [
                 NSLocalizedDescriptionKey: "The document couldn’t be prepared for printing.",
             ])
         }
-        if url != fileURL { try? FileManager.default.removeItem(at: url) }   // PDFKit has read it
         if pdf.isLocked, let password { pdf.unlock(withPassword: password) }
         let info = printInfo.copy() as! NSPrintInfo
         info.dictionary().addEntries(from: printSettings)
