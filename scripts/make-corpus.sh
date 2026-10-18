@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds mutool from the same MuPDF build (if needed) and generates the test
-# corpus in build/corpus with tests/corpus/make-corpus.js.
+# corpus in build/corpus with Tests/Corpus/make-corpus.js.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=$PWD/build/mupdf/arm64
@@ -14,4 +14,4 @@ if [ ! -x "$MUTOOL" ] || [ thirdparty/mupdf/.git -nt "$MUTOOL" ]; then
     git -C thirdparty/mupdf checkout -q -- generated
 fi
 mkdir -p build/corpus
-"$MUTOOL" run tests/corpus/make-corpus.js build/corpus
+"$MUTOOL" run Tests/Corpus/make-corpus.js build/corpus

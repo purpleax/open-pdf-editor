@@ -1,5 +1,5 @@
 // Builds the test corpus with MuPDF's own PDF writer:
-//   mutool run tests/corpus/make-corpus.js <output directory>
+//   mutool run Tests/Corpus/make-corpus.js <output directory>
 // Every file is generated, so the corpus carries no third-party content.
 "use strict"
 
