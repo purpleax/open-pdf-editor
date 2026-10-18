@@ -1,0 +1,7 @@
+.build/
+build/
+dist/
+Frameworks/
+.DS_Store
+.swiftpm/
+scripts/signing.env

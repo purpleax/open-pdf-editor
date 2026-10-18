@@ -1,0 +1,17 @@
+#!/bin/bash
+# Pushes to main must be releases: the commit being pushed needs a v<version>
+# tag, which `make release VERSION=x.y.z` creates while building the app and
+# publishing it on GitHub. Enabled with `make hooks`.
+# To push without a release anyway: git push --no-verify
+zero=0000000000000000000000000000000000000000
+while read -r local_ref local_sha remote_ref remote_sha; do
+    [ "$remote_ref" = "refs/heads/main" ] || continue
+    [ "$local_sha" = "$zero" ] && continue
+    if ! git tag --points-at "$local_sha" | grep -q '^v[0-9]'; then
+        echo "pre-push: main is only pushed as a release, so the app is built and published with it." >&2
+        echo "pre-push: run:  make release VERSION=x.y.z" >&2
+        echo "pre-push: (to push without a release anyway: git push --no-verify)" >&2
+        exit 1
+    fi
+done
+exit 0

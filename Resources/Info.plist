@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Open PDF Editor</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>PDF Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.pdf</string>
+			</array>
+			<key>NSDocumentClass</key>
+			<string>EditorDocument</string>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>OpenPDFEditor</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.purpleax.openpdfeditor</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Open PDF Editor</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>LSArchitecturePriority</key>
+	<array>
+		<string>arm64</string>
+	</array>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Guy Brown. Licensed under the GNU AGPL-3.0.</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/purpleax/open-pdf-editor/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>ogR5u+Tx9ayLBr7r0ZH4sXoCra+h7h/JpSRl0z1ePaU=</string>
+</dict>
+</plist>
