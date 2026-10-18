@@ -116,8 +116,9 @@ extension DocumentWindowController {
             let editable = viewer.model.isEditable
             let original = document.fileURL
             let password = document.password
-            let progress = ProgressSheet.show(on: window, message: "Making a smaller copy…")
-            EngineExecutor.background.async {
+            let cancel = ConversionCancel()
+            let progress = ProgressSheet.show(on: window, message: "Making a smaller copy…", cancel: cancel)
+            EngineExecutor.conversion.async {
                 let result: Result<(Int, Int), Error> = Result {
                     let scratch = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
                                                               appropriateFor: url, create: true)
@@ -130,7 +131,7 @@ extension DocumentWindowController {
                         source = current
                     }
                     guard let source else { throw CocoaError(.fileReadNoSuchFile) }
-                    try PageEditor.writeReplacing(url) { try PDFFiles.reduce(source, password: password, quality: quality, into: $0) }
+                    try PageEditor.writeReplacing(url) { try PDFFiles.reduce(source, password: password, quality: quality, into: $0, cancel: cancel) }
                     let before = (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                     let after = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
                     return (before, after)
@@ -152,6 +153,7 @@ extension DocumentWindowController {
                                 if response == .alertFirstButtonReturn { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                             }
                         case let .failure(error):
+                            if (error as? EngineError)?.message == "Cancelled" { return }
                             viewer.pages.present(error, message: "The smaller copy couldn’t be saved.")
                         }
                     }

@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
+#include <stdatomic.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -1605,7 +1606,11 @@ bool opdf_flatten_annotations(opdf_doc *d, opdf_error *err) {
 
 // --- Pages -----------------------------------------------------------------------
 
-// Runs `body` as one journal operation on the whole document, locked.
+// Runs `body` as one journal operation on the whole document. Takes the
+// document lock and leaves it held: the caller frees what the body made
+// (which may use d->ctx, so must happen under the lock) and then calls
+// unlock_doc. Nothing may touch d->ctx without the lock: its error stack
+// is shared with the render threads that take it next.
 #define WITH_DOC_OPERATION(d, operation, err, ...) \
     do { \
         fz_context *ctx = (d)->ctx; \
@@ -1628,7 +1633,6 @@ bool opdf_flatten_annotations(opdf_doc *d, opdf_error *err) {
                 fz_catch(ctx) {} \
             } \
         } \
-        unlock_doc(d); \
     } while (0)
 
 // Page numbers as a set: true for each page listed (and in range).
@@ -1652,16 +1656,56 @@ bool opdf_pages_delete(opdf_doc *d, const int *pages, int count, opdf_error *err
         for (int i = total - 1; i >= 0; i--)
             if (set[i]) pdf_delete_page(ctx, pdf, i);
     });
+    unlock_doc(d);
     free(set);
     return !(err && err->code);
+}
+
+// Puts the pages in a new order by giving the root of the page tree a new
+// /Kids list. Unlike pdf_rearrange_pages, the catalog is left alone, so
+// forms, attachments, metadata, page labels and the outline all stay.
+static void reorder_page_tree(fz_context *ctx, pdf_document *pdf, const int *order, int count, pdf_obj **pages) {
+    pdf_obj *inheritable[] = { PDF_NAME(Resources), PDF_NAME(MediaBox), PDF_NAME(CropBox), PDF_NAME(Rotate) };
+    pdf_obj *root = pdf_dict_get(ctx, pdf_dict_get(ctx, pdf_trailer(ctx, pdf), PDF_NAME(Root)), PDF_NAME(Pages));
+    if (!pdf_is_dict(ctx, root)) fz_throw(ctx, FZ_ERROR_FORMAT, "Cannot find the page tree");
+    for (int i = 0; i < count; i++) {
+        pages[i] = pdf_keep_obj(ctx, pdf_lookup_page_obj(ctx, pdf, i));
+        if (!pdf_is_dict(ctx, pages[i])) fz_throw(ctx, FZ_ERROR_FORMAT, "A page is missing");
+    }
+    // Each page takes what it inherited from the nodes being left behind.
+    for (int i = 0; i < count; i++) {
+        for (size_t k = 0; k < sizeof inheritable / sizeof *inheritable; k++) {
+            pdf_obj *key = inheritable[k];
+            if (pdf_dict_get(ctx, pages[i], key)) continue;
+            pdf_obj *value = pdf_dict_get_inheritable(ctx, pages[i], key);
+            if (value) pdf_dict_put(ctx, pages[i], key, value);
+        }
+    }
+    pdf_obj *kids = pdf_new_array(ctx, pdf, count);
+    fz_try(ctx) {
+        for (int i = 0; i < count; i++) {
+            pdf_array_push(ctx, kids, pages[order[i]]);
+            pdf_dict_put(ctx, pages[order[i]], PDF_NAME(Parent), root);
+        }
+        pdf_dict_put(ctx, root, PDF_NAME(Kids), kids);
+        pdf_dict_put_int(ctx, root, PDF_NAME(Count), count);
+    }
+    fz_always(ctx)
+        pdf_drop_obj(ctx, kids);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
 }
 
 bool opdf_pages_reorder(opdf_doc *d, const int *order, int count, opdf_error *err) {
     clear_error(err);
     bool *seen = NULL;
+    pdf_obj **pages = NULL;
+    int total = 0;
     fz_var(seen);
+    fz_var(pages);
+    fz_var(total);
     WITH_DOC_OPERATION(d, "Move Pages", err, {
-        int total = pdf_count_pages(ctx, pdf);
+        total = pdf_count_pages(ctx, pdf);
         if (count != total) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The new order must list every page");
         seen = checked_calloc(ctx, (size_t)(total > 0 ? total : 1), sizeof *seen);
         for (int i = 0; i < count; i++) {
@@ -1669,8 +1713,19 @@ bool opdf_pages_reorder(opdf_doc *d, const int *order, int count, opdf_error *er
                 fz_throw(ctx, FZ_ERROR_ARGUMENT, "The new order must list every page once");
             seen[order[i]] = true;
         }
-        pdf_rearrange_pages(ctx, pdf, count, order, PDF_CLEAN_STRUCTURE_KEEP);
+        pages = checked_calloc(ctx, (size_t)(total > 0 ? total : 1), sizeof *pages);
+        reorder_page_tree(ctx, pdf, order, count, pages);
     });
+    if (pages)
+        for (int i = 0; i < total; i++) pdf_drop_obj(d->ctx, pages[i]);
+    // Loaded pages learn their new numbers.
+    fz_try(d->ctx) {
+        pdf_document *pdf = pdf_specifics(d->ctx, d->doc);
+        if (pdf) pdf_sync_open_pages(d->ctx, pdf);
+    }
+    fz_catch(d->ctx) {}
+    unlock_doc(d);
+    free(pages);
     free(seen);
     return !(err && err->code);
 }
@@ -1694,11 +1749,11 @@ bool opdf_page_insert_blank(opdf_doc *d, int at, float width, float height, opdf
         pdf_drop_obj(ctx, resources); resources = NULL;
         fz_drop_buffer(ctx, contents); contents = NULL;
     });
-    // On failure, whatever was made is dropped here (under no lock: these are
-    // new objects nothing else refers to).
+    // On failure, whatever was made is dropped here.
     pdf_drop_obj(d->ctx, page);
     pdf_drop_obj(d->ctx, resources);
     fz_drop_buffer(d->ctx, contents);
+    unlock_doc(d);
     return !(err && err->code);
 }
 
@@ -1713,12 +1768,14 @@ bool opdf_pages_rotate(opdf_doc *d, const int *pages, int count, int degrees, op
         for (int i = 0; i < total; i++) {
             if (!set[i]) continue;
             pdf_obj *page = pdf_lookup_page_obj(ctx, pdf, i);
-            int rotate = pdf_to_int(ctx, pdf_dict_get_inheritable(ctx, page, PDF_NAME(Rotate)));
-            rotate = ((rotate + degrees) % 360 + 360) % 360;
+            // A file's /Rotate can be any integer; reduce it before adding.
+            int rotate = pdf_to_int(ctx, pdf_dict_get_inheritable(ctx, page, PDF_NAME(Rotate))) % 360;
+            rotate = ((rotate + degrees % 360) % 360 + 360) % 360;
             rotate -= rotate % 90;
             pdf_dict_put_int(ctx, page, PDF_NAME(Rotate), rotate);
         }
     });
+    unlock_doc(d);
     free(set);
     return !(err && err->code);
 }
@@ -1746,6 +1803,7 @@ bool opdf_pages_crop(opdf_doc *d, const int *pages, int count, opdf_rect box, op
         }
     });
     if (page) fz_drop_page(d->ctx, (fz_page *)page);
+    unlock_doc(d);
     free(set);
     return !(err && err->code);
 }
@@ -1775,6 +1833,7 @@ bool opdf_insert_file(opdf_doc *d, int at, const char *path, const char *passwor
     });
     pdf_drop_graft_map(d->ctx, map);
     pdf_drop_document(d->ctx, src);
+    unlock_doc(d);
     if (err && err->code) return false;
     *inserted = n;
     return true;
@@ -1820,25 +1879,123 @@ bool opdf_extract_pages(opdf_doc *d, const int *pages, int count, const char *pa
     return ok;
 }
 
-// A context of its own for converting other file types: every document
-// handler is registered here, never in a context that holds an open document.
-static fz_context *new_conversion_context(void) {
-    fz_context *ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
+// --- Conversion contexts ------------------------------------------------------
+//
+// Converting and reducing run in contexts of their own, with an allocator
+// that counts what is in use: past the cap, or once cancelled, every
+// allocation fails, so MuPDF stops with an error wherever it is (even in the
+// middle of laying out a document, which can't otherwise be interrupted).
+
+struct opdf_cancel { atomic_int requested; };
+
+opdf_cancel *opdf_cancel_new(void) {
+    opdf_cancel *cancel = calloc(1, sizeof *cancel);
+    if (cancel) atomic_init(&cancel->requested, 0);
+    return cancel;
+}
+
+void opdf_cancel_request(opdf_cancel *cancel) {
+    if (cancel) atomic_store(&cancel->requested, 1);
+}
+
+void opdf_cancel_free(opdf_cancel *cancel) { free(cancel); }
+
+#define OPDF_CONVERSION_MEMORY ((size_t)3 << 30)
+#define ALLOC_HEADER 16   // keeps 16-byte alignment
+
+typedef struct {
+    size_t used;          // only the context's one thread allocates
+    size_t limit;
+    bool over_limit;
+    opdf_cancel *cancel;
+} capped_allocator;
+
+static bool cancelled(capped_allocator *a) {
+    return a->cancel && atomic_load(&a->cancel->requested);
+}
+
+static void *capped_malloc(void *user, size_t size) {
+    capped_allocator *a = user;
+    if (cancelled(a)) return NULL;
+    if (size > a->limit - a->used || size > SIZE_MAX - ALLOC_HEADER) {
+        a->over_limit = true;
+        return NULL;
+    }
+    unsigned char *block = malloc(size + ALLOC_HEADER);
+    if (!block) return NULL;
+    memcpy(block, &size, sizeof size);
+    a->used += size;
+    return block + ALLOC_HEADER;
+}
+
+static void capped_free(void *user, void *ptr) {
+    capped_allocator *a = user;
+    if (!ptr) return;
+    unsigned char *block = (unsigned char *)ptr - ALLOC_HEADER;
+    size_t size;
+    memcpy(&size, block, sizeof size);
+    a->used -= size;
+    free(block);
+}
+
+static void *capped_realloc(void *user, void *ptr, size_t size) {
+    capped_allocator *a = user;
+    if (!ptr) return capped_malloc(user, size);
+    if (size == 0) {
+        capped_free(user, ptr);
+        return NULL;
+    }
+    unsigned char *block = (unsigned char *)ptr - ALLOC_HEADER;
+    size_t old;
+    memcpy(&old, block, sizeof old);
+    if (size > old) {
+        if (cancelled(a)) return NULL;
+        if (size - old > a->limit - a->used || size > SIZE_MAX - ALLOC_HEADER) {
+            a->over_limit = true;
+            return NULL;
+        }
+    }
+    unsigned char *grown = realloc(block, size + ALLOC_HEADER);
+    if (!grown) return NULL;
+    memcpy(grown, &size, sizeof size);
+    a->used = a->used - old + size;
+    return grown + ALLOC_HEADER;
+}
+
+// A capped context; `alloc` must outlive it. `all_handlers` registers every
+// document handler: only ever in a context like this, which never holds the
+// open document.
+static fz_context *new_capped_context(capped_allocator *a, fz_alloc_context *alloc, opdf_cancel *cancel,
+                                      bool all_handlers) {
+    *a = (capped_allocator){ .used = 0, .limit = OPDF_CONVERSION_MEMORY, .cancel = cancel };
+    *alloc = (fz_alloc_context){ a, capped_malloc, capped_realloc, capped_free };
+    fz_context *ctx = fz_new_context(alloc, NULL, FZ_STORE_DEFAULT);
     if (!ctx) return NULL;
     make_quiet(ctx);
-    fz_try(ctx)
-        fz_register_document_handlers(ctx);
-    fz_catch(ctx) {
-        fz_drop_context(ctx);
-        return NULL;
+    if (all_handlers) {
+        fz_try(ctx)
+            fz_register_document_handlers(ctx);
+        fz_catch(ctx) {
+            fz_drop_context(ctx);
+            return NULL;
+        }
     }
     return ctx;
 }
 
+// The error to report from a capped context: why it stopped, if it was the cap.
+static void set_capped_error(opdf_error *err, fz_context *ctx, capped_allocator *a) {
+    if (cancelled(a)) set_message(err, "Cancelled");
+    else if (a->over_limit) set_message(err, "The files need too much memory to convert");
+    else set_error(err, ctx);
+}
+
 bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
-                        opdf_error *err) {
+                        opdf_cancel *cancel, opdf_error *err) {
     clear_error(err);
-    fz_context *ctx = new_conversion_context();
+    capped_allocator allocator;
+    fz_alloc_context alloc;
+    fz_context *ctx = new_capped_context(&allocator, &alloc, cancel, true);
     if (!ctx) {
         set_message(err, "Could not create a MuPDF context");
         return false;
@@ -1866,7 +2023,8 @@ bool opdf_convert_files(const char *const *paths, int count, const char *out_pat
             if (fz_needs_password(ctx, src)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "A file is password protected");
             pdf_document *src_pdf = pdf_specifics(ctx, src);
             if (src_pdf) {
-                // PDFs: pages copied as they are, with annotations and links.
+                // PDFs: each page's contents and resources are copied
+                // (annotations, links and form fields aren't).
                 map = pdf_new_graft_map(ctx, out);
                 int n = pdf_count_pages(ctx, src_pdf);
                 for (int i = 0; i < n; i++) {
@@ -1933,19 +2091,21 @@ bool opdf_convert_files(const char *const *paths, int count, const char *out_pat
         pdf_drop_document(ctx, out);
     }
     fz_catch(ctx)
-        set_error(err, ctx);
+        set_capped_error(err, ctx, &allocator);
     fz_drop_context(ctx);
     return ok;
 }
 
-bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality, opdf_error *err) {
+bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality,
+                      opdf_cancel *cancel, opdf_error *err) {
     clear_error(err);
-    fz_context *ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
+    capped_allocator allocator;
+    fz_alloc_context alloc;
+    fz_context *ctx = new_capped_context(&allocator, &alloc, cancel, false);
     if (!ctx) {
         set_message(err, "Could not create a MuPDF context");
         return false;
     }
-    make_quiet(ctx);
     pdf_document *pdf = NULL;
     bool ok = false;
     fz_var(pdf);
@@ -1994,7 +2154,7 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
     fz_always(ctx)
         pdf_drop_document(ctx, pdf);
     fz_catch(ctx)
-        set_error(err, ctx);
+        set_capped_error(err, ctx, &allocator);
     fz_drop_context(ctx);
     return ok;
 }

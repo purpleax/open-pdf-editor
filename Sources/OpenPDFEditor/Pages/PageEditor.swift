@@ -119,6 +119,7 @@ final class PageEditor {
                 defer { try? FileManager.default.removeItem(at: temporary.deletingLastPathComponent()) }
                 self.insertPDF(temporary, at: index, password: nil)
             case let .failure(error):
+                if (error as? EngineError)?.message == "Cancelled" { return }
                 self.present(error, message: "The files couldn’t be inserted.")
             }
         }
@@ -146,7 +147,8 @@ final class PageEditor {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.pdf]
         panel.nameFieldStringValue = "\(baseName) (\(Self.describe(pages))).pdf"
-        panel.message = pages.count == 1 ? "Save page \(pages[0] + 1) as a new PDF." : "Save \(pages.count) pages as a new PDF."
+        panel.message = (pages.count == 1 ? "Save page \(pages[0] + 1) as a new PDF." : "Save \(pages.count) pages as a new PDF.")
+            + (isEncrypted ? " It won’t have this document’s password." : "")
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let url = panel.url else { return }
             do {
@@ -166,6 +168,7 @@ final class PageEditor {
         panel.canCreateDirectories = true
         panel.prompt = "Split"
         panel.message = "Choose a folder for the \(parts.count) new PDFs."
+            + (isEncrypted ? " They won’t have this document’s password." : "")
         panel.beginSheetModal(for: window) { response in
             guard response == .OK, let folder = panel.url else { return }
             do {
@@ -185,9 +188,19 @@ final class PageEditor {
 
     // MARK: Helpers
 
+    /// The document's name without its extension, safe to build file names
+    /// from: a display name can contain "/" (":" in the file system).
     var baseName: String {
         let name = (viewer.view.window?.windowController?.document as? NSDocument)?.displayName ?? "Document"
-        return (name as NSString).deletingPathExtension
+        var base = (name as NSString).deletingPathExtension
+            .replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        while base.hasPrefix(".") { base.removeFirst() }
+        return base.isEmpty ? "Document" : base
+    }
+
+    private var isEncrypted: Bool {
+        guard let method = model.engine.metadata("encryption") else { return false }
+        return !method.isEmpty && method != "None"
     }
 
     private func valid(_ pages: [Int]) -> [Int] {
@@ -226,15 +239,17 @@ final class PageEditor {
     /// its own (the caller removes it).
     func convert(_ files: [URL], pageSize: CGSize = CGSize(width: 612, height: 792),
                  completion: @escaping @MainActor @Sendable (Result<URL, Error>) -> Void) {
-        let progress = ProgressSheet.show(on: window, message: files.count == 1 ? "Converting…" : "Combining \(files.count) files…")
-        EngineExecutor.background.async {
+        let cancel = ConversionCancel()
+        let progress = ProgressSheet.show(on: window, message: files.count == 1 ? "Converting…" : "Combining \(files.count) files…",
+                                          cancel: cancel)
+        EngineExecutor.conversion.async {
             let result: Result<URL, Error>
             do {
                 let folder = FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)")
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
                 let url = folder.appendingPathComponent("combined.pdf")
                 do {
-                    try PDFFiles.combine(files, into: url, pageSize: pageSize)
+                    try PDFFiles.combine(files, into: url, pageSize: pageSize, cancel: cancel)
                 } catch {
                     try? FileManager.default.removeItem(at: folder)
                     throw error
@@ -277,6 +292,10 @@ final class PageEditor {
         try write(temporary)
         for attempt in 1...1000 {
             let target = folder.appendingPathComponent(attempt == 1 ? "\(name).\(ext)" : "\(name) (\(attempt)).\(ext)")
+            // Only ever directly in the chosen folder.
+            guard target.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL else {
+                throw CocoaError(.fileWriteInvalidFileName)
+            }
             do {
                 // Moving fails if something is already there.
                 try FileManager.default.moveItem(at: temporary, to: target)
@@ -333,13 +352,19 @@ final class ProgressSheet {
     }
 
     /// On `window` as a sheet, or with no window as a small panel of its own.
-    static func show(on window: NSWindow?, message: String) -> ProgressSheet? {
+    /// With `cancel`, a Cancel button stops the work.
+    static func show(on window: NSWindow?, message: String, cancel: ConversionCancel? = nil) -> ProgressSheet? {
         let label = NSTextField(labelWithString: message)
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
         spinner.controlSize = .small
         spinner.startAnimation(nil)
-        let stack = NSStackView(views: [spinner, label])
+        var views: [NSView] = [spinner, label]
+        if let cancel {
+            let button = CancelButton(cancel: cancel)
+            views.append(button)
+        }
+        let stack = NSStackView(views: views)
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
         let controller = NSViewController()
@@ -359,5 +384,30 @@ final class ProgressSheet {
     func close() {
         parent?.endSheet(sheet)
         sheet.orderOut(nil)
+    }
+}
+
+/// Cancel for a ProgressSheet: stops the work and says so.
+@MainActor
+private final class CancelButton: NSButton {
+    private let cancel: ConversionCancel
+
+    init(cancel: ConversionCancel) {
+        self.cancel = cancel
+        super.init(frame: .zero)
+        title = "Cancel"
+        bezelStyle = .push
+        keyEquivalent = "\u{1b}"
+        target = self
+        action = #selector(clicked(_:))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError() }
+
+    @objc private func clicked(_ sender: Any?) {
+        cancel.cancel()
+        isEnabled = false
+        title = "Cancelling…"
     }
 }

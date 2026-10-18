@@ -104,9 +104,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ? files[0].deletingPathExtension().lastPathComponent + ".pdf"
             : "Combined.pdf"
         guard save.runModal() == .OK, let url = save.url else { return }
-        let progress = ProgressSheet.show(on: nil, message: files.count == 1 ? "Converting…" : "Combining \(files.count) files…")
-        EngineExecutor.background.async {
-            let result = Result { try PageEditor.writeReplacing(url) { try PDFFiles.combine(files, into: $0) } }
+        let cancel = ConversionCancel()
+        let progress = ProgressSheet.show(on: nil, message: files.count == 1 ? "Converting…" : "Combining \(files.count) files…",
+                                          cancel: cancel)
+        EngineExecutor.conversion.async {
+            let result = Result { try PageEditor.writeReplacing(url) { try PDFFiles.combine(files, into: $0, cancel: cancel) } }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     progress?.close()
@@ -114,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     case .success:
                         NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, _ in }
                     case let .failure(error):
+                        if (error as? EngineError)?.message == "Cancelled" { return }
                         let alert = NSAlert()
                         alert.messageText = "The PDF couldn’t be made."
                         alert.informativeText = "\(error)"

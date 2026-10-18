@@ -149,7 +149,8 @@ final class TileRenderer: @unchecked Sendable {
     private func render(_ key: RenderKey, cookie: RenderCookie) throws -> CGImage {
         switch key {
         case let .tile(page, level, column, row, rotation, _):
-            let bounds = model.pageBounds[page]
+            // The page may have gone since this was asked for.
+            guard let bounds = model.bounds(page: page) else { throw EngineError(code: -1, message: "No such page") }
             let scale = Self.scale(forLevel: level)
             let full = bounds.applying(EngineDocument.pageTransform(bounds: bounds, scale: scale, rotation: rotation))
             let size = CGFloat(Self.tileSize)
@@ -161,7 +162,7 @@ final class TileRenderer: @unchecked Sendable {
             let list = try model.displayList(page: page)
             return try model.engine.render(list, bounds: bounds, scale: scale, rotation: rotation, rect: rect, cookie: cookie)
         case let .preview(page, width, rotation, _):
-            let bounds = model.pageBounds[page]
+            guard let bounds = model.bounds(page: page) else { throw EngineError(code: -1, message: "No such page") }
             // `width` pixels wide, and never more than 1.6 times that tall, so a
             // very tall, thin page doesn't make a huge preview.
             let shown = rotation % 180 == 0 ? bounds.size : CGSize(width: bounds.height, height: bounds.width)

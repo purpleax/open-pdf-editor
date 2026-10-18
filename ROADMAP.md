@@ -100,6 +100,8 @@ From the first release-time security review (all findings above Low fixed, plus 
   - File › Create PDF from Files… (⌥⌘N): PDFs, images, EPUB, XPS, CBZ, SVG, HTML, text and Word, Excel and PowerPoint files, combined in name order. Other formats are only opened in that conversion, never as documents.
 - [x] Reduce file size (File › Reduce File Size…: a smaller copy, images at 200, 150 or 100 dpi)
 - [x] Every page change is one undoable step and saves incrementally, like annotations
+- [x] Security review before release: four Medium fixed (cleanup on the shared MuPDF context outside the document lock during Insert Pages; moving pages through `pdf_rearrange_pages`, which rebuilt the catalog and dropped forms, attachments and metadata, and recursed without limit through a deep outline; conversion with no memory cap and no way to cancel), with the cheap Lows; see the commit "Fix 0.3.0 review findings"
+  - Left for later (Low): deleted pages and crops stay in the file's earlier revision, because saves append (Reduce File Size writes a clean copy); Insert, Extract, Split and Create PDF copy page contents but not annotations, links or form fields; HTML and SVG conversion embeds images from the source file's own folder, following symlinks
 
 ## Phase 4: Forms (0.4.0)
 

@@ -70,7 +70,18 @@ extension EngineDocument {
     }
 }
 
-/// Making and shrinking PDF files, outside any open document.
+/// Stops a conversion or reduction partway, from any thread.
+public final class ConversionCancel: @unchecked Sendable {
+    let handle: OpaquePointer?
+
+    public init() { handle = opdf_cancel_new() }
+    deinit { opdf_cancel_free(handle) }
+
+    public func cancel() { opdf_cancel_request(handle) }
+}
+
+/// Making and shrinking PDF files, outside any open document. Memory use is
+/// capped; both can be cancelled.
 public enum PDFFiles {
     /// How hard Reduce File Size works on images.
     public enum Quality: Int, CaseIterable, Sendable {
@@ -80,14 +91,16 @@ public enum PDFFiles {
     /// Makes one PDF of these files, in order: PDFs are copied as they are;
     /// images and the other kinds MuPDF reads are laid out on pages of
     /// `pageSize` where they reflow.
-    public static func combine(_ files: [URL], into url: URL, pageSize: CGSize = CGSize(width: 612, height: 792)) throws {
+    public static func combine(_ files: [URL], into url: URL, pageSize: CGSize = CGSize(width: 612, height: 792),
+                               cancel: ConversionCancel? = nil) throws {
         var error = opdf_error()
         let paths = files.map { strdup($0.path(percentEncoded: false)) }
         defer { paths.forEach { free($0) } }
         let constPaths = paths.map { UnsafePointer<CChar>($0) }
         let ok = url.withUnsafeFileSystemRepresentation { out in
             out.map { out in constPaths.withUnsafeBufferPointer {
-                opdf_convert_files($0.baseAddress, Int32($0.count), out, Float(pageSize.width), Float(pageSize.height), &error)
+                opdf_convert_files($0.baseAddress, Int32($0.count), out, Float(pageSize.width), Float(pageSize.height),
+                                   cancel?.handle, &error)
             } } ?? false
         }
         guard ok else { throw EngineError(error) }
@@ -95,12 +108,13 @@ public enum PDFFiles {
 
     /// Writes a smaller copy of the PDF at `source` to `url`: images are
     /// downsampled and recompressed, and unused and duplicate objects removed.
-    public static func reduce(_ source: URL, password: String? = nil, quality: Quality, into url: URL) throws {
+    public static func reduce(_ source: URL, password: String? = nil, quality: Quality, into url: URL,
+                              cancel: ConversionCancel? = nil) throws {
         var error = opdf_error()
         let ok = source.withUnsafeFileSystemRepresentation { input in
             url.withUnsafeFileSystemRepresentation { out in
                 guard let input, let out else { return false }
-                return opdf_reduce_file(input, password, out, Int32(quality.rawValue), &error)
+                return opdf_reduce_file(input, password, out, Int32(quality.rawValue), cancel?.handle, &error)
             }
         }
         guard ok else { throw EngineError(error) }

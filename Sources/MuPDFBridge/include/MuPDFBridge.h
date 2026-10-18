@@ -333,17 +333,26 @@ bool opdf_insert_file(opdf_doc *doc, int at, const char *path, const char *passw
 // Writes these pages, in this order, as a new PDF (the document is unchanged).
 bool opdf_extract_pages(opdf_doc *doc, const int *pages, int count, const char *path, opdf_error *err);
 
+// A flag that stops a conversion or reduction partway (from any thread).
+typedef struct opdf_cancel opdf_cancel;
+opdf_cancel *opdf_cancel_new(void);
+void opdf_cancel_request(opdf_cancel *cancel);
+void opdf_cancel_free(opdf_cancel *cancel);
+
 // Makes one PDF of several files: PDFs (pages copied as they are), images,
 // and the other kinds MuPDF reads (EPUB, XPS, CBZ, SVG, HTML, text, Office),
 // which are laid out on pages of width x height points. Uses its own MuPDF
 // context with every document handler; nothing is open afterwards.
+// Memory is capped (and cancel, which may be NULL, stops it at the next
+// allocation).
 bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
-                        opdf_error *err);
+                        opdf_cancel *cancel, opdf_error *err);
 
 // Writes a smaller copy of the PDF at in_path to out_path: images above a
 // resolution are downsampled and recompressed (quality 0 high, 1 medium,
 // 2 small), and unused or duplicate objects are removed.
-bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality, opdf_error *err);
+bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality,
+                      opdf_cancel *cancel, opdf_error *err);
 
 #ifdef __cplusplus
 }

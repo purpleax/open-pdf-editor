@@ -17,6 +17,8 @@ public final class EngineExecutor: @unchecked Sendable {
                                               threads: max(2, ProcessInfo.processInfo.activeProcessorCount - 2))
     /// Everything else: text, search, outline, attachments.
     public static let background = EngineExecutor(name: "Document", threads: 2)
+    /// Converting and reducing files: slow work that mustn't hold up the rest.
+    public static let conversion = EngineExecutor(name: "Conversion", threads: 1)
 
     private let condition = NSCondition()
     private var queues: [[@Sendable () -> Void]] = [[], [], []]
