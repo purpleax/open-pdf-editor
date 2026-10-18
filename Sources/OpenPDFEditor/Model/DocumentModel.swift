@@ -4,16 +4,26 @@ import PDFCore
 /// Records each edit for undo (the document does this).
 @MainActor
 protocol EditRecorder: AnyObject {
-    func didEdit(actionName: String, pages: Set<Int>)
+    func didEdit(actionName: String, change: ModelChange)
+}
+
+/// What an edit changed: what is on some pages, or the pages themselves
+/// (their number, order, size or rotation).
+enum ModelChange: Sendable {
+    case pages(Set<Int>)
+    case structure
 }
 
 /// An unlocked document and what the viewer keeps of it: page geometry and
 /// caches of display lists, text, links and annotations. Thread-safe, except
-/// `edit`, which runs on the main thread.
+/// the edits, which run on the main thread. Page geometry changes only on
+/// the main thread, so main-thread code may index `pageBounds` with any page
+/// below `pageCount`; other threads use `bounds(page:)`.
 final class DocumentModel: @unchecked Sendable {
     let engine: EngineDocument
-    let pageBounds: [CGRect]
-    var pageCount: Int { pageBounds.count }
+    var pageBounds: [CGRect] { lock.withLock { _pageBounds } }
+    var pageCount: Int { lock.withLock { _pageBounds.count } }
+    private var _pageBounds: [CGRect]
 
     private let lock = NSLock()
     private var lists: [Int: DisplayList] = [:]
@@ -34,6 +44,9 @@ final class DocumentModel: @unchecked Sendable {
     /// Posted on the main thread after pages change (an edit, undo or redo);
     /// userInfo["pages"] is the Set<Int> of pages, or absent for all pages.
     static let pagesDidChange = Notification.Name("DocumentModelPagesDidChange")
+    /// Posted on the main thread after pages are added, removed, moved,
+    /// turned or cropped: everything about pages must be reloaded.
+    static let structureDidChange = Notification.Name("DocumentModelStructureDidChange")
 
     @MainActor weak var editRecorder: EditRecorder?
 
@@ -44,7 +57,12 @@ final class DocumentModel: @unchecked Sendable {
     init(engine: EngineDocument, isEditable: Bool) throws {
         self.engine = engine
         self.isEditable = isEditable
-        pageBounds = try engine.pageBounds()
+        _pageBounds = try engine.pageBounds()
+    }
+
+    /// A page's bounds, or nil if there is no such page (any thread).
+    func bounds(page: Int) -> CGRect? {
+        lock.withLock { page >= 0 && page < _pageBounds.count ? _pageBounds[page] : nil }
     }
 
     /// Bumped whenever rendered output goes out of date.
@@ -52,15 +70,26 @@ final class DocumentModel: @unchecked Sendable {
 
     /// A page's version: changes whenever what the page draws changes.
     func revision(page: Int) -> Int {
-        lock.withLock { _revision &* 1_000_003 &+ (pageRevisions[page] ?? 0) }
+        lock.withLock { unlockedRevision(page) }
+    }
+
+    private func unlockedRevision(_ page: Int) -> Int {
+        _revision &* 1_000_003 &+ (pageRevisions[page] ?? 0)
+    }
+
+    /// Call with `lock` held.
+    private func unchanged(_ page: Int, since revision: Int) -> Bool {
+        unlockedRevision(page) == revision
     }
 
     func displayList(page: Int) throws -> DisplayList {
         if let list = lock.withLock({ lists[page] }) { return list }
-        // Loading takes the document lock in the bridge; don't hold ours meanwhile.
+        // Loading takes the document lock in the bridge; don't hold ours
+        // meanwhile. If the page changes while it loads, it isn't cached.
+        let before = revision(page: page)
         let list = try engine.displayList(page: page)
         lock.withLock {
-            if lists[page] == nil {
+            if lists[page] == nil, unchanged(page, since: before) {
                 lists[page] = list
                 listOrder.append(page)
                 if listOrder.count > Self.maxLists { lists[listOrder.removeFirst()] = nil }
@@ -76,9 +105,10 @@ final class DocumentModel: @unchecked Sendable {
     /// The page's text, loading it if needed. Empty if the page fails.
     func text(page: Int) -> PageText {
         if let text = cachedText(page: page) { return text }
+        let before = revision(page: page)
         let text = (try? engine.text(page: page)) ?? PageText(chars: [])
         lock.withLock {
-            if texts[page] == nil {
+            if texts[page] == nil, unchanged(page, since: before) {
                 texts[page] = text
                 textOrder.append(page)
                 if textOrder.count > Self.maxTexts { texts[textOrder.removeFirst()] = nil }
@@ -89,8 +119,9 @@ final class DocumentModel: @unchecked Sendable {
 
     func links(page: Int) -> [PageLink] {
         if let links = lock.withLock({ linkCache[page] }) { return links }
+        let before = revision(page: page)
         let links = (try? engine.links(page: page)) ?? []
-        lock.withLock { linkCache[page] = links }
+        lock.withLock { if unchanged(page, since: before) { linkCache[page] = links } }
         return links
     }
 
@@ -99,8 +130,9 @@ final class DocumentModel: @unchecked Sendable {
     /// The page's annotations (replies and statuses included), cached.
     func annotations(page: Int) -> [Annotation] {
         if let cached = lock.withLock({ annotationCache[page] }) { return cached }
+        let before = revision(page: page)
         let annotations = (try? engine.annotations(page: page)) ?? []
-        lock.withLock { annotationCache[page] = annotations }
+        lock.withLock { if unchanged(page, since: before) { annotationCache[page] = annotations } }
         return annotations
     }
 
@@ -121,8 +153,53 @@ final class DocumentModel: @unchecked Sendable {
         guard isEditable else { throw EngineError(code: -1, message: "This document can’t be changed.") }
         let result = try body(engine)
         pagesChanged(pages)
-        editRecorder?.didEdit(actionName: actionName, pages: pages)
+        editRecorder?.didEdit(actionName: actionName, change: .pages(pages))
         return result
+    }
+
+    /// Like `edit`, for changes to the pages themselves: afterwards
+    /// everything about pages is reloaded.
+    @MainActor
+    @discardableResult
+    func editStructure<T>(_ actionName: String, _ body: (EngineDocument) throws -> T) throws -> T {
+        guard isEditable else { throw EngineError(code: -1, message: "This document can’t be changed.") }
+        let result = try body(engine)
+        structureChanged()
+        editRecorder?.didEdit(actionName: actionName, change: .structure)
+        return result
+    }
+
+    /// Applies a change made outside `edit` (undo and redo).
+    @MainActor
+    func changed(_ change: ModelChange) {
+        switch change {
+        case let .pages(pages): pagesChanged(pages)
+        case .structure: structureChanged()
+        }
+    }
+
+    /// Reloads page geometry, forgets everything cached and tells the views.
+    @MainActor
+    func structureChanged() {
+        // If reading the bounds fails, the old ones are kept for as many
+        // pages as there now are.
+        let bounds = (try? engine.pageBounds()) ?? {
+            let count = (try? engine.pageCount()) ?? pageCount
+            let old = pageBounds
+            return (0..<count).map { $0 < old.count ? old[$0] : CGRect(x: 0, y: 0, width: 612, height: 792) }
+        }()
+        lock.withLock {
+            _pageBounds = bounds.isEmpty ? [CGRect(x: 0, y: 0, width: 612, height: 792)] : bounds
+            lists.removeAll()
+            listOrder.removeAll()
+            texts.removeAll()
+            textOrder.removeAll()
+            linkCache.removeAll()
+            annotationCache.removeAll()
+            pageRevisions.removeAll()
+            _revision += 1
+        }
+        NotificationCenter.default.post(name: Self.structureDidChange, object: self)
     }
 
     /// Forgets what was cached for these pages (nil: all pages) and tells
@@ -130,7 +207,7 @@ final class DocumentModel: @unchecked Sendable {
     @MainActor
     func pagesChanged(_ pages: Set<Int>?) {
         lock.withLock {
-            let all = pages ?? Set(0..<pageCount)
+            let all = pages ?? Set(0..<_pageBounds.count)
             for page in all {
                 lists[page] = nil
                 texts[page] = nil

@@ -138,6 +138,13 @@ final class SidebarViewController: NSViewController {
         thumbnails.reload(pages: pages)
     }
 
+    /// Pages were added, removed, moved, turned or cropped.
+    func structureDidChange() {
+        thumbnails.structureDidChange()
+        comments.reload(pages: nil)
+        outline.reload()
+    }
+
     func annotationSelectionDidChange(_ ref: AnnotationRef?) {
         comments.select(ref)
     }

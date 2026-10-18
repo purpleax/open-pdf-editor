@@ -92,10 +92,14 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 ## Phase 3: Pages (0.3.0)
 
-- [ ] Insert, delete, reorder (drag in thumbnails), rotate, crop and extract pages
-- [ ] Merge PDFs and split a PDF
-- [ ] Create a PDF from images and from other documents MuPDF reads
-- [ ] Reduce file size
+- [x] Insert, delete, reorder (drag in thumbnails), rotate, crop and extract pages
+  - Pages menu, the thumbnails' context menu, and Delete in the thumbnails; commands apply to the pages selected in the thumbnails, or else the current page. ⌘L / ⌘R now turn pages (saved in the PDF); turning the view moved to ⌥⌘L / ⌥⌘R. Crop (⌃⌘K): drag an area, then crop that page, the selected pages or all pages.
+- [x] Merge PDFs and split a PDF
+  - Merge: Pages › Insert Pages from File…, or drop files between thumbnails. Split: every N pages, or at each top-level bookmark, into a folder.
+- [x] Create a PDF from images and from other documents MuPDF reads
+  - File › Create PDF from Files… (⌥⌘N): PDFs, images, EPUB, XPS, CBZ, SVG, HTML, text and Word, Excel and PowerPoint files, combined in name order. Other formats are only opened in that conversion, never as documents.
+- [x] Reduce file size (File › Reduce File Size…: a smaller copy, images at 200, 150 or 100 dpi)
+- [x] Every page change is one undoable step and saves incrementally, like annotations
 
 ## Phase 4: Forms (0.4.0)
 
@@ -132,6 +136,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **0.3.0**: Page management. Rotate, delete, insert blank pages, crop and extract pages from the new Pages menu or by right-clicking thumbnails. Select several thumbnails to change them together, and drag them to put pages in a new order. Insert the pages of another PDF, or drop PDFs, images and other documents between the thumbnails to add them. Split a document every few pages or at its bookmarks, make one PDF from a set of files (PDFs, images, EPUB, Word, Excel, PowerPoint and more) with File › Create PDF from Files, and save a smaller copy with File › Reduce File Size. Every change can be undone. ⌘L and ⌘R now turn pages; turning just the view is ⌥⌘L and ⌥⌘R.
 
 - **0.2.0**: Annotations. Highlight, underline and strike through text; add notes, text boxes, rectangles, ovals, lines, arrows, freehand drawings and stamps from the new markup toolbar (⇧⌘A). Select an annotation to move or resize it, or change its colour, fill, opacity, line width and text in the inspector. The new Comments sidebar lists every annotation with replies and review status, and filters by type, author and status. Everything can be undone, even after saving; documents save automatically, with File › Revert To for earlier versions. Saving adds your changes to the end of the file, so digital signatures stay valid. Tools › Flatten Annotations makes them part of the pages.
 

@@ -32,6 +32,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private let zoomButtons = NSSegmentedControl()
     private let zoomPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     private weak var searchItem: NSSearchToolbarItem?
+    private weak var rotateControl: NSSegmentedControl?
     private var searchDebounce: DispatchWorkItem?
     private var jumpToFirstMatch = false
     private var pendingRestore: (page: Int, zoom: ZoomMode, magnification: CGFloat)?
@@ -123,13 +124,30 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             self?.inspector?.show(ref)
             self?.sidebar?.annotationSelectionDidChange(ref)
         }
-        markupBar.onToolChosen = { [weak self] tool in self?.viewer?.tool = tool }
+        markupBar.onToolChosen = { [weak self] tool in
+            self?.viewer?.pagesView.isCropping = false
+            self?.viewer?.tool = tool
+        }
+        viewer.selectedPages = { [weak self] in
+            guard let self, let sidebar = self.sidebar, sidebar.tab == .thumbnails, self.sidebarItem?.isCollapsed == false else { return [] }
+            return sidebar.thumbnails.selectedPages
+        }
+        viewer.pages.onSelectPages = { [weak self] pages in self?.sidebar?.thumbnails.select(pages) }
+        viewer.onCropModeChange = { [weak self] in self?.viewerStateDidChange() }
         setUpMarkupBar()
         NotificationCenter.default.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] note in
             let pages = note.userInfo?["pages"] as? Set<Int>
             MainActor.assumeIsolated {
                 self?.sidebar?.pagesDidChange(pages)
                 self?.inspector?.refresh()
+            }
+        }
+        NotificationCenter.default.addObserver(forName: DocumentModel.structureDidChange, object: model, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.sidebar?.structureDidChange()
+                self?.inspector?.refresh()
+                self?.inspector?.pageDidChange()
+                self?.viewerStateDidChange()
             }
         }
         NotificationCenter.default.addObserver(forName: DocumentModel.renderingDidChange, object: model, queue: .main) { [weak self] _ in
@@ -215,11 +233,12 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             return item
         case .rotate:
             let rotate = NSSegmentedControl(images: [
-                NSImage(systemSymbolName: "rotate.left", accessibilityDescription: "Rotate Left")!,
-                NSImage(systemSymbolName: "rotate.right", accessibilityDescription: "Rotate Right")!,
+                NSImage(systemSymbolName: "rotate.left", accessibilityDescription: "Rotate Page Left")!,
+                NSImage(systemSymbolName: "rotate.right", accessibilityDescription: "Rotate Page Right")!,
             ], trackingMode: .momentary, target: self, action: #selector(rotateClicked(_:)))
-            rotate.setToolTip("Rotate Left", forSegment: 0)
-            rotate.setToolTip("Rotate Right", forSegment: 1)
+            rotate.setToolTip("Rotate Page Left", forSegment: 0)
+            rotate.setToolTip("Rotate Page Right", forSegment: 1)
+            rotateControl = rotate
             return item(identifier, label: "Rotate", view: rotate)
         case .search:
             let item = NSSearchToolbarItem(itemIdentifier: identifier)
@@ -316,7 +335,10 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         }
         zoomPopup.menu?.item(at: 0)?.title = title
         zoomPopup.setTitle(title)
-        window.subtitle = "Page \(viewer.currentPage + 1) of \(count)"
+        window.subtitle = viewer.pagesView.isCropping
+            ? "Drag over a page to crop it · Esc to stop"
+            : "Page \(viewer.currentPage + 1) of \(count)"
+        rotateControl?.isEnabled = viewer.model.isEditable
         invalidateRestorableState()
         sidebar?.currentPageDidChange()
         inspector?.pageDidChange()
@@ -343,7 +365,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     }
 
     @objc private func rotateClicked(_ sender: NSSegmentedControl) {
-        sender.selectedSegment == 0 ? rotateLeft(sender) : rotateRight(sender)
+        sender.selectedSegment == 0 ? rotatePagesLeft(sender) : rotatePagesRight(sender)
     }
 
     @objc private func pageFieldEntered(_ sender: NSTextField) {
@@ -437,12 +459,12 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         viewer.setDisplayMode(mode)
     }
 
-    @objc func rotateLeft(_ sender: Any?) {
+    @objc func rotateViewLeft(_ sender: Any?) {
         viewer?.rotate(clockwise: false)
         sidebar?.rotationDidChange()
     }
 
-    @objc func rotateRight(_ sender: Any?) {
+    @objc func rotateViewRight(_ sender: Any?) {
         viewer?.rotate(clockwise: true)
         sidebar?.rotationDidChange()
     }
@@ -608,7 +630,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(showLayers(_:)): setState(sidebar?.tab == .layers && sidebarItem?.isCollapsed == false)
         case #selector(showDocumentInfo(_:)): setState(inspectorItem?.isCollapsed == false)
         case #selector(performFindPanelAction(_:)): return true
-        default: break
+        default:
+            if let result = validatePageAction(action, setState: setState) { return result }
         }
         return true
     }

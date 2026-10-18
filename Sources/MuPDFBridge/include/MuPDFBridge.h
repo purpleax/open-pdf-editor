@@ -310,6 +310,41 @@ bool opdf_save(opdf_doc *doc, const char *path, opdf_error *err);
 // fields are left alone). One undoable step.
 bool opdf_flatten_annotations(opdf_doc *doc, opdf_error *err);
 
+// --- Pages -------------------------------------------------------------------
+//
+// Each is one step in the undo journal. Page numbers are from 0.
+
+// Deletes these pages (any order; duplicates ignored). At least one page
+// must remain.
+bool opdf_pages_delete(opdf_doc *doc, const int *pages, int count, opdf_error *err);
+// Puts the pages in a new order: `order` lists every page exactly once.
+bool opdf_pages_reorder(opdf_doc *doc, const int *order, int count, opdf_error *err);
+// Inserts a blank page of this size (points) before page `at` (or at the end).
+bool opdf_page_insert_blank(opdf_doc *doc, int at, float width, float height, opdf_error *err);
+// Turns pages by a multiple of 90 degrees (clockwise when positive).
+bool opdf_pages_rotate(opdf_doc *doc, const int *pages, int count, int degrees, opdf_error *err);
+// Sets the visible area (crop box) of pages to `box`, in each page's own
+// page space, limited to the page.
+bool opdf_pages_crop(opdf_doc *doc, const int *pages, int count, opdf_rect box, opdf_error *err);
+// Copies every page of another PDF in before page `at`; *inserted is how
+// many. password may be NULL.
+bool opdf_insert_file(opdf_doc *doc, int at, const char *path, const char *password, int *inserted, opdf_error *err);
+
+// Writes these pages, in this order, as a new PDF (the document is unchanged).
+bool opdf_extract_pages(opdf_doc *doc, const int *pages, int count, const char *path, opdf_error *err);
+
+// Makes one PDF of several files: PDFs (pages copied as they are), images,
+// and the other kinds MuPDF reads (EPUB, XPS, CBZ, SVG, HTML, text, Office),
+// which are laid out on pages of width x height points. Uses its own MuPDF
+// context with every document handler; nothing is open afterwards.
+bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
+                        opdf_error *err);
+
+// Writes a smaller copy of the PDF at in_path to out_path: images above a
+// resolution are downsampled and recompressed (quality 0 high, 1 medium,
+// 2 small), and unused or duplicate objects are removed.
+bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality, opdf_error *err);
+
 #ifdef __cplusplus
 }
 #endif

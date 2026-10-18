@@ -40,6 +40,10 @@ enum MainMenu {
         file.addItem(withTitle: "Revert To", action: #selector(NSDocument.revertToSaved(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Show in Finder", action: #selector(AppDelegate.showInFinder(_:)), keyEquivalent: "")
         file.addItem(.separator())
+        file.addItem(withTitle: "Create PDF from Files…", action: #selector(AppDelegate.createPDFFromFiles(_:)), keyEquivalent: "n")
+            .keyEquivalentModifierMask = [.command, .option]
+        file.addItem(withTitle: "Reduce File Size…", action: #selector(DocumentWindowController.reduceFileSize(_:)), keyEquivalent: "")
+        file.addItem(.separator())
         file.addItem(withTitle: "Page Setup…", action: #selector(NSDocument.runPageLayout(_:)), keyEquivalent: "P")
         file.addItem(withTitle: "Print…", action: #selector(NSDocument.printDocument(_:)), keyEquivalent: "p")
 
@@ -83,8 +87,10 @@ enum MainMenu {
         view.addItem(withTitle: "Zoom In", action: #selector(DocumentWindowController.zoomIn(_:)), keyEquivalent: "+")
         view.addItem(withTitle: "Zoom Out", action: #selector(DocumentWindowController.zoomOut(_:)), keyEquivalent: "-")
         view.addItem(.separator())
-        view.addItem(withTitle: "Rotate Left", action: #selector(DocumentWindowController.rotateLeft(_:)), keyEquivalent: "l")
-        view.addItem(withTitle: "Rotate Right", action: #selector(DocumentWindowController.rotateRight(_:)), keyEquivalent: "r")
+        view.addItem(withTitle: "Rotate View Left", action: #selector(DocumentWindowController.rotateViewLeft(_:)), keyEquivalent: "l")
+            .keyEquivalentModifierMask = [.command, .option]
+        view.addItem(withTitle: "Rotate View Right", action: #selector(DocumentWindowController.rotateViewRight(_:)), keyEquivalent: "r")
+            .keyEquivalentModifierMask = [.command, .option]
         view.addItem(.separator())
         view.addItem(withTitle: "Show Sidebar", action: #selector(NSSplitViewController.toggleSidebar(_:)), keyEquivalent: "s")
             .keyEquivalentModifierMask = [.command, .control]
@@ -123,6 +129,19 @@ enum MainMenu {
         go.addItem(.separator())
         go.addItem(withTitle: "Back", action: #selector(DocumentWindowController.goBack(_:)), keyEquivalent: "[")
         go.addItem(withTitle: "Forward", action: #selector(DocumentWindowController.goForward(_:)), keyEquivalent: "]")
+
+        let pages = submenu(in: main, title: "Pages")
+        pages.addItem(withTitle: "Rotate Left", action: #selector(DocumentWindowController.rotatePagesLeft(_:)), keyEquivalent: "l")
+        pages.addItem(withTitle: "Rotate Right", action: #selector(DocumentWindowController.rotatePagesRight(_:)), keyEquivalent: "r")
+        pages.addItem(withTitle: "Crop", action: #selector(DocumentWindowController.toggleCropMode(_:)), keyEquivalent: "k")
+            .keyEquivalentModifierMask = [.command, .control]
+        pages.addItem(.separator())
+        pages.addItem(withTitle: "Insert Blank Page", action: #selector(DocumentWindowController.insertBlankPage(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Insert Pages from File…", action: #selector(DocumentWindowController.insertPagesFromFile(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Delete Pages", action: #selector(DocumentWindowController.deletePages(_:)), keyEquivalent: "")
+        pages.addItem(.separator())
+        pages.addItem(withTitle: "Extract Pages…", action: #selector(DocumentWindowController.extractPages(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Split Document…", action: #selector(DocumentWindowController.splitDocument(_:)), keyEquivalent: "")
 
         let tools = submenu(in: main, title: "Tools")
         for (index, tool) in AnnotationTool.allCases.enumerated() {

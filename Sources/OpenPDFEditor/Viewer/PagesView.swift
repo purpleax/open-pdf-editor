@@ -44,6 +44,10 @@ protocol PagesViewDelegate: AnyObject {
     func pagesView(_ view: PagesView, edit annotation: AnnotationRef)
     /// A tool that doesn't stay chosen has been used.
     func pagesView(_ view: PagesView, didUse tool: AnnotationTool)
+    /// An area was dragged out in crop mode (page space).
+    func pagesView(_ view: PagesView, crop rect: CGRect, onPage page: Int)
+    /// Crop mode was turned on or off.
+    func pagesViewCropModeDidChange(_ view: PagesView)
 }
 
 /// The scroll view's document view: lays out page views for the visible
@@ -85,6 +89,20 @@ final class PagesView: NSView, NSMenuItemValidation {
             window?.invalidateCursorRects(for: self)
         }
     }
+    /// Dragging out an area to crop pages to, instead of using the tool.
+    var isCropping = false {
+        didSet {
+            guard isCropping != oldValue else { return }
+            gesture = .none
+            clearDrafts()
+            if isCropping {
+                selectedAnnotation = nil
+                selection = nil
+            }
+            window?.invalidateCursorRects(for: self)
+            delegate?.pagesViewCropModeDidChange(self)
+        }
+    }
     var selectedAnnotation: AnnotationRef? {
         didSet {
             guard selectedAnnotation != oldValue else { return }
@@ -99,6 +117,8 @@ final class PagesView: NSView, NSMenuItemValidation {
         case create(page: Int, start: CGPoint, current: CGPoint, points: [CGPoint])
         case move(AnnotationRef, start: CGPoint, current: CGPoint)
         case resize(AnnotationRef, AnnotationHandle, current: CGPoint)
+        /// Dragging out a crop area.
+        case crop(page: Int, start: CGPoint, current: CGPoint)
     }
     var gesture = AnnotationGesture.none
 
@@ -362,7 +382,7 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     private func updateCursor(_ event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
-        if tool != .select && !tool.marksText {
+        if isCropping || (tool != .select && !tool.marksText) {
             NSCursor.crosshair.set()
             return
         }
@@ -426,6 +446,10 @@ final class PagesView: NSView, NSMenuItemValidation {
         if case .none = gesture {} else {
             gesture = .none
             clearDrafts()
+            return
+        }
+        if isCropping {
+            isCropping = false
             return
         }
         if selectedAnnotation != nil { selectedAnnotation = nil } else { selection = nil }

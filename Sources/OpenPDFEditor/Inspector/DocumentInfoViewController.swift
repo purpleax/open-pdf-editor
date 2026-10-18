@@ -8,6 +8,7 @@ final class DocumentInfoViewController: NSViewController {
     let fileURL: URL?
     private let list = NSStackView()
     private var pageSizeField: NSTextField?
+    private var pageCountField: NSTextField?
 
     init(viewer: ViewerController, fileURL: URL?) {
         self.viewer = viewer
@@ -87,6 +88,7 @@ final class DocumentInfoViewController: NSViewController {
             field.isSelectable = true
             field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             if label == "Page Size" { pageSizeField = field }
+            if label == "Pages" { pageCountField = field }
             let pair = NSStackView(views: [name, field])
             pair.orientation = .vertical
             pair.alignment = .leading
@@ -105,6 +107,7 @@ final class DocumentInfoViewController: NSViewController {
     func pageDidChange() {
         let page = viewer.currentPage
         guard page < viewer.model.pageCount else { return }
+        pageCountField?.stringValue = "\(viewer.model.pageCount)"
         let size = viewer.model.pageBounds[page].size
         pageSizeField?.stringValue = Self.describe(size) + " (page \(page + 1))"
     }

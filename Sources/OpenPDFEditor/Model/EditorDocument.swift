@@ -65,22 +65,22 @@ final class EditorDocument: NSDocument, EditRecorder {
 
     // MARK: Undo
 
-    func didEdit(actionName: String, pages: Set<Int>) {
-        registerUndo(actionName: actionName, pages: pages, redo: false)
+    func didEdit(actionName: String, change: ModelChange) {
+        registerUndo(actionName: actionName, change: change, redo: false)
     }
 
     /// Each step undone or redone registers its opposite, as NSUndoManager expects.
-    private func registerUndo(actionName: String, pages: Set<Int>, redo: Bool) {
+    private func registerUndo(actionName: String, change: ModelChange, redo: Bool) {
         guard let undoManager else { return }
         undoManager.registerUndo(withTarget: self) { document in
             MainActor.assumeIsolated {
-                document.step(redo: redo, actionName: actionName, pages: pages)
+                document.step(redo: redo, actionName: actionName, change: change)
             }
         }
         undoManager.setActionName(actionName)
     }
 
-    private func step(redo: Bool, actionName: String, pages: Set<Int>) {
+    private func step(redo: Bool, actionName: String, change: ModelChange) {
         guard let engine, let model else { return }
         do {
             if redo { try engine.redo() } else { try engine.undo() }
@@ -88,8 +88,8 @@ final class EditorDocument: NSDocument, EditRecorder {
             NSSound.beep()
             return
         }
-        model.pagesChanged(pages)
-        registerUndo(actionName: actionName, pages: pages, redo: !redo)
+        model.changed(change)
+        registerUndo(actionName: actionName, change: change, redo: !redo)
     }
 
     // MARK: Saving

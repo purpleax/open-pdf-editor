@@ -109,7 +109,7 @@ final class PageView: NSView {
         self.revision = revision
         let key = RenderKey.preview(page: page, width: Self.previewWidth, rotation: rotation, revision: revision)
         previewTicket = renderer.request(key, priority: .high) { [weak self] image in
-            guard let self, self.page == page else { return }
+            guard let self, self.page == page, self.revision == revision, self.rotation == rotation else { return }
             self.previewTicket = nil
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -127,7 +127,8 @@ final class PageView: NSView {
         tickets.removeAll()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for layer in tileLayers.values { layer.removeFromSuperlayer() }
+        // Every tile, tracked or not.
+        for layer in tileContainer.sublayers ?? [] { layer.removeFromSuperlayer() }
         tileLayers.removeAll()
         previewLayer.contents = nil
         searchLayer.path = nil
@@ -183,7 +184,9 @@ final class PageView: NSView {
                 install(key, image)
             } else {
                 tickets[key] = renderer.request(key, priority: .high) { [weak self] image in
-                    guard let self else { return }
+                    // A render that finished after its request was cancelled
+                    // (the view was cleared) must not add a tile.
+                    guard let self, self.tickets[key] != nil else { return }
                     self.tickets[key] = nil
                     if case let .tile(page, level, _, _, rotation, revision) = key,
                        page == self.page, level == self.currentLevel, rotation == self.rotation, revision == self.revision {
@@ -197,7 +200,7 @@ final class PageView: NSView {
     }
 
     private func install(_ key: RenderKey, _ image: CGImage) {
-        guard case let .tile(_, level, column, row, _, _) = key else { return }
+        guard case let .tile(_, level, column, row, _, _) = key, tileLayers[key] == nil else { return }
         let scale = TileRenderer.scale(forLevel: level)
         let tilePoints = CGFloat(TileRenderer.tileSize) / scale
         let layer = CALayer()
@@ -307,3 +310,13 @@ final class PageView: NSView {
         applyAccentColor()
     }
 }
+
+#if SELFTEST
+extension PageView {
+    var debugDescriptionOfTiles: String {
+        "page \(page) rev \(revision) frame \(frame.integral) preview \(previewLayer.frame.integral) tiles " +
+            "\(tileLayers.count) tracked; container \(tileContainer.frame.integral) masks \(layer?.masksToBounds ?? false) has " +
+            (tileContainer.sublayers ?? []).map { "\($0.frame.integral)" }.joined(separator: " ")
+    }
+}
+#endif

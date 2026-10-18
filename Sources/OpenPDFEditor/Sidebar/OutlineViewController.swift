@@ -36,6 +36,12 @@ final class OutlineViewController: NSViewController, NSOutlineViewDataSource, NS
         load()
     }
 
+    /// Pages moved or went: the outline's page numbers are read again.
+    func reload() {
+        guard isViewLoaded else { return }
+        load()
+    }
+
     private func load() {
         empty.stringValue = "Loading…"
         let engine = viewer.model.engine

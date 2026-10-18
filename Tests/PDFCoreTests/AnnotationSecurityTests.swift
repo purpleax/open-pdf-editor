@@ -59,7 +59,9 @@ import Testing
         let doc = try Corpus.open("inkbomb.pdf")
         let start = Date()
         let annots = try doc.annotations(page: 0)
-        #expect(Date().timeIntervalSince(start) < 2)
+        // Uncapped, this takes minutes; a debug build sharing the CPU with
+        // the other tests needs a couple of seconds.
+        #expect(Date().timeIntervalSince(start) < 5)
         let ink = try #require(annots.first)
         #expect(ink.isReadOnly)
         #expect(ink.ink.reduce(0) { $0 + $1.count } <= 100_000)

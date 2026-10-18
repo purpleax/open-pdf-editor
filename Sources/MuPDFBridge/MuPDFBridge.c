@@ -2,6 +2,8 @@
 
 #include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
+#include <mupdf/pdf/clean.h>
+#include <mupdf/pdf/image-rewriter.h>
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
@@ -1598,5 +1600,401 @@ bool opdf_flatten_annotations(opdf_doc *d, opdf_error *err) {
         }
     }
     unlock_doc(d);
+    return ok;
+}
+
+// --- Pages -----------------------------------------------------------------------
+
+// Runs `body` as one journal operation on the whole document, locked.
+#define WITH_DOC_OPERATION(d, operation, err, ...) \
+    do { \
+        fz_context *ctx = (d)->ctx; \
+        int began = 0; \
+        fz_var(began); \
+        lock_doc(d); \
+        fz_try(ctx) { \
+            pdf_document *pdf = pdf_specifics(ctx, (d)->doc); \
+            if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF"); \
+            pdf_begin_operation(ctx, pdf, (operation)); \
+            began = 1; \
+            __VA_ARGS__ \
+            pdf_end_operation(ctx, pdf); \
+            began = 0; \
+        } \
+        fz_catch(ctx) { \
+            set_error((err), ctx); \
+            if (began) { \
+                fz_try(ctx) pdf_abandon_operation(ctx, pdf_specifics(ctx, (d)->doc)); \
+                fz_catch(ctx) {} \
+            } \
+        } \
+        unlock_doc(d); \
+    } while (0)
+
+// Page numbers as a set: true for each page listed (and in range).
+static bool *page_set(fz_context *ctx, const int *pages, int count, int total) {
+    bool *set = checked_calloc(ctx, (size_t)(total > 0 ? total : 1), sizeof *set);
+    for (int i = 0; i < count; i++)
+        if (pages[i] >= 0 && pages[i] < total) set[pages[i]] = true;
+    return set;
+}
+
+bool opdf_pages_delete(opdf_doc *d, const int *pages, int count, opdf_error *err) {
+    clear_error(err);
+    bool *set = NULL;
+    fz_var(set);
+    WITH_DOC_OPERATION(d, "Delete Pages", err, {
+        int total = pdf_count_pages(ctx, pdf);
+        set = page_set(ctx, pages, count, total);
+        int remaining = total;
+        for (int i = 0; i < total; i++) if (set[i]) remaining--;
+        if (remaining < 1) fz_throw(ctx, FZ_ERROR_ARGUMENT, "A document needs at least one page");
+        for (int i = total - 1; i >= 0; i--)
+            if (set[i]) pdf_delete_page(ctx, pdf, i);
+    });
+    free(set);
+    return !(err && err->code);
+}
+
+bool opdf_pages_reorder(opdf_doc *d, const int *order, int count, opdf_error *err) {
+    clear_error(err);
+    bool *seen = NULL;
+    fz_var(seen);
+    WITH_DOC_OPERATION(d, "Move Pages", err, {
+        int total = pdf_count_pages(ctx, pdf);
+        if (count != total) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The new order must list every page");
+        seen = checked_calloc(ctx, (size_t)(total > 0 ? total : 1), sizeof *seen);
+        for (int i = 0; i < count; i++) {
+            if (order[i] < 0 || order[i] >= total || seen[order[i]])
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "The new order must list every page once");
+            seen[order[i]] = true;
+        }
+        pdf_rearrange_pages(ctx, pdf, count, order, PDF_CLEAN_STRUCTURE_KEEP);
+    });
+    free(seen);
+    return !(err && err->code);
+}
+
+bool opdf_page_insert_blank(opdf_doc *d, int at, float width, float height, opdf_error *err) {
+    clear_error(err);
+    fz_buffer *contents = NULL;
+    pdf_obj *resources = NULL, *page = NULL;
+    fz_var(contents);
+    fz_var(resources);
+    fz_var(page);
+    WITH_DOC_OPERATION(d, "Insert Page", err, {
+        if (!(width >= 72 && width <= 14400 && height >= 72 && height <= 14400))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Page size out of range");
+        int total = pdf_count_pages(ctx, pdf);
+        contents = fz_new_buffer(ctx, 1);
+        resources = pdf_new_dict(ctx, pdf, 1);
+        page = pdf_add_page(ctx, pdf, fz_make_rect(0, 0, width, height), 0, resources, contents);
+        pdf_insert_page(ctx, pdf, (at < 0 || at > total) ? -1 : at, page);
+        pdf_drop_obj(ctx, page); page = NULL;
+        pdf_drop_obj(ctx, resources); resources = NULL;
+        fz_drop_buffer(ctx, contents); contents = NULL;
+    });
+    // On failure, whatever was made is dropped here (under no lock: these are
+    // new objects nothing else refers to).
+    pdf_drop_obj(d->ctx, page);
+    pdf_drop_obj(d->ctx, resources);
+    fz_drop_buffer(d->ctx, contents);
+    return !(err && err->code);
+}
+
+bool opdf_pages_rotate(opdf_doc *d, const int *pages, int count, int degrees, opdf_error *err) {
+    clear_error(err);
+    bool *set = NULL;
+    fz_var(set);
+    WITH_DOC_OPERATION(d, degrees > 0 ? "Rotate Right" : "Rotate Left", err, {
+        if (degrees % 90 != 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Pages turn in quarter turns");
+        int total = pdf_count_pages(ctx, pdf);
+        set = page_set(ctx, pages, count, total);
+        for (int i = 0; i < total; i++) {
+            if (!set[i]) continue;
+            pdf_obj *page = pdf_lookup_page_obj(ctx, pdf, i);
+            int rotate = pdf_to_int(ctx, pdf_dict_get_inheritable(ctx, page, PDF_NAME(Rotate)));
+            rotate = ((rotate + degrees) % 360 + 360) % 360;
+            rotate -= rotate % 90;
+            pdf_dict_put_int(ctx, page, PDF_NAME(Rotate), rotate);
+        }
+    });
+    free(set);
+    return !(err && err->code);
+}
+
+bool opdf_pages_crop(opdf_doc *d, const int *pages, int count, opdf_rect box, opdf_error *err) {
+    clear_error(err);
+    bool *set = NULL;
+    pdf_page *page = NULL;
+    fz_var(set);
+    fz_var(page);
+    WITH_DOC_OPERATION(d, "Crop", err, {
+        fz_rect want = rect_from(box);
+        if (fz_is_empty_rect(want) || want.x1 - want.x0 < 4 || want.y1 - want.y0 < 4)
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "The crop area is too small");
+        int total = pdf_count_pages(ctx, pdf);
+        set = page_set(ctx, pages, count, total);
+        for (int i = 0; i < total; i++) {
+            if (!set[i]) continue;
+            page = pdf_load_page(ctx, pdf, i);
+            fz_rect visible = fz_intersect_rect(want, pdf_bound_page(ctx, page, FZ_CROP_BOX));
+            if (!fz_is_empty_rect(visible) && visible.x1 - visible.x0 >= 4 && visible.y1 - visible.y0 >= 4)
+                pdf_set_page_box(ctx, page, FZ_CROP_BOX, visible);
+            fz_drop_page(ctx, (fz_page *)page);
+            page = NULL;
+        }
+    });
+    if (page) fz_drop_page(d->ctx, (fz_page *)page);
+    free(set);
+    return !(err && err->code);
+}
+
+bool opdf_insert_file(opdf_doc *d, int at, const char *path, const char *password, int *inserted, opdf_error *err) {
+    clear_error(err);
+    *inserted = 0;
+    pdf_document *src = NULL;
+    pdf_graft_map *map = NULL;
+    int n = 0;
+    fz_var(src);
+    fz_var(map);
+    fz_var(n);
+    WITH_DOC_OPERATION(d, "Insert Pages", err, {
+        src = pdf_open_document(ctx, path);
+        if (pdf_needs_password(ctx, src) && !(password && pdf_authenticate_password(ctx, src, password)))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "The file is password protected");
+        int pages = pdf_count_pages(ctx, src);
+        if (pages > 10000) fz_throw(ctx, FZ_ERROR_LIMIT, "The file has too many pages");
+        int total = pdf_count_pages(ctx, pdf);
+        int where = (at < 0 || at > total) ? total : at;
+        map = pdf_new_graft_map(ctx, pdf);
+        for (int i = 0; i < pages; i++) {
+            pdf_graft_mapped_page(ctx, map, where + i, src, i);
+            n++;
+        }
+    });
+    pdf_drop_graft_map(d->ctx, map);
+    pdf_drop_document(d->ctx, src);
+    if (err && err->code) return false;
+    *inserted = n;
+    return true;
+}
+
+bool opdf_extract_pages(opdf_doc *d, const int *pages, int count, const char *path, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = d->ctx;
+    pdf_document *dst = NULL;
+    pdf_graft_map *map = NULL;
+    bool ok = false;
+    fz_var(dst);
+    fz_var(map);
+    fz_var(ok);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        int total = pdf_count_pages(ctx, pdf);
+        dst = pdf_create_document(ctx);
+        map = pdf_new_graft_map(ctx, dst);
+        int n = 0;
+        for (int i = 0; i < count; i++) {
+            if (pages[i] < 0 || pages[i] >= total) continue;
+            pdf_graft_mapped_page(ctx, map, -1, pdf, pages[i]);
+            n++;
+        }
+        if (n == 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No pages to extract");
+        pdf_write_options opts = pdf_default_write_options;
+        opts.do_garbage = 1;
+        opts.do_compress = 1;
+        opts.do_use_objstms = 1;
+        pdf_save_document(ctx, dst, path, &opts);
+        ok = true;
+    }
+    fz_always(ctx) {
+        pdf_drop_graft_map(ctx, map);
+        pdf_drop_document(ctx, dst);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    unlock_doc(d);
+    return ok;
+}
+
+// A context of its own for converting other file types: every document
+// handler is registered here, never in a context that holds an open document.
+static fz_context *new_conversion_context(void) {
+    fz_context *ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
+    if (!ctx) return NULL;
+    make_quiet(ctx);
+    fz_try(ctx)
+        fz_register_document_handlers(ctx);
+    fz_catch(ctx) {
+        fz_drop_context(ctx);
+        return NULL;
+    }
+    return ctx;
+}
+
+bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
+                        opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = new_conversion_context();
+    if (!ctx) {
+        set_message(err, "Could not create a MuPDF context");
+        return false;
+    }
+    pdf_document *out = NULL;
+    fz_document *src = NULL;
+    fz_buffer *buffer = NULL;
+    fz_output *bout = NULL;
+    fz_document_writer *writer = NULL;
+    fz_stream *stm = NULL;
+    pdf_document *converted = NULL;
+    pdf_graft_map *map = NULL;
+    fz_page *page = NULL;
+    fz_device *dev = NULL;
+    bool ok = false;
+    fz_var(out); fz_var(src); fz_var(buffer); fz_var(bout); fz_var(writer);
+    fz_var(stm); fz_var(converted); fz_var(map); fz_var(page); fz_var(dev); fz_var(ok);
+    fz_try(ctx) {
+        if (!(width >= 72 && width <= 14400 && height >= 72 && height <= 14400))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Page size out of range");
+        out = pdf_create_document(ctx);
+        int pages_total = 0;
+        for (int f = 0; f < count; f++) {
+            src = fz_open_document(ctx, paths[f]);
+            if (fz_needs_password(ctx, src)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "A file is password protected");
+            pdf_document *src_pdf = pdf_specifics(ctx, src);
+            if (src_pdf) {
+                // PDFs: pages copied as they are, with annotations and links.
+                map = pdf_new_graft_map(ctx, out);
+                int n = pdf_count_pages(ctx, src_pdf);
+                for (int i = 0; i < n; i++) {
+                    if (++pages_total > 20000) fz_throw(ctx, FZ_ERROR_LIMIT, "Too many pages");
+                    pdf_graft_mapped_page(ctx, map, -1, src_pdf, i);
+                }
+                pdf_drop_graft_map(ctx, map);
+                map = NULL;
+            } else {
+                // Anything else: laid out (if it reflows) and drawn into a PDF,
+                // whose pages are then copied in.
+                if (fz_is_document_reflowable(ctx, src)) fz_layout_document(ctx, src, width, height, 11);
+                buffer = fz_new_buffer(ctx, 1 << 16);
+                bout = fz_new_output_with_buffer(ctx, buffer);
+                writer = fz_new_pdf_writer_with_output(ctx, bout, "compress");
+                bout = NULL;   // the writer owns it now
+                int n = fz_count_pages(ctx, src);
+                for (int i = 0; i < n; i++) {
+                    if (++pages_total > 20000) fz_throw(ctx, FZ_ERROR_LIMIT, "Too many pages");
+                    page = fz_load_page(ctx, src, i);
+                    fz_rect bounds = fz_bound_page(ctx, page);
+                    if (fz_is_empty_rect(bounds) || bounds.x1 - bounds.x0 > 14400 || bounds.y1 - bounds.y0 > 14400)
+                        bounds = fz_make_rect(0, 0, width, height);
+                    dev = fz_begin_page(ctx, writer, bounds);
+                    fz_run_page(ctx, page, dev, fz_identity, NULL);
+                    dev = NULL;
+                    fz_end_page(ctx, writer);
+                    fz_drop_page(ctx, page);
+                    page = NULL;
+                }
+                fz_close_document_writer(ctx, writer);
+                fz_drop_document_writer(ctx, writer);
+                writer = NULL;
+                stm = fz_open_buffer(ctx, buffer);
+                converted = pdf_open_document_with_stream(ctx, stm);
+                map = pdf_new_graft_map(ctx, out);
+                int m = pdf_count_pages(ctx, converted);
+                for (int i = 0; i < m; i++) pdf_graft_mapped_page(ctx, map, -1, converted, i);
+                pdf_drop_graft_map(ctx, map); map = NULL;
+                pdf_drop_document(ctx, converted); converted = NULL;
+                fz_drop_stream(ctx, stm); stm = NULL;
+                fz_drop_buffer(ctx, buffer); buffer = NULL;
+            }
+            fz_drop_document(ctx, src);
+            src = NULL;
+        }
+        if (pdf_count_pages(ctx, out) == 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Nothing to make a PDF of");
+        pdf_write_options opts = pdf_default_write_options;
+        opts.do_garbage = 1;
+        opts.do_compress = 1;
+        opts.do_use_objstms = 1;
+        pdf_save_document(ctx, out, out_path, &opts);
+        ok = true;
+    }
+    fz_always(ctx) {
+        fz_drop_page(ctx, page);
+        fz_drop_document_writer(ctx, writer);
+        fz_drop_output(ctx, bout);
+        pdf_drop_graft_map(ctx, map);
+        pdf_drop_document(ctx, converted);
+        fz_drop_stream(ctx, stm);
+        fz_drop_buffer(ctx, buffer);
+        fz_drop_document(ctx, src);
+        pdf_drop_document(ctx, out);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    fz_drop_context(ctx);
+    return ok;
+}
+
+bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = fz_new_context(NULL, NULL, FZ_STORE_DEFAULT);
+    if (!ctx) {
+        set_message(err, "Could not create a MuPDF context");
+        return false;
+    }
+    make_quiet(ctx);
+    pdf_document *pdf = NULL;
+    bool ok = false;
+    fz_var(pdf);
+    fz_var(ok);
+    fz_try(ctx) {
+        pdf = pdf_open_document(ctx, in_path);
+        if (pdf_needs_password(ctx, pdf) && !(password && pdf_authenticate_password(ctx, pdf, password)))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "The file is password protected");
+        static const int dpi[3] = { 200, 150, 100 };
+        static char *jpeg[3] = { "85", "70", "50" };
+        int q = quality < 0 ? 0 : quality > 2 ? 2 : quality;
+        pdf_image_rewriter_options opts;
+        memset(&opts, 0, sizeof opts);
+        opts.color_lossy_image_subsample_method = FZ_SUBSAMPLE_BICUBIC;
+        opts.color_lossless_image_subsample_method = FZ_SUBSAMPLE_BICUBIC;
+        opts.color_lossy_image_subsample_threshold = dpi[q] * 3 / 2;
+        opts.color_lossy_image_subsample_to = dpi[q];
+        opts.color_lossless_image_subsample_threshold = dpi[q] * 3 / 2;
+        opts.color_lossless_image_subsample_to = dpi[q];
+        opts.color_lossy_image_recompress_method = FZ_RECOMPRESS_JPEG;
+        opts.color_lossless_image_recompress_method = FZ_RECOMPRESS_JPEG;
+        opts.color_lossy_image_recompress_quality = jpeg[q];
+        opts.color_lossless_image_recompress_quality = jpeg[q];
+        opts.gray_lossy_image_subsample_method = FZ_SUBSAMPLE_BICUBIC;
+        opts.gray_lossless_image_subsample_method = FZ_SUBSAMPLE_BICUBIC;
+        opts.gray_lossy_image_subsample_threshold = dpi[q] * 3 / 2;
+        opts.gray_lossy_image_subsample_to = dpi[q];
+        opts.gray_lossless_image_subsample_threshold = dpi[q] * 3 / 2;
+        opts.gray_lossless_image_subsample_to = dpi[q];
+        opts.gray_lossy_image_recompress_method = FZ_RECOMPRESS_JPEG;
+        opts.gray_lossless_image_recompress_method = FZ_RECOMPRESS_JPEG;
+        opts.gray_lossy_image_recompress_quality = jpeg[q];
+        opts.gray_lossless_image_recompress_quality = jpeg[q];
+        opts.bitonal_image_subsample_method = FZ_SUBSAMPLE_AVERAGE;
+        opts.bitonal_image_recompress_method = FZ_RECOMPRESS_NEVER;
+        pdf_rewrite_images(ctx, pdf, &opts);
+        pdf_write_options wopts = pdf_default_write_options;
+        wopts.do_garbage = 3;
+        wopts.do_compress = 1;
+        wopts.do_compress_images = 1;
+        wopts.do_compress_fonts = 1;
+        wopts.do_use_objstms = 1;
+        pdf_save_document(ctx, pdf, out_path, &wopts);
+        ok = true;
+    }
+    fz_always(ctx)
+        pdf_drop_document(ctx, pdf);
+    fz_catch(ctx)
+        set_error(err, ctx);
+    fz_drop_context(ctx);
     return ok;
 }

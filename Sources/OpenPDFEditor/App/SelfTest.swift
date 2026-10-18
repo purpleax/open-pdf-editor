@@ -125,7 +125,99 @@ enum SelfTest {
                         snapshot(window, "3-flattened")
                         document.undoManager?.undo()
                         say("undo flatten: \(viewer.model.annotations(page: 0).count) annotations")
+                        pageSteps(document, controller, viewer, window)
+                    }
+                }
+            }
+        }
+    }
+
+    static func titles(_ viewer: ViewerController) -> [String] {
+        (0..<viewer.model.pageCount).map {
+            viewer.model.text(page: $0).string.split(separator: "\n").first.map(String.init) ?? "(blank)"
+        }
+    }
+
+    /// Clicks the sheet's button with this title.
+    static func pressSheetButton(_ window: NSWindow, _ title: String) -> Bool {
+        guard let sheet = window.attachedSheet else { return false }
+        func find(_ view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == title { return button }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        guard let button = sheet.contentView.flatMap(find) else { return false }
+        button.performClick(nil)
+        return true
+    }
+
+    /// Page management through the same code as the menus and thumbnails.
+    static func pageSteps(_ document: EditorDocument, _ controller: DocumentWindowController, _ viewer: ViewerController, _ window: NSWindow) {
+        controller.showThumbnails(nil)
+        guard let thumbnails = controller.sidebar?.thumbnails else { say("FAIL thumbnails"); return finish() }
+        say("pages: \(titles(viewer))")
+        let before = viewer.model.pageBounds
+        thumbnails.select([0, 2])
+        say("selected: \(viewer.targetPages)")
+        controller.rotatePagesRight(nil)
+        say("rotated 1 and 3: \(before[0].size) -> \(viewer.model.pageBounds[0].size), \(viewer.model.pageBounds[2].size); page 2 \(viewer.model.pageBounds[1].size)")
+        say("selected after rotate: \(thumbnails.selectedPages)")
+        viewer.pages.move([2], to: 0)
+        say("moved page 3 first: \(titles(viewer)); selected \(thumbnails.selectedPages)")
+        viewer.pages.insertBlank(after: 0)
+        say("blank after 1: \(titles(viewer))")
+        let corpus = URL(fileURLWithPath: ProcessInfo.processInfo.environment["OPDF_SELFTEST"]!).deletingLastPathComponent()
+        viewer.pages.insert([corpus.appendingPathComponent("mixed.pdf")], at: 2)
+        say("inserted mixed.pdf at 3: \(viewer.model.pageCount) pages: \(titles(viewer))")
+        viewer.go(toPage: 0)
+        controller.toggleCropMode(nil)
+        say("crop mode: \(viewer.pagesView.isCropping) subtitle: \(window.subtitle)")
+        let cropFrom = CGPoint(x: 100, y: 60), cropTo = CGPoint(x: 500, y: 400)
+        drag(viewer, page: 0, from: cropFrom, to: cropTo)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            snapshot(window, "4-crop-sheet")
+            say("pressed crop: \(pressSheetButton(window, "Crop Page 1"))")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                say("cropped page 1: \(viewer.model.pageBounds[0].size); crop mode \(viewer.pagesView.isCropping)")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    for case let view as PageView in viewer.pagesView.subviews where view.page <= 1 {
+                        say("view: \(view.debugDescriptionOfTiles)")
+                    }
+                    say("layout page 0: \(String(describing: viewer.pagesView.layout.frames[0])) bounds \(viewer.model.pageBounds[0]) rev \(viewer.model.revision(page: 0))")
+                    snapshot(window, "5-pages")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    snapshot(window, "5b-pages-later")
+                    let capture = Process()
+                    capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", out.appendingPathComponent("5c-screen.png").path]
+                    try? capture.run()
+                    capture.waitUntilExit()
+                    for case let view as PageView in viewer.pagesView.subviews {
+                        say("all: \(view.debugDescriptionOfTiles) sublayers \(view.layer?.sublayers?.map { "\($0.frame.integral)" } ?? [])")
+                    }
+                    thumbnails.select([1])
+                    controller.deletePages(nil)
+                    say("deleted the blank page: \(viewer.model.pageCount) pages; undo name: \(document.undoManager?.undoActionName ?? "")")
+                    for _ in 0..<6 { document.undoManager?.undo() }
+                    say("after undoing 6 page steps: \(titles(viewer)); sizes \(viewer.model.pageBounds.map(\.size))")
+                    for _ in 0..<6 { document.undoManager?.redo() }
+                    say("after redoing: \(viewer.model.pageCount) pages: \(titles(viewer))")
+                    let extract = out.appendingPathComponent("extract.pdf")
+                    try? FileManager.default.removeItem(at: extract)
+                    do {
+                        try viewer.model.engine.extractPages([0, 1], to: extract)
+                        say("extracted: \((try? EngineDocument(url: extract).pageCount()) ?? -1) pages")
+                    } catch { say("FAIL extract: \(error)") }
+                    document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        if let url = document.fileURL, let saved = try? EngineDocument(url: url) {
+                            say("saved: \((try? saved.pageCount()) ?? -1) pages, sizes \(((try? saved.pageBounds()) ?? []).map(\.size))")
+                            let original = try? Data(contentsOf: URL(fileURLWithPath: ProcessInfo.processInfo.environment["OPDF_SELFTEST"]!))
+                            let data = try? Data(contentsOf: url)
+                            say("incremental: \(original.map { data?.prefix($0.count) == $0 } ?? false)")
+                        }
+                        snapshot(window, "6-saved")
                         finish()
+                    }
                     }
                 }
             }

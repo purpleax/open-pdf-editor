@@ -87,4 +87,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let url = NSDocumentController.shared.currentDocument?.fileURL else { NSSound.beep(); return }
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
+
+    /// Makes one PDF of PDFs, images and other documents, in name order,
+    /// saves it and opens it.
+    @objc func createPDFFromFiles(_ sender: Any?) {
+        let open = NSOpenPanel()
+        open.allowsMultipleSelection = true
+        open.allowedContentTypes = PageEditor.insertableTypes
+        open.message = "Choose PDFs, images or other documents. They are combined in name order."
+        open.prompt = "Choose"
+        guard open.runModal() == .OK, !open.urls.isEmpty else { return }
+        let files = open.urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+        let save = NSSavePanel()
+        save.allowedContentTypes = [.pdf]
+        save.nameFieldStringValue = files.count == 1
+            ? files[0].deletingPathExtension().lastPathComponent + ".pdf"
+            : "Combined.pdf"
+        guard save.runModal() == .OK, let url = save.url else { return }
+        let progress = ProgressSheet.show(on: nil, message: files.count == 1 ? "Converting…" : "Combining \(files.count) files…")
+        EngineExecutor.background.async {
+            let result = Result { try PageEditor.writeReplacing(url) { try PDFFiles.combine(files, into: $0) } }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    progress?.close()
+                    switch result {
+                    case .success:
+                        NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { _, _, _ in }
+                    case let .failure(error):
+                        let alert = NSAlert()
+                        alert.messageText = "The PDF couldn’t be made."
+                        alert.informativeText = "\(error)"
+                        alert.runModal()
+                    }
+                }
+            }
+        }
+    }
 }

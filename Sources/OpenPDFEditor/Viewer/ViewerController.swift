@@ -22,6 +22,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     let scrollView = NSScrollView()
     let pagesView: PagesView
     let annotations: AnnotationController
+    private(set) lazy var pages = PageEditor(viewer: self)
     private var editor: AnnotationEditor?
 
     static let minZoom: CGFloat = 0.1
@@ -45,6 +46,16 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     var onAnnotationSelectionChange: ((AnnotationRef?) -> Void)?
     /// Called when the tool changes (a one-off tool going back to Select).
     var onToolChange: ((AnnotationTool) -> Void)?
+    /// Called when crop mode is turned on or off.
+    var onCropModeChange: (() -> Void)?
+    /// The pages that page commands apply to: those selected in the
+    /// thumbnails, or else the current page.
+    var selectedPages: (() -> [Int])?
+
+    var targetPages: [Int] {
+        let pages = selectedPages?() ?? []
+        return pages.isEmpty ? [currentPage] : pages
+    }
 
     var tool: AnnotationTool {
         get { pagesView.tool }
@@ -118,6 +129,9 @@ final class ViewerController: NSViewController, PagesViewDelegate {
                 self.pagesView.updateVisible()
                 self.pagesView.refreshAnnotationSelection()
             }
+        }
+        center.addObserver(forName: DocumentModel.structureDidChange, object: model, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.structureDidChange() }
         }
         center.addObserver(forName: DocumentModel.renderingDidChange, object: model, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -318,6 +332,27 @@ final class ViewerController: NSViewController, PagesViewDelegate {
             guard target >= 0 && target < model.pageCount else { return }
             go(to: ViewLocation(page: target), record: false)
         }
+    }
+
+    /// Pages were added, removed, moved, turned or cropped: page numbers
+    /// and sizes no longer mean what they did.
+    private func structureDidChange() {
+        editor?.close()
+        editor = nil
+        pagesView.selection = nil
+        pagesView.selectedAnnotation = nil
+        backStack.removeAll()
+        forwardStack.removeAll()
+        renderer.reset()
+        let page = min(currentPage, model.pageCount - 1)
+        shownSpread = PageLayout.spreads(pageCount: model.pageCount, mode: displayMode).firstIndex { $0.contains(page) } ?? 0
+        relayout()
+        pagesView.reloadPages()
+        if zoomMode != .custom { applyZoomMode(keeping: ViewLocation(page: page)) }
+        currentPage = page
+        updateCurrentPage()
+        if !find.query.isEmpty { find.search(find.query) }
+        onStateChange?()
     }
 
     // MARK: Zoom
@@ -521,6 +556,34 @@ final class ViewerController: NSViewController, PagesViewDelegate {
 
     func pagesView(_ view: PagesView, didUse tool: AnnotationTool) {
         self.tool = .select
+    }
+
+    func pagesViewCropModeDidChange(_ view: PagesView) {
+        onCropModeChange?()
+    }
+
+    /// An area to crop to: asks which pages, then crops them.
+    func pagesView(_ view: PagesView, crop rect: CGRect, onPage page: Int) {
+        guard let window = self.view.window else { return }
+        let selected = targetPages
+        let alert = NSAlert()
+        alert.messageText = "Crop to the selected area?"
+        alert.informativeText = "Everything outside the area is hidden. Pages of a different size are cropped to the same area, as far as it falls on them. You can undo this."
+        alert.addButton(withTitle: "Crop Page \(page + 1)")
+        let several = selected.count > 1 && selected.contains(page)
+        alert.addButton(withTitle: several ? "Crop \(selected.count) Selected Pages" : "Crop All Pages")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            let pages: [Int]
+            switch response {
+            case .alertFirstButtonReturn: pages = [page]
+            case .alertSecondButtonReturn: pages = several ? selected : Array(0..<self.model.pageCount)
+            default: return
+            }
+            self.pagesView.isCropping = false
+            self.pages.crop(pages, to: rect)
+        }
     }
 
     // MARK: Annotations

@@ -17,6 +17,11 @@ extension PagesView {
             return
         }
         let onPage = layout.frames[page]?.contains(location) == true
+        if isCropping {
+            guard onPage, model.isEditable else { return }
+            gesture = .crop(page: page, start: point, current: point)
+            return
+        }
         if !model.isEditable && tool != .select { tool = .select }
         switch tool {
         case .select:
@@ -73,6 +78,11 @@ extension PagesView {
             guard let point = clampedPoint(location, page: ref.page) else { return }
             gesture = .resize(ref, handle, current: point)
             drawMoveDraft()
+        case let .crop(page, start, _):
+            autoscroll(with: event)
+            guard let point = clampedPoint(location, page: page) else { return }
+            gesture = .crop(page: page, start: start, current: point)
+            drawCropDraft()
         }
     }
 
@@ -80,6 +90,15 @@ extension PagesView {
         let finished = gesture
         gesture = .none
         clearDrafts()
+        if case let .crop(page, start, current) = finished {
+            let rect = CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
+                              width: abs(current.x - start.x), height: abs(current.y - start.y))
+            // A click, or a sliver, isn't an area.
+            if rect.width * zoom >= 8 && rect.height * zoom >= 8 && rect.width >= 4 && rect.height >= 4 {
+                delegate?.pagesView(self, crop: rect, onPage: page)
+            }
+            return
+        }
         guard let annotations else {
             textMouseUp(with: event)
             return
@@ -111,6 +130,8 @@ extension PagesView {
                 try annotations.move(ref, by: CGVector(dx: current.x - start.x, dy: current.y - start.y))
             case let .resize(ref, handle, current):
                 try annotations.resize(ref, handle: handle, to: current)
+            case .crop:
+                break
             }
         } catch {
             NSSound.beep()
@@ -119,7 +140,7 @@ extension PagesView {
 
     /// A point on the page, kept inside it.
     private func clampedPoint(_ location: NSPoint, page: Int) -> CGPoint? {
-        guard let point = convert(location, toPage: page) else { return nil }
+        guard let point = convert(location, toPage: page), page < model.pageCount else { return nil }
         let bounds = model.pageBounds[page]
         return CGPoint(x: min(max(point.x, bounds.minX), bounds.maxX), y: min(max(point.y, bounds.minY), bounds.maxY))
     }
@@ -152,6 +173,14 @@ extension PagesView {
         let width = tool == .textBox ? 1 / zoom : ToolSettings.lineWidth(for: tool)
         view.setDraft(path, color: ToolSettings.color(for: tool).nsColor, lineWidth: width,
                       transform: model.pageToView(page: page, rotation: rotation), dashed: tool == .textBox)
+    }
+
+    private func drawCropDraft() {
+        guard case let .crop(page, start, current) = gesture, let view = pageView(page) else { return }
+        let rect = CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
+                          width: abs(current.x - start.x), height: abs(current.y - start.y))
+        view.setDraft(CGPath(rect: rect, transform: nil), color: .controlAccentColor, lineWidth: 1.5 / zoom,
+                      transform: model.pageToView(page: page, rotation: rotation), dashed: true)
     }
 
     private func addArrowHead(to path: CGMutablePath, from start: CGPoint, to end: CGPoint) {
