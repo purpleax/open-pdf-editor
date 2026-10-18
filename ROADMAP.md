@@ -29,7 +29,7 @@ Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends w
 - [x] Swift package: the C bridge, the app, and a command-line smoke test that renders a page
 - [x] Sparkle linked, with Check for Updates… in the app menu and an EdDSA key in the Keychain
 - [x] Signing, packaging (DMG and zip, notarised) and release scripts adapted from mdview, plus the appcast
-- [ ] Public repository on GitHub, pushed
+- [x] Public repository on GitHub, pushed
 - [ ] App icon
 
 ## Phase 1: Viewer (0.1.0)
