@@ -101,7 +101,7 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] Reduce file size (File › Reduce File Size…: a smaller copy, images at 200, 150 or 100 dpi)
 - [x] Every page change is one undoable step and saves incrementally, like annotations
 - [x] Security review before release: four Medium fixed (cleanup on the shared MuPDF context outside the document lock during Insert Pages; moving pages through `pdf_rearrange_pages`, which rebuilt the catalog and dropped forms, attachments and metadata, and recursed without limit through a deep outline; conversion with no memory cap and no way to cancel), with the cheap Lows; see the commit "Fix 0.3.0 review findings". The re-review found one more Medium, older than 0.3.0: MuPDF's global HarfBuzz state was shared by contexts with separate locks (two documents drawing text boxes, or a conversion beside drawing, could crash); every context now shares one set of locks and one allocator
-  - Left for later (Low): deleted pages and crops stay in the file's earlier revision, because saves append (Reduce File Size writes a clean copy); Insert, Extract, Split and Create PDF copy page contents but not annotations, links or form fields; HTML and SVG conversion embeds images from the source file's own folder, following symlinks
+  - Left for later (Low): deleted pages and crops stay in the file's earlier revision, because saves append (Reduce File Size writes a clean copy); Insert, Extract, Split and Create PDF copy page contents but not annotations, links or form fields; HTML and SVG conversion embeds images from the source file's own folder, following symlinks; a conversion that stays under the memory cap runs until cancelled (no time limit)
 
 ## Phase 4: Forms (0.4.0)
 
