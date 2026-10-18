@@ -5,6 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 OUT=$PWD/build/mupdf/arm64
 MUTOOL=$OUT/mutool
+mkdir -p build
 if [ ! -x "$MUTOOL" ] || [ thirdparty/mupdf/.git -nt "$MUTOOL" ]; then
     echo "corpus: building mutool"
     make -C thirdparty/mupdf -j"$(sysctl -n hw.ncpu)" build=release barcode=no tesseract=no \

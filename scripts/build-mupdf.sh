@@ -37,6 +37,7 @@ fi
 
 JOBS=$(sysctl -n hw.ncpu)
 arch=$ARCH
+mkdir -p "$OUT"
 echo "build-mupdf: building $arch"
 make -C "$MUPDF" -j"$JOBS" "${MAKE_OPTS[@]}" OUT="$OUT/$arch" \
     XCFLAGS="-arch $arch -mmacosx-version-min=$MIN_MACOS" \
