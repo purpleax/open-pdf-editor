@@ -22,14 +22,19 @@ do {
     if document.needsPassword { fail("the document needs a password") }
     let count = try document.pageCount()
     guard (1...count).contains(page) else { fail("page \(page) is out of range (1-\(count))") }
-    let size = try document.pageSize(page - 1)
+    let bounds = try document.pageBounds()[page - 1]
+    let size = bounds.size
     let start = Date()
-    let image = try document.render(page: page - 1, scale: scale)
+    let image = try document.renderPage(page - 1, bounds: bounds, scale: scale)
     let elapsed = Date().timeIntervalSince(start) * 1000
     guard let destination = CGImageDestinationCreateWithURL(output as CFURL, UTType.png.identifier as CFString, 1, nil)
     else { fail("cannot write \(output.path)") }
     CGImageDestinationAddImage(destination, image, nil)
     guard CGImageDestinationFinalize(destination) else { fail("cannot write \(output.path)") }
+    let text = try document.text(page: page - 1)
+    let outline = try document.outline()
+    print("text: \(text.chars.count) characters on \(text.lines.count) lines; outline: \(outline.count) top-level items;"
+        + " links on page: \(try document.links(page: page - 1).count)")
     print("MuPDF \(EngineDocument.mupdfVersion): \(count) pages; page \(page) is \(Int(size.width))x\(Int(size.height)) pt;"
         + " rendered \(image.width)x\(image.height) px in \(String(format: "%.0f", elapsed)) ms -> \(output.path)")
 } catch {

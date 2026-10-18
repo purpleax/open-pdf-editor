@@ -38,5 +38,12 @@ let package = Package(
             dependencies: ["PDFCore"],
             path: "Sources/pdfsmoke"
         ),
+        // Engine tests against the generated corpus (make test).
+        .testTarget(
+            name: "PDFCoreTests",
+            dependencies: ["PDFCore"],
+            path: "Tests/PDFCoreTests",
+            exclude: ["Golden"]
+        ),
     ]
 )

@@ -31,7 +31,7 @@ final class DocumentWindowController: NSWindowController {
         }
         do {
             let scale = window.backingScaleFactor
-            let image = try engine.render(page: 0, scale: scale)
+            let image = try engine.renderPage(0, bounds: try engine.pageBounds()[0], scale: scale)
             let size = NSSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
             let view = NSImageView(frame: NSRect(origin: .zero, size: size))
             view.image = NSImage(cgImage: image, size: size)

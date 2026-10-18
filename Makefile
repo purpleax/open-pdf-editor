@@ -3,7 +3,7 @@ APP := build/Open PDF Editor.app
 EXE := OpenPDFEditor
 SWIFT_BUILD := swift build -c release --arch arm64
 
-.PHONY: mupdf build smoke install dmg release hooks clean distclean
+.PHONY: mupdf build smoke corpus test install dmg release hooks clean distclean
 
 # MuPDF as Frameworks/MuPDF.xcframework (skipped when up to date).
 mupdf:
@@ -31,6 +31,19 @@ smoke: mupdf
 	@test -n "$(PDF)" || { echo "usage: make smoke PDF=file.pdf"; exit 1; }
 	$(SWIFT_BUILD) --product pdfsmoke
 	"$(shell $(SWIFT_BUILD) --show-bin-path)/pdfsmoke" "$(PDF)" build/smoke.png
+
+# Generate the test PDFs in build/corpus (builds mutool the first time).
+corpus: mupdf
+	scripts/make-corpus.sh
+
+# Engine tests: text, search, outline, links, attachments, layers, passwords,
+# and renders compared with Tests/PDFCoreTests/Golden (UPDATE_GOLDEN=1 rewrites them).
+# With the Command Line Tools, SwiftPM sometimes fails to load the Swift
+# Testing macro plugin on the first build after other targets change; a
+# second build always works. So: build (once more if needed), then run.
+test: corpus
+	swift build --arch arm64 --build-tests >/dev/null 2>&1 || swift build --arch arm64 --build-tests
+	$(if $(UPDATE_GOLDEN),UPDATE_GOLDEN=1) swift test --arch arm64 --skip-build
 
 # Copy the app to /Applications.
 install: build
