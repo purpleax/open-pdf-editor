@@ -170,6 +170,125 @@ void opdf_layers_free(opdf_layer *items, int count);
 // group). Display lists loaded before this are out of date.
 bool opdf_layer_toggle(opdf_doc *doc, int index, opdf_error *err);
 
+
+// --- Annotations -----------------------------------------------------------
+//
+// Annotations are identified by their PDF object number, which stays the
+// same while the document is open. Geometry is in page space. Every change
+// is one step in MuPDF's undo journal (see opdf_undo).
+
+typedef struct {
+    int id;              // PDF object number
+    int type;            // MuPDF's pdf_annot_type (0 Text, 2 FreeText, 3 Line, 4 Square, 5 Circle, 8 Highlight, ...)
+    opdf_rect rect;
+    int color_n;         // 0 none, 1 grey, 3 RGB, 4 CMYK
+    float color[4];
+    int interior_n;
+    float interior[4];
+    float opacity;
+    float border_width;
+    int flags;
+    char *contents;
+    char *author;
+    char *subject;
+    char *icon_name;     // Text icons and stamp names
+    int64_t modified;    // seconds since 1970, or -1
+    int64_t created;
+    int in_reply_to;     // id of the annotation this replies to, or 0
+    char *state;         // review state of a status reply ("Accepted", ...)
+    char *state_model;   // "Review" or "Marked"
+    int quad_count;
+    float *quads;        // quad_count * 8 floats: ul, ur, ll, lr corners
+    int ink_stroke_count;
+    int *ink_counts;     // points in each stroke
+    float *ink_points;   // all strokes' points as x, y pairs
+    bool has_line;
+    float line[4];       // x0, y0, x1, y1
+    int line_start, line_end;  // pdf_line_ending
+    float font_size;     // FreeText
+    int text_color_n;
+    float text_color[4];
+} opdf_annot;
+
+// Every annotation on a page except links, popups and form fields.
+opdf_annot *opdf_annots_load(opdf_doc *doc, int page, int *count, opdf_error *err);
+void opdf_annots_free(opdf_annot *items, int count);
+
+// Which fields of an opdf_annot_spec to apply.
+enum {
+    OPDF_FIELD_RECT = 1 << 0,
+    OPDF_FIELD_COLOR = 1 << 1,
+    OPDF_FIELD_INTERIOR = 1 << 2,
+    OPDF_FIELD_OPACITY = 1 << 3,
+    OPDF_FIELD_BORDER = 1 << 4,
+    OPDF_FIELD_CONTENTS = 1 << 5,
+    OPDF_FIELD_AUTHOR = 1 << 6,
+    OPDF_FIELD_ICON = 1 << 7,
+    OPDF_FIELD_QUADS = 1 << 8,
+    OPDF_FIELD_INK = 1 << 9,
+    OPDF_FIELD_LINE = 1 << 10,
+    OPDF_FIELD_LINE_ENDINGS = 1 << 11,
+    OPDF_FIELD_FONT = 1 << 12,
+};
+
+typedef struct {
+    int type;
+    opdf_rect rect;
+    int color_n;         // 0 none, 3 RGB
+    float color[3];
+    int interior_n;
+    float interior[3];
+    float opacity;
+    float border_width;
+    const char *contents;
+    const char *author;
+    const char *icon_name;
+    int quad_count;
+    const float *quads;
+    int ink_stroke_count;
+    const int *ink_counts;
+    const float *ink_points;
+    float line[4];
+    int line_start, line_end;
+    float font_size;
+    float text_color[3];
+} opdf_annot_spec;
+
+// Creates an annotation from the fields given; the new id, or 0 on failure.
+int opdf_annot_create(opdf_doc *doc, int page, const opdf_annot_spec *spec, unsigned fields,
+                      const char *operation, opdf_error *err);
+bool opdf_annot_update(opdf_doc *doc, int page, int id, const opdf_annot_spec *spec, unsigned fields,
+                       const char *operation, opdf_error *err);
+// Applies a matrix to an annotation's rectangle and geometry (move, resize).
+bool opdf_annot_transform(opdf_doc *doc, int page, int id, opdf_matrix matrix, const char *operation, opdf_error *err);
+// Deletes an annotation and its replies.
+bool opdf_annot_delete(opdf_doc *doc, int page, int id, const char *operation, opdf_error *err);
+// Adds a reply note to an annotation; the reply's id, or 0.
+int opdf_annot_reply(opdf_doc *doc, int page, int parent, const char *author, const char *contents, opdf_error *err);
+// Sets the review status of an annotation (one status per author): a hidden
+// reply with State/StateModel, as other PDF apps write it. NULL state removes it.
+bool opdf_annot_set_status(opdf_doc *doc, int page, int parent, const char *author, const char *state, opdf_error *err);
+
+// --- Undo, saving, flattening ---------------------------------------------
+
+bool opdf_can_undo(opdf_doc *doc);
+bool opdf_can_redo(opdf_doc *doc);
+bool opdf_undo(opdf_doc *doc, opdf_error *err);
+bool opdf_redo(opdf_doc *doc, opdf_error *err);
+bool opdf_has_unsaved_changes(opdf_doc *doc);
+
+// Writes the document with its changes to path (never the open file): the
+// original file, byte for byte, with every change since opening appended as
+// one incremental update (which keeps digital signatures valid). The open
+// document is left as it was, so it can be saved again and keeps its undo
+// history. Repaired files, which can't take incremental updates, are written
+// whole.
+bool opdf_save(opdf_doc *doc, const char *path, opdf_error *err);
+
+// Draws every annotation into its page's content and removes them (form
+// fields are left alone). One undoable step.
+bool opdf_flatten_annotations(opdf_doc *doc, opdf_error *err);
+
 #ifdef __cplusplus
 }
 #endif

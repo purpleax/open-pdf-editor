@@ -20,7 +20,10 @@ Started Oct 18, 2026. Work goes phase by phase. Each phase from 1 onwards ends w
 | Printing | The saved PDF handed to PDFKit's print operation, for the native print panel | 2026-10-18 |
 | Undo | MuPDF's document journal, bridged to `NSUndoManager` | 2026-10-18 |
 | Security review | Before every release, a separate review acting as a security researcher scans the code (the C bridge, PDF parsing, links, attachments, the update path and release scripts). Findings above Low are fixed before publishing. | 2026-10-18 |
-| Saving | Incremental saves by default (keeps signatures valid). Redaction and Reduce File Size force a full rewrite with garbage collection. | 2026-10-18 |
+| Saving | Every save writes the original file byte for byte with all changes since opening appended as one incremental update (keeps signatures valid). The open document is never itself saved: MuPDF writes a snapshot and the bridge restores its incremental-section count, so saves don't disturb the undo journal and each save is complete on its own. Repaired files are written whole. Redaction and Reduce File Size will force a full rewrite. | 2026-10-19 |
+| Autosave | Autosave in place with Versions, as in Preview (File › Revert To, Duplicate, Rename, Move To); possible because saving keeps undo history | 2026-10-19 |
+| Annotation replies and status | Replies are Text annotations with /IRT, and review status a hidden reply with /State and /StateModel Review, as Acrobat writes them. They are not drawn on the page; they appear in the Comments list. | 2026-10-19 |
+| Markup tools | A markup bar under the toolbar (View › Show Markup Toolbar, ⇧⌘A) with the tools, colour and line width, as in Preview; the inspector edits the selected annotation | 2026-10-19 |
 
 ## Phase 0: Foundations
 

@@ -164,6 +164,38 @@ function makeLong() {
 	doc.save(out + "/long.pdf", "compress,garbage")
 }
 
+// --- signed.pdf: a (fake) signed signature field ----------------------------
+// Enough structure for the app to treat it as signed: a /Sig field with a
+// value. The signature itself isn't real (this MuPDF build can't sign).
+function makeSigned() {
+	var doc = newDocument()
+	addTextPage(doc, LETTER, [[72, 90, 24, "Signed document"]])
+	var sig = doc.newDictionary()
+	sig.put("Type", doc.newName("Sig"))
+	sig.put("Filter", doc.newName("Adobe.PPKLite"))
+	sig.put("SubFilter", doc.newName("adbe.pkcs7.detached"))
+	sig.put("Contents", doc.newByteString("0000"))
+	var widget = doc.newDictionary()
+	widget.put("Type", doc.newName("Annot"))
+	widget.put("Subtype", doc.newName("Widget"))
+	widget.put("FT", doc.newName("Sig"))
+	widget.put("T", doc.newString("Signature1"))
+	var rect = doc.newArray(); rect.push(0); rect.push(0); rect.push(0); rect.push(0)
+	widget.put("Rect", rect)
+	widget.put("V", doc.addObject(sig))
+	var w = doc.addObject(widget)
+	var page = doc.findPage(0)
+	widget.put("P", page)
+	var annots = doc.newArray(); annots.push(w)
+	page.put("Annots", annots)
+	var fields = doc.newArray(); fields.push(w)
+	var form = doc.newDictionary()
+	form.put("Fields", fields)
+	form.put("SigFlags", 3)
+	doc.getTrailer().get("Root").put("AcroForm", form)
+	doc.save(out + "/signed.pdf", "compress")
+}
+
 // --- Hostile files, for the security tests ----------------------------------
 
 // Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
@@ -207,6 +239,7 @@ function makeNotAPDF() {
 }
 
 makeText()
+makeSigned()
 makeHuge()
 makeDeepOutline()
 makeNotAPDF()

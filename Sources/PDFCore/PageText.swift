@@ -6,6 +6,19 @@ import MuPDFBridge
 public struct Quad: Sendable, Equatable {
     public var upperLeft, upperRight, lowerLeft, lowerRight: CGPoint
 
+    public init(upperLeft: CGPoint, upperRight: CGPoint, lowerLeft: CGPoint, lowerRight: CGPoint) {
+        self.upperLeft = upperLeft
+        self.upperRight = upperRight
+        self.lowerLeft = lowerLeft
+        self.lowerRight = lowerRight
+    }
+
+    /// An upright rectangle as a quad (page space, y down).
+    public init(_ rect: CGRect) {
+        self.init(upperLeft: CGPoint(x: rect.minX, y: rect.minY), upperRight: CGPoint(x: rect.maxX, y: rect.minY),
+                  lowerLeft: CGPoint(x: rect.minX, y: rect.maxY), lowerRight: CGPoint(x: rect.maxX, y: rect.maxY))
+    }
+
     public var bounds: CGRect {
         let xs = [upperLeft.x, upperRight.x, lowerLeft.x, lowerRight.x]
         let ys = [upperLeft.y, upperRight.y, lowerLeft.y, lowerRight.y]
