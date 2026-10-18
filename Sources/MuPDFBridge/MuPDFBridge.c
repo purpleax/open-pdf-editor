@@ -32,10 +32,6 @@ struct opdf_doc {
     fz_document *doc;
     pthread_mutex_t lock;
 
-    // MuPDF's own locks, shared by the base context and its clones.
-    pthread_mutex_t mupdf_locks[FZ_LOCK_MAX];
-    fz_locks_context locks;
-
     // Set by opdf_prepare_for_editing.
     bool edits_prepared;
     bool repaired_before_edits;
@@ -76,13 +72,127 @@ static char *dup_string(const char *s) {
     return s ? strdup(s) : NULL;
 }
 
+// --- Locks and memory, shared by every MuPDF context ------------------------
+//
+// MuPDF keeps some state in globals (HarfBuzz's context, for one) and
+// guards it with the context's locks, so every context in the process must
+// share one set of locks. For the same reason a block allocated through one
+// context can be freed through another, so every context uses the same
+// allocator: each block's header says which budget it was counted against.
+
+static pthread_mutex_t mupdf_mutexes[FZ_LOCK_MAX];
+static pthread_once_t mupdf_mutexes_once = PTHREAD_ONCE_INIT;
+
+static void init_mupdf_mutexes(void) {
+    for (int i = 0; i < FZ_LOCK_MAX; i++) pthread_mutex_init(&mupdf_mutexes[i], NULL);
+}
+
 static void lock_mupdf(void *user, int lock) {
-    pthread_mutex_lock(&((pthread_mutex_t *)user)[lock]);
+    (void)user;
+    pthread_mutex_lock(&mupdf_mutexes[lock]);
 }
 
 static void unlock_mupdf(void *user, int lock) {
-    pthread_mutex_unlock(&((pthread_mutex_t *)user)[lock]);
+    (void)user;
+    pthread_mutex_unlock(&mupdf_mutexes[lock]);
 }
+
+static fz_locks_context *shared_locks(void) {
+    static fz_locks_context locks = { NULL, lock_mupdf, unlock_mupdf };
+    pthread_once(&mupdf_mutexes_once, init_mupdf_mutexes);
+    return &locks;
+}
+
+struct opdf_cancel { atomic_int requested; };
+
+#define BLOCK_MAGIC 0x4f504446u
+#define BUDGETS 32
+
+typedef struct {
+    uint32_t magic;
+    int32_t budget;       // -1: not counted
+    uint64_t size;
+} block_header;           // 16 bytes, which keeps blocks 16-byte aligned
+_Static_assert(sizeof(block_header) == 16, "block header size");
+
+// Bytes in use per budget. A block freed after its budget was given up and
+// taken again only makes the new holder's count lower, which is harmless.
+static atomic_llong budget_used[BUDGETS];
+static atomic_int budget_taken[BUDGETS];
+
+// What a context's allocations are counted against (its alloc user data).
+typedef struct {
+    int budget;           // -1: not counted (documents)
+    long long base;       // budget_used when the budget was taken
+    long long limit;
+    atomic_int over_limit;
+    opdf_cancel *cancel;
+} allocator_owner;
+
+static allocator_owner uncounted_owner = { .budget = -1 };
+
+static bool owner_cancelled(allocator_owner *o) {
+    return o->cancel && atomic_load(&o->cancel->requested);
+}
+
+// May this owner have `more` bytes? Cancelled or over the limit: no.
+static bool owner_allows(allocator_owner *o, size_t more) {
+    if (o->budget < 0) return true;
+    if (owner_cancelled(o)) return false;
+    long long in_use = atomic_load(&budget_used[o->budget]) - o->base;
+    if (more > (size_t)LLONG_MAX || (long long)more > o->limit - in_use) {
+        atomic_store(&o->over_limit, 1);
+        return false;
+    }
+    return true;
+}
+
+static void *shared_malloc(void *user, size_t size) {
+    allocator_owner *o = user;
+    if (size > SIZE_MAX - sizeof(block_header) || !owner_allows(o, size)) return NULL;
+    block_header *h = malloc(sizeof *h + size);
+    if (!h) return NULL;
+    *h = (block_header){ BLOCK_MAGIC, o->budget, size };
+    if (h->budget >= 0) atomic_fetch_add(&budget_used[h->budget], (long long)size);
+    return h + 1;
+}
+
+static block_header *header_of(void *ptr) {
+    block_header *h = (block_header *)ptr - 1;
+    // Every block comes from shared_malloc; anything else is memory corruption.
+    if (h->magic != BLOCK_MAGIC) abort();
+    return h;
+}
+
+static void shared_free(void *user, void *ptr) {
+    (void)user;
+    if (!ptr) return;
+    block_header *h = header_of(ptr);
+    if (h->budget >= 0) atomic_fetch_sub(&budget_used[h->budget], (long long)h->size);
+    h->magic = 0;
+    free(h);
+}
+
+static void *shared_realloc(void *user, void *ptr, size_t size) {
+    allocator_owner *o = user;
+    if (!ptr) return shared_malloc(user, size);
+    if (size == 0) {
+        shared_free(user, ptr);
+        return NULL;
+    }
+    block_header *h = header_of(ptr);
+    size_t old = (size_t)h->size;
+    if (size > SIZE_MAX - sizeof(block_header)) return NULL;
+    if (size > old && !owner_allows(o, size - old)) return NULL;
+    block_header *grown = realloc(h, sizeof *h + size);
+    if (!grown) return NULL;
+    grown->size = size;
+    if (grown->budget >= 0) atomic_fetch_add(&budget_used[grown->budget], (long long)size - (long long)old);
+    return grown + 1;
+}
+
+// For contexts that hold documents: counted nowhere, never refused.
+static fz_alloc_context document_alloc = { &uncounted_owner, shared_malloc, shared_realloc, shared_free };
 
 // MuPDF prints errors and warnings to stderr by default. Errors reach the
 // caller through opdf_error, and warnings (repaired files, odd fonts) are
@@ -150,16 +260,10 @@ opdf_doc *opdf_open(const char *path, opdf_error *err) {
         set_message(err, "Out of memory");
         return NULL;
     }
-    for (int i = 0; i < FZ_LOCK_MAX; i++)
-        pthread_mutex_init(&d->mupdf_locks[i], NULL);
     pthread_mutex_init(&d->lock, NULL);
     pthread_mutex_init(&d->pool_lock, NULL);
     pthread_cond_init(&d->pool_cond, NULL);
-    d->locks.user = d->mupdf_locks;
-    d->locks.lock = lock_mupdf;
-    d->locks.unlock = unlock_mupdf;
-
-    d->ctx = fz_new_context(NULL, &d->locks, FZ_STORE_DEFAULT);
+    d->ctx = fz_new_context(&document_alloc, shared_locks(), FZ_STORE_DEFAULT);
     if (!d->ctx) {
         set_message(err, "Could not create a MuPDF context");
         opdf_close(d);
@@ -198,8 +302,6 @@ void opdf_close(opdf_doc *d) {
         fz_drop_document(d->ctx, d->doc);
         fz_drop_context(d->ctx);
     }
-    for (int i = 0; i < FZ_LOCK_MAX; i++)
-        pthread_mutex_destroy(&d->mupdf_locks[i]);
     pthread_mutex_destroy(&d->lock);
     pthread_mutex_destroy(&d->pool_lock);
     pthread_cond_destroy(&d->pool_cond);
@@ -1678,7 +1780,10 @@ static void reorder_page_tree(fz_context *ctx, pdf_document *pdf, const int *ord
             pdf_obj *key = inheritable[k];
             if (pdf_dict_get(ctx, pages[i], key)) continue;
             pdf_obj *value = pdf_dict_get_inheritable(ctx, pages[i], key);
-            if (value) pdf_dict_put(ctx, pages[i], key, value);
+            if (!value) continue;
+            // A direct object gets a copy per page, so no two pages share it.
+            if (pdf_is_indirect(ctx, value)) pdf_dict_put(ctx, pages[i], key, value);
+            else pdf_dict_put_drop(ctx, pages[i], key, pdf_deep_copy_obj(ctx, value));
         }
     }
     pdf_obj *kids = pdf_new_array(ctx, pdf, count);
@@ -1886,8 +1991,6 @@ bool opdf_extract_pages(opdf_doc *d, const int *pages, int count, const char *pa
 // allocation fails, so MuPDF stops with an error wherever it is (even in the
 // middle of laying out a document, which can't otherwise be interrupted).
 
-struct opdf_cancel { atomic_int requested; };
-
 opdf_cancel *opdf_cancel_new(void) {
     opdf_cancel *cancel = calloc(1, sizeof *cancel);
     if (cancel) atomic_init(&cancel->requested, 0);
@@ -1900,76 +2003,29 @@ void opdf_cancel_request(opdf_cancel *cancel) {
 
 void opdf_cancel_free(opdf_cancel *cancel) { free(cancel); }
 
-#define OPDF_CONVERSION_MEMORY ((size_t)3 << 30)
-#define ALLOC_HEADER 16   // keeps 16-byte alignment
+#define OPDF_CONVERSION_MEMORY ((long long)3 << 30)
 
-typedef struct {
-    size_t used;          // only the context's one thread allocates
-    size_t limit;
-    bool over_limit;
-    opdf_cancel *cancel;
-} capped_allocator;
-
-static bool cancelled(capped_allocator *a) {
-    return a->cancel && atomic_load(&a->cancel->requested);
-}
-
-static void *capped_malloc(void *user, size_t size) {
-    capped_allocator *a = user;
-    if (cancelled(a)) return NULL;
-    if (size > a->limit - a->used || size > SIZE_MAX - ALLOC_HEADER) {
-        a->over_limit = true;
-        return NULL;
-    }
-    unsigned char *block = malloc(size + ALLOC_HEADER);
-    if (!block) return NULL;
-    memcpy(block, &size, sizeof size);
-    a->used += size;
-    return block + ALLOC_HEADER;
-}
-
-static void capped_free(void *user, void *ptr) {
-    capped_allocator *a = user;
-    if (!ptr) return;
-    unsigned char *block = (unsigned char *)ptr - ALLOC_HEADER;
-    size_t size;
-    memcpy(&size, block, sizeof size);
-    a->used -= size;
-    free(block);
-}
-
-static void *capped_realloc(void *user, void *ptr, size_t size) {
-    capped_allocator *a = user;
-    if (!ptr) return capped_malloc(user, size);
-    if (size == 0) {
-        capped_free(user, ptr);
-        return NULL;
-    }
-    unsigned char *block = (unsigned char *)ptr - ALLOC_HEADER;
-    size_t old;
-    memcpy(&old, block, sizeof old);
-    if (size > old) {
-        if (cancelled(a)) return NULL;
-        if (size - old > a->limit - a->used || size > SIZE_MAX - ALLOC_HEADER) {
-            a->over_limit = true;
-            return NULL;
+// A context whose memory is counted against a budget of its own; release
+// the budget with release_budget after dropping the context. `owner` and
+// `alloc` must outlive the context. `all_handlers` registers every document
+// handler: only ever in a context like this, which never holds the open
+// document.
+static fz_context *new_capped_context(allocator_owner *owner, fz_alloc_context *alloc, opdf_cancel *cancel,
+                                      bool all_handlers) {
+    owner->budget = -1;
+    owner->limit = OPDF_CONVERSION_MEMORY;
+    owner->cancel = cancel;
+    atomic_init(&owner->over_limit, 0);
+    for (int i = 0; i < BUDGETS && owner->budget < 0; i++) {
+        int expected = 0;
+        if (atomic_compare_exchange_strong(&budget_taken[i], &expected, 1)) {
+            owner->budget = i;
+            owner->base = atomic_load(&budget_used[i]);
         }
     }
-    unsigned char *grown = realloc(block, size + ALLOC_HEADER);
-    if (!grown) return NULL;
-    memcpy(grown, &size, sizeof size);
-    a->used = a->used - old + size;
-    return grown + ALLOC_HEADER;
-}
-
-// A capped context; `alloc` must outlive it. `all_handlers` registers every
-// document handler: only ever in a context like this, which never holds the
-// open document.
-static fz_context *new_capped_context(capped_allocator *a, fz_alloc_context *alloc, opdf_cancel *cancel,
-                                      bool all_handlers) {
-    *a = (capped_allocator){ .used = 0, .limit = OPDF_CONVERSION_MEMORY, .cancel = cancel };
-    *alloc = (fz_alloc_context){ a, capped_malloc, capped_realloc, capped_free };
-    fz_context *ctx = fz_new_context(alloc, NULL, FZ_STORE_DEFAULT);
+    if (owner->budget < 0) return NULL;
+    *alloc = (fz_alloc_context){ owner, shared_malloc, shared_realloc, shared_free };
+    fz_context *ctx = fz_new_context(alloc, shared_locks(), FZ_STORE_DEFAULT);
     if (!ctx) return NULL;
     make_quiet(ctx);
     if (all_handlers) {
@@ -1983,21 +2039,32 @@ static fz_context *new_capped_context(capped_allocator *a, fz_alloc_context *all
     return ctx;
 }
 
+static void release_budget(allocator_owner *owner) {
+    if (owner->budget >= 0) atomic_store(&budget_taken[owner->budget], 0);
+    owner->budget = -1;
+}
+
+// Why a capped context couldn't be made.
+static void set_no_context_error(opdf_error *err, allocator_owner *owner) {
+    set_message(err, owner_cancelled(owner) ? "Cancelled" : "Could not create a MuPDF context");
+}
+
 // The error to report from a capped context: why it stopped, if it was the cap.
-static void set_capped_error(opdf_error *err, fz_context *ctx, capped_allocator *a) {
-    if (cancelled(a)) set_message(err, "Cancelled");
-    else if (a->over_limit) set_message(err, "The files need too much memory to convert");
+static void set_capped_error(opdf_error *err, fz_context *ctx, allocator_owner *owner) {
+    if (owner_cancelled(owner)) set_message(err, "Cancelled");
+    else if (atomic_load(&owner->over_limit)) set_message(err, "The files need too much memory to convert");
     else set_error(err, ctx);
 }
 
 bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
                         opdf_cancel *cancel, opdf_error *err) {
     clear_error(err);
-    capped_allocator allocator;
+    allocator_owner allocator;
     fz_alloc_context alloc;
     fz_context *ctx = new_capped_context(&allocator, &alloc, cancel, true);
     if (!ctx) {
-        set_message(err, "Could not create a MuPDF context");
+        set_no_context_error(err, &allocator);
+        release_budget(&allocator);
         return false;
     }
     pdf_document *out = NULL;
@@ -2093,17 +2160,19 @@ bool opdf_convert_files(const char *const *paths, int count, const char *out_pat
     fz_catch(ctx)
         set_capped_error(err, ctx, &allocator);
     fz_drop_context(ctx);
+    release_budget(&allocator);
     return ok;
 }
 
 bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality,
                       opdf_cancel *cancel, opdf_error *err) {
     clear_error(err);
-    capped_allocator allocator;
+    allocator_owner allocator;
     fz_alloc_context alloc;
     fz_context *ctx = new_capped_context(&allocator, &alloc, cancel, false);
     if (!ctx) {
-        set_message(err, "Could not create a MuPDF context");
+        set_no_context_error(err, &allocator);
+        release_budget(&allocator);
         return false;
     }
     pdf_document *pdf = NULL;
@@ -2156,5 +2225,6 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
     fz_catch(ctx)
         set_capped_error(err, ctx, &allocator);
     fz_drop_context(ctx);
+    release_budget(&allocator);
     return ok;
 }

@@ -308,6 +308,27 @@ function makeReplyChain() {
 }
 
 // An HTML file with a .pdf name: must not open in another engine.
+// Text boxes with a style (/DS) and no appearance: MuPDF lays them out with
+// its HTML engine and HarfBuzz when a page is drawn.
+function makeFreeText() {
+	var doc = newDocument()
+	for (var i = 0; i < 3; i++) {
+		addTextPage(doc, LETTER, [[72, 40, 14, "Free text " + (i + 1)]])
+		var d = doc.newDictionary()
+		d.put("Type", doc.newName("Annot"))
+		d.put("Subtype", doc.newName("FreeText"))
+		var r = doc.newArray(); r.push(50); r.push(50); r.push(550); r.push(700)
+		d.put("Rect", r)
+		d.put("Contents", "Text box " + i + " with enough words to shape and wrap across several lines of the box")
+		d.put("DA", "/Helv 14 Tf 0 g")
+		d.put("DS", "font-family:Helvetica;font-size:14pt;color:#000000")
+		var annots = doc.newArray()
+		annots.push(doc.addObject(d))
+		doc.findPage(i).put("Annots", annots)
+	}
+	doc.save(out + "/freetext.pdf", "compress")
+}
+
 function makeNotAPDF() {
 	var buffer = new Buffer()
 	buffer.write("<html><body><h1>Not a PDF</h1><p>Some text.</p></body></html>\n")
@@ -324,6 +345,7 @@ makeSigned()
 makeHuge()
 makeDeepOutline()
 makeNotAPDF()
+makeFreeText()
 makeMixed()
 makeAttachments()
 makeLayers()

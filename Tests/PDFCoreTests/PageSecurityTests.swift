@@ -61,6 +61,32 @@ import Testing
         #expect(try doc.pageCount() == 3)
     }
 
+    /// Two documents drawing text boxes (HarfBuzz) while a conversion runs:
+    /// MuPDF's global HarfBuzz state needs every context to share locks.
+    @Test func contextsShareLocks() throws {
+        let text = temporaryURL("words.txt")
+        let out = temporaryURL("words.pdf")
+        defer { [text, out].forEach { try? FileManager.default.removeItem(at: $0) } }
+        try String(repeating: "Shaping text in one context while another draws.\n", count: 400).write(to: text, atomically: true, encoding: .utf8)
+        let stop = Flag()
+        let group = DispatchGroup()
+        DispatchQueue.global().async(group: group) {
+            while !stop.isSet { try? PDFFiles.combine([text], into: out) }
+        }
+        for _ in 0..<2 {
+            DispatchQueue.global().async(group: group) {
+                for _ in 0..<15 {
+                    guard let doc = try? Corpus.open("freetext.pdf") else { return }
+                    for page in 0..<3 { _ = try? doc.displayList(page: page) }
+                }
+            }
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 4) { stop.set() }
+        group.wait()
+        let doc = try Corpus.open("freetext.pdf")
+        #expect(try doc.annotations(page: 0).first?.kind == .freeText)
+    }
+
     @Test func conversionCanBeCancelled() throws {
         let big = temporaryURL("big.txt")
         let url = temporaryURL("big.pdf")
