@@ -42,6 +42,11 @@ make -C "$MUPDF" -j"$JOBS" "${MAKE_OPTS[@]}" OUT="$OUT/$arch" \
     XCFLAGS="-arch $arch -mmacosx-version-min=$MIN_MACOS" \
     XLDFLAGS="-arch $arch -mmacosx-version-min=$MIN_MACOS" \
     libs > "$OUT-$arch.log" 2>&1 || { tail -30 "$OUT-$arch.log" >&2; die "$arch build failed (log: $OUT-$arch.log)"; }
+# MuPDF's build regenerates some tracked files under generated/ when their
+# timestamps are older than the fonts they come from (as after a clone). The
+# content is the same apart from a trailing empty string, so put the tracked
+# copies back to keep the submodule clean; releases need a clean tree.
+git -C "$MUPDF" checkout -q -- generated
 
 rm -rf "$XCF"
 SLICE=$XCF/macos-arm64
