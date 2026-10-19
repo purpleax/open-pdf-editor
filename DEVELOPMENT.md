@@ -8,7 +8,7 @@ Everything needed to pick up the work on another Mac: where things stand, how th
 
 - **Released:** 0.3.0 (October 19, 2026): viewer, annotations, page management. Phases 0–3 in ROADMAP.md are done.
 - **Released:** 0.4.0, forms.
-- **In progress:** Phase 5, content editing (0.5.0): built, waiting for its security review and release.
+- **Ready to release:** Phase 5, content editing (0.5.0): built, tested and security-reviewed (see ROADMAP.md).
 - **Known Lows** (accepted, not yet fixed) are listed under each phase's "Security review" item in ROADMAP.md. They are the backlog to pick from when a phase touches the same code.
 - **Version:** `Resources/Info.plist` (`CFBundleShortVersionString`, `CFBundleVersion`), set only by `make release`.
 

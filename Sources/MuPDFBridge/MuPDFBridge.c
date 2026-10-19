@@ -4108,9 +4108,16 @@ static void stamp_page(fz_context *ctx, pdf_document *pdf, pdf_page *page, const
         // new one (never replacing another font of the same name).
         pdf_obj *fonts = own_resources(ctx, pdf, page, PDF_NAME(Font));
         char name[32] = "";
-        for (int i = 0, n = pdf_dict_len(ctx, fonts); i < n && !name[0]; i++)
-            if (!pdf_objcmp(ctx, pdf_dict_get_val(ctx, fonts, i), font_obj) && pdf_is_indirect(ctx, pdf_dict_get_val(ctx, fonts, i)))
-                fz_strlcpy(name, pdf_to_name(ctx, pdf_dict_get_key(ctx, fonts, i)), sizeof name);
+        // Only a name this code makes is reused (the file's own names are
+        // never written into the stamp's content).
+        for (int i = 0, n = pdf_dict_len(ctx, fonts); i < n && !name[0]; i++) {
+            const char *key = pdf_to_name(ctx, pdf_dict_get_key(ctx, fonts, i));
+            size_t prefix = strlen(font_name);
+            bool ours = strlen(key) < sizeof name && !strncmp(key, font_name, prefix) && key[prefix] &&
+                        strspn(key + prefix, "0123456789") == strlen(key + prefix);
+            if (ours && pdf_is_indirect(ctx, pdf_dict_get_val(ctx, fonts, i)) && !pdf_objcmp(ctx, pdf_dict_get_val(ctx, fonts, i), font_obj))
+                fz_strlcpy(name, key, sizeof name);
+        }
         if (!name[0]) {
             new_resource_name(ctx, fonts, font_name, name);
             pdf_dict_puts(ctx, fonts, name, font_obj);
