@@ -372,3 +372,83 @@ import Testing
         #expect(saved.prefix(original.count) == original)
     }
 }
+
+@Suite struct StampTests {
+    private func temporaryURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
+    }
+
+    private func bounds(of phrase: String, in doc: EngineDocument, page: Int) throws -> CGRect? {
+        let text = try doc.text(page: page)
+        guard let range = text.search(phrase).first else { return nil }
+        return text.rects(for: range).reduce(CGRect.null) { $0.union($1) }
+    }
+
+    @Test func headersFootersAndNumbersWhereTheyBelong() throws {
+        let doc = try Corpus.open("mixed.pdf")
+        let pages = try doc.pageCount()
+        var stamps: [Stamp] = []
+        for page in 0..<pages {
+            stamps.append(Stamp(page: page, kind: .header, alignment: .left, text: "Report draft"))
+            stamps.append(Stamp(page: page, kind: .footer, alignment: .centre,
+                                text: Stamp.expand("Page <<page>> of <<pages>>", page: page, pages: pages)))
+        }
+        try doc.addStamps(stamps)
+        for page in 0..<pages {
+            let box = try doc.pageBounds()[page]
+            let header = try #require(try bounds(of: "Report draft", in: doc, page: page), "page \(page)")
+            let footer = try #require(try bounds(of: "Page \(page + 1) of \(pages)", in: doc, page: page), "page \(page)")
+            // Upright, near the top-left and bottom-centre of the page as shown.
+            #expect(header.minY - box.minY < 60 && header.minX - box.minX < 60 && header.width > header.height, "page \(page): \(header) in \(box)")
+            #expect(box.maxY - footer.maxY < 60 && abs(footer.midX - box.midX) < 5, "page \(page): \(footer) in \(box)")
+        }
+        // Removing them draws the pages as they were.
+        let fresh = try Corpus.open("mixed.pdf")
+        #expect(try doc.removeStamps(headersAndFooters: true, watermarks: false) == pages)
+        for page in 0..<pages {
+            let box = try doc.pageBounds()[page]
+            let a = try Pixels(doc.renderPage(page, bounds: box, scale: 1))
+            let b = try Pixels(fresh.renderPage(page, bounds: box, scale: 1))
+            var different = 0
+            for y in stride(from: 0, to: a.height, by: 2) { for x in stride(from: 0, to: a.width, by: 2) where a.rgb(x, y) != b.rgb(x, y) { different += 1 } }
+            #expect(different == 0, "page \(page)")
+        }
+        try doc.undo()
+        #expect(try bounds(of: "Report draft", in: doc, page: 0) != nil)
+    }
+
+    @Test func watermarksAreSeparate() throws {
+        let doc = try Corpus.open("text.pdf")
+        try doc.addStamps([Stamp(page: 0, kind: .watermark, text: "DRAFT", size: 72, color: PDFColor(red: 1, green: 0, blue: 0),
+                                 opacity: 0.3, angle: 45)])
+        try doc.addStamps([Stamp(page: 0, kind: .footer, text: "1")])
+        let mark = try #require(try bounds(of: "DRAFT", in: doc, page: 0))
+        let box = try doc.pageBounds()[0]
+        #expect(abs(mark.midX - box.midX) < 20 && abs(mark.midY - box.midY) < 20, "\(mark)")
+        #expect(try doc.removeStamps(headersAndFooters: false, watermarks: true) == 1)
+        #expect(try bounds(of: "DRAFT", in: doc, page: 0) == nil)
+        #expect(try doc.text(page: 0).string.contains("Chapter One"))
+        // The footer stays.
+        #expect(try doc.content(page: 0).runs.contains { $0.text == "1" })
+    }
+
+    @Test func otherScriptsUseAnEmbeddedFont() throws {
+        let doc = try Corpus.open("text.pdf")
+        #expect(!Stamp.fitsHelvetica("Σελίδα 1"))
+        #expect(throws: EngineError.self) { try doc.addStamps([Stamp(page: 0, kind: .footer, text: "Σελίδα 1")]) }
+        let font = CTFontCreateWithName("Helvetica Neue" as CFString, 10, nil)
+        try doc.addStamps([Stamp(page: 0, kind: .footer, text: "Σελίδα 1")], font: try FontFile.data(for: font))
+        #expect(try bounds(of: "Σελίδα 1", in: doc, page: 0) != nil)
+    }
+
+    @Test func signedDocumentsStayIncremental() throws {
+        let source = Corpus.root.appendingPathComponent("signed.pdf")
+        let original = try Data(contentsOf: source)
+        let doc = try EngineDocument(url: source)
+        try doc.addStamps([Stamp(page: 0, kind: .header, text: "Copy")])
+        let out = temporaryURL("signed.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        #expect(try Data(contentsOf: out).prefix(original.count) == original)
+    }
+}

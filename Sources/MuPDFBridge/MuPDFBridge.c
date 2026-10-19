@@ -2518,9 +2518,8 @@ static fz_buffer *identity_to_unicode(fz_context *ctx, const int *gids, const in
 
 // Embeds the font in `data` for the characters the plan draws with it:
 // subset to those glyphs, with a ToUnicode for them, as a Type0
-// Identity-H font in the page's resources. Fills in the plan's glyph ids.
-static void add_fallback_font(fz_context *ctx, pdf_document *pdf, pdf_page *page, const unsigned char *data, size_t len,
-                              text_plan *t, char name[32]) {
+// Identity-H font. Fills in the plan's glyph ids; returns the font (kept).
+static pdf_obj *embed_subset_font(fz_context *ctx, pdf_document *pdf, const unsigned char *data, size_t len, text_plan *t) {
     if (!data || len < 12 || len > OPDF_MAX_FONT_BYTES) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No font was given for characters the text's own font doesn't have");
     fz_buffer *buf = NULL, *subset = NULL, *tounicode = NULL;
     fz_font *full = NULL, *small = NULL;
@@ -2566,9 +2565,6 @@ static void add_fallback_font(fz_context *ctx, pdf_document *pdf, pdf_page *page
         font = pdf_add_cid_font(ctx, pdf, small);
         tounicode = identity_to_unicode(ctx, gids + 1, unis + 1, n - 1);
         pdf_dict_put_drop(ctx, font, PDF_NAME(ToUnicode), pdf_add_stream(ctx, pdf, tounicode, NULL, 0));
-        pdf_obj *fonts = own_resources(ctx, pdf, page, PDF_NAME(Font));
-        new_resource_name(ctx, fonts, "OPDFFn", name);
-        pdf_dict_puts(ctx, fonts, name, font);
     }
     fz_always(ctx) {
         fz_drop_buffer(ctx, buf);
@@ -2576,10 +2572,27 @@ static void add_fallback_font(fz_context *ctx, pdf_document *pdf, pdf_page *page
         fz_drop_buffer(ctx, tounicode);
         fz_drop_font(ctx, full);
         fz_drop_font(ctx, small);
-        pdf_drop_obj(ctx, font);
         fz_free(ctx, gids);
         fz_free(ctx, unis);
     }
+    fz_catch(ctx) {
+        pdf_drop_obj(ctx, font);
+        fz_rethrow(ctx);
+    }
+    return font;
+}
+
+// The same, added to the page's font resources under a new name.
+static void add_fallback_font(fz_context *ctx, pdf_document *pdf, pdf_page *page, const unsigned char *data, size_t len,
+                              text_plan *t, char name[32]) {
+    pdf_obj *font = embed_subset_font(ctx, pdf, data, len, t);
+    fz_try(ctx) {
+        pdf_obj *fonts = own_resources(ctx, pdf, page, PDF_NAME(Font));
+        new_resource_name(ctx, fonts, "OPDFFn", name);
+        pdf_dict_puts(ctx, fonts, name, font);
+    }
+    fz_always(ctx)
+        pdf_drop_obj(ctx, font);
     fz_catch(ctx)
         fz_rethrow(ctx);
 }
@@ -3992,6 +4005,368 @@ bool opdf_metadata_set(opdf_doc *d, const opdf_metadata_spec *spec, int64_t now,
         pdf_dict_put_date(ctx, info, PDF_NAME(ModDate), now);
         pdf_obj *xmp = pdf_dict_getp(ctx, trailer, "Root/Metadata");
         if (pdf_is_stream(ctx, xmp)) rewrite_xmp(ctx, pdf, xmp, info, now);
+    });
+    unlock_doc(d);
+    return !(err && err->code);
+}
+
+// --- Stamps: headers, footers, page numbers, watermarks -------------------------
+
+static const char *stamp_name(int kind) {
+    return kind == OPDF_STAMP_HEADER ? "Header" : kind == OPDF_STAMP_FOOTER ? "Footer" : "Watermark";
+}
+
+// A PDF string literal of these bytes.
+static void append_pdf_string(fz_context *ctx, fz_buffer *buf, const unsigned char *s, size_t n) {
+    fz_append_byte(ctx, buf, '(');
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = s[i];
+        if (c == '(' || c == ')' || c == '\\') fz_append_printf(ctx, buf, "\\%c", c);
+        else if (c < 32 || c > 126) fz_append_printf(ctx, buf, "\\%03o", c);
+        else fz_append_byte(ctx, buf, c);
+    }
+    fz_append_byte(ctx, buf, ')');
+}
+
+// One stamp's text encoded for its font, and its width in points.
+static void encode_stamp(fz_context *ctx, const opdf_stamp *st, fz_font *helv, text_plan *plan, fz_font *embedded,
+                         fz_buffer *bytes, float *width) {
+    *width = 0;
+    for (int i = 0; i < plan->count; i++) {
+        int u = plan->unicode[i];
+        if (embedded) {
+            fz_append_byte(ctx, bytes, plan->gid[i] >> 8);
+            fz_append_byte(ctx, bytes, plan->gid[i] & 0xff);
+            *width += fz_advance_glyph(ctx, embedded, plan->gid[i], 0) * st->size;
+        } else {
+            int c = fz_windows_1252_from_unicode(u);
+            if (c < 0) {
+                char utf[8] = { 0 };
+                fz_runetochar(utf, u);
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "Helvetica has no \u201c%s\u201d", utf);
+            }
+            fz_append_byte(ctx, bytes, c);
+            *width += fz_advance_glyph(ctx, helv, fz_encode_character(ctx, helv, u), 0) * st->size;
+        }
+    }
+}
+
+// Appends the page's stamps as a new content stream, after making sure the
+// existing content leaves the graphics state as it found it.
+static void stamp_page(fz_context *ctx, pdf_document *pdf, pdf_page *page, const opdf_stamp *stamps, int count,
+                       pdf_obj *font_obj, const char *font_name, fz_font *helv, fz_font *embedded,
+                       text_plan *plans) {
+    fz_buffer *buf = NULL, *bytes = NULL, *pre = NULL, *post = NULL;
+    pdf_obj *gs = NULL;
+    fz_var(buf);
+    fz_var(bytes);
+    fz_var(pre);
+    fz_var(post);
+    fz_var(gs);
+    fz_try(ctx) {
+        pdf_obj *fonts = own_resources(ctx, pdf, page, PDF_NAME(Font));
+        pdf_dict_puts(ctx, fonts, font_name, font_obj);
+        pdf_obj *states = own_resources(ctx, pdf, page, PDF_NAME(ExtGState));
+        fz_rect mediabox;
+        fz_matrix ctm;
+        pdf_page_transform(ctx, page, &mediabox, &ctm);
+        fz_matrix to_pdf = fz_invert_matrix(ctm);
+        fz_rect bounds = pdf_bound_page(ctx, page, FZ_CROP_BOX);
+        buf = fz_new_buffer(ctx, 512);
+        for (int i = 0; i < count; i++) {
+            const opdf_stamp *st = &stamps[i];
+            if (!(st->size >= 1 && st->size <= 1000)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That text size is out of range");
+            bytes = fz_new_buffer(ctx, 64);
+            float width;
+            encode_stamp(ctx, st, helv, &plans[i], embedded, bytes, &width);
+            if (plans[i].count == 0) {
+                fz_drop_buffer(ctx, bytes);
+                bytes = NULL;
+                continue;
+            }
+            // The text's matrix in page space (y down), then in PDF space.
+            float a = 1, b = 0;
+            float x, y;
+            float margin = st->margin > 0 ? st->margin : 36;
+            if (st->kind == OPDF_STAMP_WATERMARK) {
+                float r = st->angle * (float)M_PI / 180;
+                a = cosf(r);
+                b = -sinf(r);
+                float cx = (bounds.x0 + bounds.x1) / 2, cy = (bounds.y0 + bounds.y1) / 2;
+                // Centred: start half the width back along the baseline, and
+                // a third of the size down.
+                float vx = -width / 2, vy = -st->size * 0.35f;
+                // The vector through the text's matrix [a b b -a].
+                x = cx + a * vx + b * vy;
+                y = cy + b * vx - a * vy;
+            } else {
+                x = st->align == 0 ? bounds.x0 + margin
+                  : st->align == 2 ? bounds.x1 - margin - width
+                  : (bounds.x0 + bounds.x1 - width) / 2;
+                y = st->kind == OPDF_STAMP_HEADER ? bounds.y0 + margin + st->size * 0.8f : bounds.y1 - margin;
+            }
+            fz_matrix tm = fz_concat(fz_make_matrix(a, b, b, -a, x, y), to_pdf);
+            char gsname[32] = "";
+            float opacity = st->opacity > 0 && st->opacity < 1 ? st->opacity : 1;
+            if (opacity < 1) {
+                gs = pdf_new_dict(ctx, pdf, 2);
+                pdf_dict_put_real(ctx, gs, PDF_NAME(ca), opacity);
+                pdf_dict_put_real(ctx, gs, PDF_NAME(CA), opacity);
+                new_resource_name(ctx, states, "OPDFGs", gsname);
+                pdf_dict_puts_drop(ctx, states, gsname, gs);
+                gs = NULL;
+            }
+            fz_append_printf(ctx, buf, "/Artifact <</Type /Pagination /Subtype /%s /OPDFStamp /%s>> BDC\nq\n",
+                             stamp_name(st->kind), stamp_name(st->kind));
+            if (gsname[0]) fz_append_printf(ctx, buf, "/%s gs\n", gsname);
+            fz_append_printf(ctx, buf, "%g %g %g rg\nBT\n/%s %g Tf\n%g %g %g %g %g %g Tm\n",
+                             fz_clamp(st->color[0], 0, 1), fz_clamp(st->color[1], 0, 1), fz_clamp(st->color[2], 0, 1),
+                             font_name, st->size, tm.a, tm.b, tm.c, tm.d, tm.e, tm.f);
+            unsigned char *data;
+            size_t n = fz_buffer_storage(ctx, bytes, &data);
+            if (embedded) {
+                fz_append_byte(ctx, buf, '<');
+                for (size_t k = 0; k < n; k++) fz_append_printf(ctx, buf, "%02x", data[k]);
+                fz_append_byte(ctx, buf, '>');
+            } else {
+                append_pdf_string(ctx, buf, data, n);
+            }
+            fz_append_string(ctx, buf, " Tj\nET\nQ\nEMC\n");
+            fz_drop_buffer(ctx, bytes);
+            bytes = NULL;
+        }
+        if (fz_buffer_storage(ctx, buf, NULL) == 0) break;
+        // Balance the existing content, as pdf_bake_page does.
+        pdf_obj *res = pdf_page_resources(ctx, page);
+        pdf_obj *contents = pdf_page_contents(ctx, page);
+        int prepend = 0, append = 0;
+        pdf_count_q_balance(ctx, pdf, res, contents, &prepend, &append);
+        if (prepend > 1000 || append > 1000) fz_throw(ctx, FZ_ERROR_LIMIT, "This page's content is too unbalanced to stamp");
+        pdf_obj *array = pdf_dict_get(ctx, page->obj, PDF_NAME(Contents));
+        if (!pdf_is_array(ctx, array)) {
+            pdf_obj *made = pdf_new_array(ctx, pdf, 4);
+            if (array) pdf_array_push(ctx, made, array);
+            pdf_dict_put_drop(ctx, page->obj, PDF_NAME(Contents), made);
+            array = made;
+        } else if (pdf_is_indirect(ctx, array)) {
+            pdf_obj *copy = pdf_copy_array(ctx, array);
+            pdf_dict_put_drop(ctx, page->obj, PDF_NAME(Contents), copy);
+            array = copy;
+        }
+        if (prepend > 0) {
+            pre = fz_new_buffer(ctx, (size_t)prepend * 2);
+            for (int i = 0; i < prepend; i++) fz_append_string(ctx, pre, "q\n");
+            pdf_array_insert_drop(ctx, array, pdf_add_stream(ctx, pdf, pre, NULL, 0), 0);
+        }
+        post = fz_new_buffer(ctx, (size_t)append * 2 + fz_buffer_storage(ctx, buf, NULL));
+        for (int i = 0; i < append; i++) fz_append_string(ctx, post, "Q\n");
+        fz_append_buffer(ctx, post, buf);
+        pdf_array_push_drop(ctx, array, pdf_add_stream(ctx, pdf, post, NULL, 0));
+    }
+    fz_always(ctx) {
+        fz_drop_buffer(ctx, buf);
+        fz_drop_buffer(ctx, bytes);
+        fz_drop_buffer(ctx, pre);
+        fz_drop_buffer(ctx, post);
+        pdf_drop_obj(ctx, gs);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_stamp_pages(opdf_doc *d, const opdf_stamp *stamps, int count, const unsigned char *font_data, size_t font_len,
+                      opdf_error *err) {
+    clear_error(err);
+    fz_font *helv = NULL, *embedded = NULL;
+    pdf_obj *font_obj = NULL;
+    text_plan *plans = NULL;
+    text_plan all = { 0 };
+    pdf_page *page = NULL;
+    fz_buffer *fontbuf = NULL;
+    fz_var(helv);
+    fz_var(embedded);
+    fz_var(font_obj);
+    fz_var(plans);
+    fz_var(page);
+    fz_var(fontbuf);
+    WITH_DOC_OPERATION(d, "Add Stamps", err, {
+        fz_try(ctx) {
+            if (count < 0 || count > 100000 || (count > 0 && !stamps)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Too many stamps");
+            int pages = pdf_count_pages(ctx, pdf);
+            plans = fz_calloc(ctx, (size_t)(count > 0 ? count : 1), sizeof *plans);
+            size_t total = 0;
+            for (int i = 0; i < count; i++) {
+                if (stamps[i].page < 0 || stamps[i].page >= pages) fz_throw(ctx, FZ_ERROR_ARGUMENT, "There is no such page");
+                if (stamps[i].kind < 0 || stamps[i].kind > 2) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a kind of stamp");
+                const char *text = stamps[i].text ? stamps[i].text : "";
+                total += strlen(text);
+                if (strlen(text) > 1000 || total > (8 << 20)) fz_throw(ctx, FZ_ERROR_LIMIT, "That text is too long to stamp");
+                plan_text(ctx, NULL, text, true, &plans[i]);
+            }
+            helv = fz_new_base14_font(ctx, "Helvetica");
+            char font_name[32];
+            if (font_data) {
+                // One font for every stamp: its plan is every character used.
+                int n = 0;
+                for (int i = 0; i < count; i++) n += plans[i].count;
+                all.unicode = fz_malloc_array(ctx, n + 1, int);
+                all.len = fz_calloc(ctx, (size_t)n + 1, sizeof(int));
+                all.code = fz_calloc(ctx, (size_t)n + 1, 4);
+                all.gid = fz_calloc(ctx, (size_t)n + 1, sizeof(int));
+                for (int i = 0; i < count; i++)
+                    for (int j = 0; j < plans[i].count; j++) all.unicode[all.count++] = plans[i].unicode[j];
+                font_obj = embed_subset_font(ctx, pdf, font_data, font_len, &all);
+                fontbuf = fz_new_buffer_from_copied_data(ctx, font_data, font_len);
+                embedded = fz_new_font_from_buffer(ctx, NULL, fontbuf, 0, 0);
+                for (int i = 0; i < count; i++)
+                    for (int j = 0; j < plans[i].count; j++) plans[i].gid[j] = fz_encode_character(ctx, embedded, plans[i].unicode[j]);
+                fz_strlcpy(font_name, "OPDFStampFont", sizeof font_name);
+            } else {
+                font_obj = pdf_add_simple_font(ctx, pdf, helv, PDF_SIMPLE_ENCODING_LATIN);
+                fz_strlcpy(font_name, "OPDFHelv", sizeof font_name);
+            }
+            // Page by page, the stamps for each.
+            for (int p = 0; p < pages; p++) {
+                int first = -1, n = 0;
+                for (int i = 0; i < count; i++) if (stamps[i].page == p) { if (first < 0) first = i; n++; }
+                if (n == 0) continue;
+                // Stamps for a page are passed together (gathered here if not).
+                opdf_stamp *mine = fz_malloc_array(ctx, n, opdf_stamp);
+                text_plan *mine_plans = fz_malloc_array(ctx, n, text_plan);
+                int k = 0;
+                for (int i = 0; i < count; i++) if (stamps[i].page == p) { mine[k] = stamps[i]; mine_plans[k] = plans[i]; k++; }
+                page = pdf_load_page(ctx, pdf, p);
+                fz_try(ctx)
+                    stamp_page(ctx, pdf, page, mine, n, font_obj, font_name, helv, embedded, mine_plans);
+                fz_always(ctx) {
+                    fz_free(ctx, mine);
+                    fz_free(ctx, mine_plans);
+                    fz_drop_page(ctx, (fz_page *)page);
+                    page = NULL;
+                }
+                fz_catch(ctx)
+                    fz_rethrow(ctx);
+            }
+        }
+        fz_always(ctx) {
+            for (int i = 0; plans && i < count; i++) drop_plan(ctx, &plans[i]);
+            fz_free(ctx, plans);
+            plans = NULL;
+            drop_plan(ctx, &all);
+            fz_drop_font(ctx, helv);
+            fz_drop_font(ctx, embedded);
+            fz_drop_buffer(ctx, fontbuf);
+            pdf_drop_obj(ctx, font_obj);
+            helv = embedded = NULL;
+            font_obj = NULL;
+            fontbuf = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    unlock_doc(d);
+    return !(err && err->code);
+}
+
+// Removing: marked content with /OPDFStamp of the chosen kinds is dropped,
+// with everything inside it.
+typedef struct {
+    int kinds;
+    int depth;         // marked-content nesting
+    int skip_from;     // the depth whose EMC ends the stamp being dropped, or -1
+    bool removed;
+    pdf_processor *out;
+} stamp_removal;
+
+static bool stamp_kind_matches(fz_context *ctx, pdf_obj *props, int kinds) {
+    pdf_obj *kind = pdf_dict_gets(ctx, props, "OPDFStamp");
+    if (!pdf_is_name(ctx, kind)) return false;
+    if ((kinds & OPDF_STAMPS_HEADERS_FOOTERS) && (!strcmp(pdf_to_name(ctx, kind), "Header") || !strcmp(pdf_to_name(ctx, kind), "Footer"))) return true;
+    if ((kinds & OPDF_STAMPS_WATERMARKS) && !strcmp(pdf_to_name(ctx, kind), "Watermark")) return true;
+    return false;
+}
+
+static void sr_BDC(fz_context *ctx, pdf_processor *proc, const char *tag, pdf_obj *raw, pdf_obj *cooked) {
+    content_proc *p = (content_proc *)proc;
+    stamp_removal *r = p->arg;
+    r->depth++;
+    if (r->skip_from < 0 && stamp_kind_matches(ctx, raw, r->kinds)) {
+        r->skip_from = r->depth;
+        r->removed = true;
+        // Everything until the matching EMC goes nowhere.
+        p->super.chain = NULL;
+        p->out = NULL;
+        return;
+    }
+    if (CHAIN(p)) CHAIN(p)->op_BDC(ctx, CHAIN(p), tag, raw, cooked);
+}
+
+static void sr_BMC(fz_context *ctx, pdf_processor *proc, const char *tag) {
+    content_proc *p = (content_proc *)proc;
+    stamp_removal *r = p->arg;
+    r->depth++;
+    if (CHAIN(p)) CHAIN(p)->op_BMC(ctx, CHAIN(p), tag);
+}
+
+static void sr_EMC(fz_context *ctx, pdf_processor *proc) {
+    content_proc *p = (content_proc *)proc;
+    stamp_removal *r = p->arg;
+    if (r->skip_from >= 0 && r->depth == r->skip_from) {
+        r->skip_from = -1;
+        p->super.chain = r->out;
+        p->out = r->out;
+        r->depth--;
+        return;
+    }
+    r->depth--;
+    if (CHAIN(p)) CHAIN(p)->op_EMC(ctx, CHAIN(p));
+}
+
+static void configure_stamp_removal(content_proc *p, void *arg) {
+    stamp_removal *r = arg;
+    r->out = p->out;
+    p->arg = r;
+    p->super.op_BDC = sr_BDC;
+    p->super.op_BMC = sr_BMC;
+    p->super.op_EMC = sr_EMC;
+}
+
+bool opdf_stamps_remove(opdf_doc *d, int kinds, int *pages_changed, opdf_error *err) {
+    clear_error(err);
+    if (pages_changed) *pages_changed = 0;
+    pdf_page *page = NULL;
+    fz_var(page);
+    WITH_DOC_OPERATION(d, "Remove Stamps", err, {
+        int pages = pdf_count_pages(ctx, pdf);
+        for (int i = 0; i < pages; i++) {
+            page = pdf_load_page(ctx, pdf, i);
+            fz_try(ctx) {
+                // Only pages whose content mentions the tag are rewritten.
+                bool mentions = false;
+                pdf_obj *contents = pdf_page_contents(ctx, page);
+                int n = pdf_is_array(ctx, contents) ? pdf_array_len(ctx, contents) : 1;
+                for (int k = 0; k < n && !mentions; k++) {
+                    pdf_obj *stm = pdf_is_array(ctx, contents) ? pdf_array_get(ctx, contents, k) : contents;
+                    if (!pdf_is_stream(ctx, stm)) continue;
+                    fz_buffer *b = pdf_load_stream(ctx, stm);
+                    unsigned char *data;
+                    size_t len = fz_buffer_storage(ctx, b, &data);
+                    for (size_t j = 0; j + 10 <= len && !mentions; j++) mentions = !memcmp(data + j, "OPDFStamp", 9);
+                    fz_drop_buffer(ctx, b);
+                }
+                if (mentions) {
+                    stamp_removal r = { .kinds = kinds, .skip_from = -1 };
+                    rewrite_page_content(ctx, pdf, page, configure_stamp_removal, &r);
+                    if (r.removed && pages_changed) (*pages_changed)++;
+                }
+            }
+            fz_always(ctx) {
+                fz_drop_page(ctx, (fz_page *)page);
+                page = NULL;
+            }
+            fz_catch(ctx)
+                fz_rethrow(ctx);
+        }
     });
     unlock_doc(d);
     return !(err && err->code);

@@ -149,6 +149,12 @@ enum MainMenu {
         pages.addItem(.separator())
         pages.addItem(withTitle: "Extract Pages…", action: #selector(DocumentWindowController.extractPages(_:)), keyEquivalent: "")
         pages.addItem(withTitle: "Split Document…", action: #selector(DocumentWindowController.splitDocument(_:)), keyEquivalent: "")
+        pages.addItem(.separator())
+        pages.addItem(withTitle: "Add Headers & Footers…", action: #selector(DocumentWindowController.addHeadersAndFooters(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Add Page Numbers…", action: #selector(DocumentWindowController.addPageNumbers(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Add Watermark…", action: #selector(DocumentWindowController.addWatermark(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Remove Headers & Footers", action: #selector(DocumentWindowController.removeHeadersAndFooters(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Remove Watermarks", action: #selector(DocumentWindowController.removeWatermarks(_:)), keyEquivalent: "")
 
         let tools = submenu(in: main, title: "Tools")
         for (index, tool) in AnnotationTool.allCases.enumerated() {

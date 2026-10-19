@@ -134,7 +134,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 - [x] Add, replace, move, resize and delete images
   - Edit Content's Image tool: drag out an area (or click, for the image's own proportions) and choose a file; select an image drawing to move it, resize it (Shift keeps its proportions), delete it or Replace… it (fitted inside the same box). Files are read with ImageIO and handed to MuPDF as JPEG or PNG, at most 100 MB and 40 megapixels. One drawing of an image used twice changes alone.
-- [ ] Headers, footers, watermarks and page numbers
+- [x] Headers, footers, watermarks and page numbers
+  - Pages › Add Headers & Footers…, Add Page Numbers… (<<page>>, <<pages>> and <<date>> in any of the six places) and Add Watermark… (text, size, colour, opacity, angle), for all pages or a range, each one undoable step. Stamps are drawn after the page's content, upright as the page is shown and inside its visible area, in Helvetica or, for other characters, an embedded subset system font. Each is marked content (/Artifact with this app's /OPDFStamp tag), so Remove Headers & Footers and Remove Watermarks take off exactly what this app added.
 - [x] Links
   - Edit › Edit Content (⌥⌘E) shows the content bar. With the Link tool, drag out an area and choose a web or email address (http, https, mailto) or a page; links are outlined, and are selected, moved, resized, retargeted (inspector) and deleted like annotations. Each change is one undoable step. MuPDF's pdf_set_link_rect doesn't map page space to PDF space, so the bridge writes /Rect itself.
 - [x] Edit text within a line: characters, font, size and colour

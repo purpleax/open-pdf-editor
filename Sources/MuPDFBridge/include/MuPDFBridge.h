@@ -396,6 +396,32 @@ bool opdf_text_run_edit(opdf_doc *doc, int page, int op, const opdf_text_edit *e
 // new UTF-8 string (empty when it can draw them all), to free with opdf_free.
 char *opdf_text_run_missing(opdf_doc *doc, int page, int op, const char *text, opdf_error *err);
 
+// Headers, footers, page numbers and watermarks: text stamped over the
+// page's content, marked so that this app can remove what it added.
+enum { OPDF_STAMP_HEADER = 0, OPDF_STAMP_FOOTER = 1, OPDF_STAMP_WATERMARK = 2 };
+enum { OPDF_STAMPS_HEADERS_FOOTERS = 1, OPDF_STAMPS_WATERMARKS = 2 };
+
+typedef struct {
+    int page;
+    int kind;            // OPDF_STAMP_*
+    int align;           // headers and footers: 0 left, 1 centre, 2 right
+    const char *text;    // UTF-8, as it is to appear on this page
+    float size;          // points
+    float color[3];      // RGB
+    float opacity;       // 0 to 1
+    float angle;         // watermarks: degrees, anticlockwise
+    float margin;        // headers and footers: from the edge, in points
+} opdf_stamp;
+
+// Stamps every item, as one undoable step. Text is drawn in Helvetica, or
+// with font_data (an sfnt file, embedded with only the glyphs used) when
+// given. Upright as each page is shown, inside its visible area.
+bool opdf_stamp_pages(opdf_doc *doc, const opdf_stamp *stamps, int count, const unsigned char *font_data, size_t font_len,
+                      opdf_error *err);
+// Removes the stamps of these kinds (OPDF_STAMPS_*) this app added, from
+// every page; *pages is how many pages had some. One undoable step.
+bool opdf_stamps_remove(opdf_doc *doc, int kinds, int *pages, opdf_error *err);
+
 // Writes the page's content again through the editing machinery with no
 // change (for tests: what it draws must not change). One undoable step.
 bool opdf_page_content_rewrite(opdf_doc *doc, int page, opdf_error *err);

@@ -445,8 +445,17 @@ enum SelfTest {
             say("fallback: \(viewer.model.content(page: 0)?.runs.first { $0.op == heading.op }?.text ?? "?"); page text has it: \(viewer.model.text(page: 0).string.contains("Chapter Ω"))")
             viewer.pagesView.selectedContent = .text(page: 0, op: heading.op)
         }
+        // Page numbers and a watermark, through the sheets.
+        controller.addPageNumbers(nil)
+        let numbered = pressSheetButton(window, "Add")
+        controller.addWatermark(nil)
+        let marked = pressSheetButton(window, "Add")
+        let texts = (0..<viewer.model.pageCount).map { viewer.model.text(page: $0).string }
+        say("stamps: sheets \(numbered) \(marked); page 2 has \"Page 2 of 3\": \(texts[1].contains("Page 2 of 3")); DRAFT on every page: \(texts.allSatisfy { $0.contains("DRAFT") })")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             snapshot(window, "content-1-links")
+            controller.removeWatermarks(nil)
+            say("after removing watermarks: \((0..<viewer.model.pageCount).contains { viewer.model.text(page: $0).string.contains("DRAFT") } ? "some left" : "none"); numbers kept: \(viewer.model.text(page: 0).string.contains("Page 1 of 3"))")
             document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 if let url = document.fileURL, let saved = try? EngineDocument(url: url) {
