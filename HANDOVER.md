@@ -6,7 +6,7 @@ The state of the work and how it is run, for picking it up in a new session or o
 - **Repository:** `/Users/guybrown/open-pdf-editor` on branch `main`.
   - Keep the clone out of iCloud-synced `~/Documents` and `~/Desktop`. SwiftPM's build database fails there with "disk I/O error".
   - GitHub: `purpleax/open-pdf-editor`.
-- **Released and installed:** 0.7.1 (2026-10-20, `v0.7.1`, commit `baa2a00`), on GitHub and in the appcast, installed in /Applications. Earlier: 0.6.0 (`d499e63`), 0.7.0 (`0b29475`). DEVELOPMENT.md and ROADMAP.md have what each phase built.
+- **Released:** 0.8.0 (2026-10-20, `v0.8.0`, commit `d0ddfac`). Installed in /Applications: 0.7.1 (`baa2a00`) until the user says to install 0.8.0. Earlier: 0.6.0 (`d499e63`), 0.7.0 (`0b29475`). DEVELOPMENT.md and ROADMAP.md have what each phase built.
 - **In progress: Phase 8, OCR and export (0.8.0).** The plan was approved. The user chose OCR on demand with a notice on scanned pages, pages without text by default, and automatic languages. Done and committed locally:
   1. Scan detection: `opdf_page_text_info`, contents-only display lists, `scanned.pdf`.
   2. Text layer: `opdf_text_layers_set` (GlyphLessFont from `output-pdfocr.c`; its own `/OPDFOCR` stream at the front of `/Contents`; replaced on re-run; skips words over real text; spaces span the gap to the next word).
@@ -16,7 +16,7 @@ The state of the work and how it is run, for picking it up in a new session or o
   6. App export: File › Export… with `ExportOptions`; images into new folders; `restricted.pdf`.
   Docs are updated (ROADMAP Phase 8, decisions, 0.8.0 notes; DEVELOPMENT; SPEC; README). 170 tests pass; self-test runs `ocr` and `export` pass.
   - Security review done. Fixed: one High (font names put markup into exported HTML/Word) and two Mediums (Word export slow on crowded pages: caps of 20,000 characters and 200 path segments a page; OCR fonts on shared resources). Three re-reviews passed; the Lows are in ROADMAP. `make test` runs ExportTests on their own after the rest, because every MuPDF context shares one memory lock.
-  - Still to do: release 0.8.0 after the user agrees (dry run first), then ask about installing.
+  - Released as **0.8.0** (2026-10-20, `v0.8.0`, commit `d0ddfac`): on GitHub and in the appcast. Phase 8 is done; wait for the user before starting Phase 9 (1.0).
   - Self-test note: the `ocr` run saves 2 s after undo/redo. Saving in the same turn deadlocks NSDocument with the autosave that undo started; a person can't do that.
 
 ## How the user wants to work (agreed in this session)
