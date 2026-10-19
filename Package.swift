@@ -24,7 +24,8 @@ let package = Package(
         .target(
             name: "PDFCore",
             dependencies: ["MuPDFBridge"],
-            path: "Sources/PDFCore"
+            path: "Sources/PDFCore",
+            linkerSettings: [.linkedFramework("Vision")]
         ),
         .executableTarget(
             name: "OpenPDFEditor",

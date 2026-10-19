@@ -181,3 +181,49 @@ import Testing
         #expect(!text.contains("Layer") && text.contains("Again"), "\(text)")
     }
 }
+
+@Suite struct TextRecognitionTests {
+    @Test func scansBecomeSearchable() throws {
+        let doc = try Corpus.open("scanned.pdf")
+        let bounds = try doc.pageBounds()
+        var pages: [RecognizedPage] = []
+        for page in 0..<5 {
+            pages.append(try TextRecognizer.recognize(doc, page: page, bounds: bounds[page]))
+        }
+        try doc.setTextLayers(pages)
+        for page in 0..<5 {
+            let text = try doc.text(page: page)
+            #expect(!text.search("quick brown fox").isEmpty, "page \(page): \(text.string)")
+            #expect(!text.search("searchable").isEmpty)
+            // "quick" is where the scan shows it: on the line with its
+            // baseline 150 points down, from about 101 points in.
+            let range = try #require(text.search("quick").first)
+            let box = text.rects(for: range).reduce(CGRect.null) { $0.union($1) }
+            let drawn = CGRect(x: bounds[page].minX + 95, y: bounds[page].minY + 132, width: 50, height: 24)
+            #expect(box.intersects(drawn) && box.width < 80, "page \(page): \(box)")
+            // The words are spaced.
+            #expect(text.string.contains("The quick brown fox jumps"))
+        }
+        // The stamped page number isn't doubled.
+        #expect(try doc.text(page: 4).string.components(separatedBy: "Page 5").count == 2)
+    }
+
+    @Test func cancelling() throws {
+        let doc = try Corpus.open("scanned.pdf")
+        let cancel = RecognitionCancel()
+        cancel.cancel()
+        #expect(throws: CancellationError.self) {
+            try TextRecognizer.recognize(doc, page: 0, bounds: try doc.pageBounds()[0], cancel: cancel)
+        }
+    }
+
+    @Test func languagesAndScale() throws {
+        #expect(TextRecognizer.supportedLanguages().contains { $0.hasPrefix("en") })
+        // A huge page is read at a smaller scale, within the render limits.
+        let big = CGRect(x: 0, y: 0, width: 14_400, height: 14_400)
+        let scale = TextRecognizer.renderScale(for: big)
+        #expect(big.width * scale <= CGFloat(EngineDocument.maxRenderSide))
+        #expect(big.width * big.height * scale * scale <= CGFloat(EngineDocument.maxRenderPixels))
+        #expect(TextRecognizer.renderScale(for: CGRect(x: 0, y: 0, width: 612, height: 792)) == 300.0 / 72)
+    }
+}
