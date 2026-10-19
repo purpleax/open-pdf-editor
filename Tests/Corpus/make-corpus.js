@@ -344,6 +344,44 @@ function makeFormTrees() {
 	// loads (slow, but not the listing this file tests).
 	doc.getTrailer().get("Root").get("AcroForm").put("NeedAppearances", false)
 	doc.save(out + "/formheavy.pdf", "compress")
+
+	// /Parent and /Kids that disagree (from the re-review): each widget's
+	// parent leads to a top field with no /Kids, but MuPDF also walks down
+	// from the widget or its group, where the loop or the doubled kids are.
+	doc = formDocument()
+	fields = doc.getTrailer().get("Root").get("AcroForm").get("Fields")
+	var topRadio = doc.addObject({ T: doc.newString("top1") })
+	var looping = doc.addObject({ FT: Btn, T: doc.newString("g"), Ff: 1 << 15, V: doc.newName("Off"), Parent: topRadio, Kids: [] })
+	var button = addField(doc, { Parent: looping, AS: doc.newName("Off"), AP: stateAppearances(doc, 14, "On") }, [72, 700, 86, 714])
+	looping.get("Kids").push(looping)
+	looping.get("Kids").push(button)
+	fields.push(topRadio)
+	var topText = doc.addObject({ T: doc.newString("top2") })
+	var selfish = addField(doc, { FT: Tx, T: doc.newString("a"), Parent: topText }, [72, 650, 300, 670])
+	selfish.put("Kids", [selfish])
+	fields.push(topText)
+	var topDag = doc.addObject({ T: doc.newString("top3") })
+	var node = doc.addObject({ T: doc.newString("leaf") })
+	for (var d = 0; d < 40; d++) node = doc.addObject({ Kids: [node, node] })
+	addField(doc, { FT: Tx, T: doc.newString("b"), Parent: topDag, Kids: [node] }, [72, 600, 300, 620])
+	fields.push(topDag)
+	// addField put the widgets in /Fields too: only the tops belong there.
+	var tops = doc.newArray()
+	tops.push(topRadio); tops.push(topText); tops.push(topDag)
+	doc.getTrailer().get("Root").get("AcroForm").put("Fields", tops)
+	doc.save(out + "/formbypass.pdf", "compress")
+
+	// A large form: one group of 1,001 text fields, and 15,000 more names.
+	doc = formDocument()
+	fields = doc.getTrailer().get("Root").get("AcroForm").get("Fields")
+	var root = doc.addObject({ T: doc.newString("form1"), Kids: [] })
+	fields.push(root)
+	for (var g = 0; g < 1001; g++) {
+		var w = addField(doc, { FT: Tx, T: doc.newString("f" + g), Parent: root }, [10 + (g % 50) * 11, 10 + Math.floor(g / 50) * 11, 20 + (g % 50) * 11, 20 + Math.floor(g / 50) * 11])
+		root.get("Kids").push(w)
+	}
+	for (var t = 0; t < 15000; t++) fields.push(doc.addObject({ FT: Tx, T: doc.newString("Text" + t) }))
+	doc.save(out + "/formbig.pdf", "compress")
 }
 
 // --- Hostile files, for the security tests ----------------------------------

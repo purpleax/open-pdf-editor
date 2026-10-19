@@ -263,6 +263,35 @@ import Testing
         #expect(throws: EngineError.self) { try doc.createField(.text, page: 0, rect: CGRect(x: 72, y: 500, width: 100, height: 20)) }
     }
 
+    /// /Parent and /Kids that disagree: MuPDF walks down from the widget
+    /// or its group, which the top field's tree doesn't show.
+    @Test func disagreeingTreesAreRefused() throws {
+        let doc = try Corpus.open("formbypass.pdf")
+        let fields = try doc.fields(page: 0)
+        #expect(fields.count == 3)
+        #expect(fields.allSatisfy { $0.isReadOnly })
+        let start = Date()
+        for field in fields {
+            if field.kind == .radio {
+                #expect(throws: EngineError.self) { try doc.toggle(page: 0, field: field.id) }
+            } else {
+                #expect(throws: EngineError.self) { try doc.setText("x", page: 0, field: field.id) }
+            }
+        }
+        #expect(Date().timeIntervalSince(start) < 2)
+    }
+
+    /// A large but sound form stays fillable, and new fields are named quickly.
+    @Test func largeFormsWork() throws {
+        let doc = try Corpus.open("formbig.pdf")
+        let fields = try doc.fields(page: 0)
+        #expect(fields.count == 1001 && fields.allSatisfy { !$0.isReadOnly })
+        try doc.setText("filled", page: 0, field: fields[500].id)
+        let start = Date()
+        try doc.createField(.text, page: 0, rect: CGRect(x: 72, y: 700, width: 100, height: 20))
+        #expect(Date().timeIntervalSince(start) < 1)
+    }
+
     /// Fields reached many times over: looking a name up would take
     /// 2^60 steps, so making or renaming fields is refused at once.
     @Test func sharedFieldsAreRefused() throws {

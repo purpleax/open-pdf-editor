@@ -1481,65 +1481,103 @@ bool opdf_annot_set_status(opdf_doc *d, int page_number, int parent, const char 
 #define OPDF_MAX_PAGE_FIELD_BYTES (2 << 20)
 #define OPDF_FIELD_STRING_COST 32
 
+// Object numbers seen, in an open-addressed hash set.
+typedef struct {
+    int *slots;     // number + 1; 0 is empty
+    int capacity;   // a power of two
+    int count;
+} num_set;
+
+static void num_set_free(num_set *set) {
+    free(set->slots);
+    *set = (num_set){ 0 };
+}
+
+static bool num_set_contains(const num_set *set, int num) {
+    if (!set->capacity) return false;
+    for (unsigned i = (unsigned)num * 2654435761u; ; i++) {
+        int slot = set->slots[i & (unsigned)(set->capacity - 1)];
+        if (slot == 0) return false;
+        if (slot == num + 1) return true;
+    }
+}
+
+// Adds num; false if it was already there.
+static bool num_set_add(fz_context *ctx, num_set *set, int num) {
+    if (num_set_contains(set, num)) return false;
+    if ((set->count + 1) * 2 > set->capacity) {
+        int grown = set->capacity ? set->capacity * 2 : 256;
+        int *slots = calloc((size_t)grown, sizeof *slots);
+        if (!slots) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        for (int i = 0; i < set->capacity; i++) {
+            int slot = set->slots[i];
+            if (!slot) continue;
+            unsigned j = (unsigned)(slot - 1) * 2654435761u;
+            while (slots[j & (unsigned)(grown - 1)]) j++;
+            slots[j & (unsigned)(grown - 1)] = slot;
+        }
+        free(set->slots);
+        set->slots = slots;
+        set->capacity = grown;
+    }
+    unsigned j = (unsigned)num * 2654435761u;
+    while (set->slots[j & (unsigned)(set->capacity - 1)]) j++;
+    set->slots[j & (unsigned)(set->capacity - 1)] = num + 1;
+    set->count++;
+    return true;
+}
+
 // Field trees (/Fields and /Kids) are checked before MuPDF walks them: its
 // own walks recurse without noticing a field that is its own descendant,
 // or one reached twice (which makes them exponential). A tree is accepted
-// when it has at most `budget` nodes, none reached twice, none deeper
-// than 64.
-typedef struct {
-    int budget;
-    int *seen;
-    int count;
-    int capacity;
-} field_walk;
+// when it has at most FIELD_TREE_BUDGET nodes, none reached twice, none
+// deeper than 64.
+#define FIELD_TREE_BUDGET 20000
 
-static bool walk_field(fz_context *ctx, pdf_obj *node, int depth, field_walk *w) {
-    if (--w->budget < 0 || depth > 64) return false;
-    if (pdf_is_indirect(ctx, node)) {
-        int num = pdf_to_num(ctx, node);
-        for (int i = 0; i < w->count; i++)
-            if (w->seen[i] == num) return false;
-        if (w->count == w->capacity) {
-            int grown = w->capacity ? w->capacity * 2 : 64;
-            int *bigger = realloc(w->seen, (size_t)grown * sizeof *bigger);
-            if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
-            w->seen = bigger;
-            w->capacity = grown;
-        }
-        w->seen[w->count++] = num;
-    }
+static bool walk_field(fz_context *ctx, pdf_obj *node, int depth, int *budget, num_set *seen) {
+    if (--*budget < 0 || depth > 64) return false;
+    if (pdf_is_indirect(ctx, node) && !num_set_add(ctx, seen, pdf_to_num(ctx, node))) return false;
     pdf_obj *kids = pdf_dict_get(ctx, node, PDF_NAME(Kids));
     for (int i = 0, n = pdf_array_len(ctx, kids); i < n; i++)
-        if (!walk_field(ctx, pdf_array_get(ctx, kids, i), depth + 1, w)) return false;
+        if (!walk_field(ctx, pdf_array_get(ctx, kids, i), depth + 1, budget, seen)) return false;
     return true;
 }
 
 // Walks the trees under these roots (an array of fields, or one field).
-static bool field_trees_ok(fz_context *ctx, pdf_obj *roots, int budget) {
-    field_walk w = { budget, NULL, 0, 0 };
+static bool field_trees_ok(fz_context *ctx, pdf_obj *roots) {
+    num_set seen = { 0 };
+    int budget = FIELD_TREE_BUDGET;
     bool ok = true;
     fz_var(ok);
     fz_try(ctx) {
         if (pdf_is_array(ctx, roots)) {
-            for (int i = 0, n = pdf_array_len(ctx, roots); i < n && ok; i++) ok = walk_field(ctx, pdf_array_get(ctx, roots, i), 0, &w);
+            for (int i = 0, n = pdf_array_len(ctx, roots); i < n && ok; i++) ok = walk_field(ctx, pdf_array_get(ctx, roots, i), 0, &budget, &seen);
         } else if (roots) {
-            ok = walk_field(ctx, roots, 0, &w);
+            ok = walk_field(ctx, roots, 0, &budget, &seen);
         }
     }
     fz_always(ctx)
-        free(w.seen);
+        num_set_free(&seen);
     fz_catch(ctx)
         fz_rethrow(ctx);
     return ok;
 }
 
-// The tree a widget's field belongs to, from its topmost ancestor.
-static bool field_group_ok(fz_context *ctx, pdf_obj *widget, int budget) {
-    pdf_obj *top = widget;
+// MuPDF's walks for a widget start at the widget or at one of its
+// ancestors (/Parent and /Kids needn't agree), so the tree under each of
+// them is checked. `checked` (may be NULL) remembers nodes already found
+// sound, so a page's fields share the work.
+static bool field_group_ok(fz_context *ctx, pdf_obj *widget, num_set *checked) {
+    pdf_obj *node = widget;
     for (int i = 0; i < 64; i++) {
-        pdf_obj *parent = pdf_dict_get(ctx, top, PDF_NAME(Parent));
-        if (!pdf_is_dict(ctx, parent)) return field_trees_ok(ctx, top, budget);
-        top = parent;
+        bool known = checked && pdf_is_indirect(ctx, node) && num_set_contains(checked, pdf_to_num(ctx, node));
+        if (!known) {
+            if (!field_trees_ok(ctx, node)) return false;
+            if (checked && pdf_is_indirect(ctx, node)) num_set_add(ctx, checked, pdf_to_num(ctx, node));
+        }
+        pdf_obj *parent = pdf_dict_get(ctx, node, PDF_NAME(Parent));
+        if (!pdf_is_dict(ctx, parent)) return true;
+        node = parent;
     }
     return false;
 }
@@ -1547,7 +1585,7 @@ static bool field_group_ok(fz_context *ctx, pdf_obj *widget, int budget) {
 // The whole form, before MuPDF looks fields up by name or removes one.
 static void check_form_tree(fz_context *ctx, pdf_document *pdf) {
     pdf_obj *fields = pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/AcroForm/Fields");
-    if (!field_trees_ok(ctx, fields, 20000)) fz_throw(ctx, FZ_ERROR_FORMAT, "This form's fields are damaged, so they can't be changed");
+    if (!field_trees_ok(ctx, fields)) fz_throw(ctx, FZ_ERROR_FORMAT, "This form's fields are damaged, so they can't be changed");
 }
 
 static pdf_annot *find_widget(fz_context *ctx, pdf_page *page, int id) {
@@ -1609,7 +1647,7 @@ static bool fillable(fz_context *ctx, pdf_annot *w) {
     }
 }
 
-static void fill_field(fz_context *ctx, pdf_annot *w, opdf_field *o, int *budget) {
+static void fill_field(fz_context *ctx, pdf_annot *w, opdf_field *o, int *budget, num_set *checked) {
     pdf_obj *obj = pdf_annot_obj(ctx, w);
     bool cut = false;
     o->id = annot_id(ctx, w);
@@ -1687,7 +1725,7 @@ static void fill_field(fz_context *ctx, pdf_annot *w, opdf_field *o, int *budget
         }
     }
     if (o->type == PDF_WIDGET_TYPE_SIGNATURE) o->is_signed = pdf_widget_is_signed(ctx, w) != 0;
-    o->read_only = o->id == 0 || cut || !fillable(ctx, w) || !field_group_ok(ctx, obj, 1000);
+    o->read_only = o->id == 0 || cut || !fillable(ctx, w) || !field_group_ok(ctx, obj, checked);
 }
 
 opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_error *err) {
@@ -1697,6 +1735,8 @@ opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_erro
     fz_page *page = NULL;
     opdf_field *items = NULL;
     int n = 0, capacity = 0;
+    // Field trees found sound, shared by the page's fields.
+    num_set checked = { 0 };
     fz_var(page);
     fz_var(items);
     fz_var(n);
@@ -1726,15 +1766,17 @@ opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_erro
             // A malformed field is listed read-only with what could be read,
             // rather than hiding the page's other fields.
             fz_try(ctx)
-                fill_field(ctx, w, &items[n - 1], &budget);
+                fill_field(ctx, w, &items[n - 1], &budget, &checked);
             fz_catch(ctx) {
                 if (fz_caught(ctx) == FZ_ERROR_SYSTEM) fz_rethrow(ctx);
                 items[n - 1].read_only = true;
             }
         }
     }
-    fz_always(ctx)
+    fz_always(ctx) {
         fz_drop_page(ctx, page);
+        num_set_free(&checked);
+    }
     fz_catch(ctx) {
         set_error(err, ctx);
         opdf_fields_free(items, n);
@@ -1825,7 +1867,7 @@ static pdf_annot *fillable_widget(fz_context *ctx, pdf_page *page, int id, int t
     pdf_annot *w = find_widget(ctx, page, id);
     int type = pdf_widget_type(ctx, w);
     if (!fillable(ctx, w)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This field can't be filled in");
-    if (!field_group_ok(ctx, pdf_annot_obj(ctx, w), 1000)) fz_throw(ctx, FZ_ERROR_FORMAT, "This field is damaged, so it can't be filled in");
+    if (!field_group_ok(ctx, pdf_annot_obj(ctx, w), NULL)) fz_throw(ctx, FZ_ERROR_FORMAT, "This field is damaged, so it can't be filled in");
     if (type != type_a && type != type_b) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This field doesn't take that kind of value");
     return w;
 }
@@ -1984,8 +2026,15 @@ int opdf_field_create(opdf_doc *d, int page_number, int type, opdf_rect rect, in
             parent = pdf_keep_obj(ctx, holder);
         }
         fz_try(ctx) {
+        // A new name, looked for from the number of fields on (MuPDF's
+        // pdf_create_field_name starts at 0, slow on forms with many names).
         char name[64];
-        pdf_create_field_name(ctx, pdf, prefix, name, sizeof name);
+        bool named = false;
+        for (int i = pdf_array_len(ctx, fields), tries = 0; tries < 1000 && !named; i++, tries++) {
+            fz_snprintf(name, sizeof name, "%s%d", prefix, i);
+            named = !pdf_lookup_field(ctx, fields, name);
+        }
+        if (!named) fz_throw(ctx, FZ_ERROR_LIMIT, "Could not find a new name for the field");
         annot = pdf_create_annot(ctx, pp, PDF_ANNOT_WIDGET);
         fz_try(ctx) {
             pdf_obj *obj = pdf_annot_obj(ctx, annot);
@@ -2165,7 +2214,7 @@ bool opdf_field_delete(opdf_doc *d, int page_number, int id, opdf_error *err) {
     WITH_PAGE_OPERATION(d, page_number, "Delete Field", err, {
         pdf_annot *w = find_widget(ctx, pp, id);
         check_form_tree(ctx, pdf);
-        if (!field_group_ok(ctx, pdf_annot_obj(ctx, w), 1000)) fz_throw(ctx, FZ_ERROR_FORMAT, "This field is damaged, so it can't be deleted");
+        if (!field_group_ok(ctx, pdf_annot_obj(ctx, w), NULL)) fz_throw(ctx, FZ_ERROR_FORMAT, "This field is damaged, so it can't be deleted");
         pdf_obj *obj = pdf_annot_obj(ctx, w);
         pdf_obj *parent = pdf_keep_obj(ctx, pdf_dict_get(ctx, obj, PDF_NAME(Parent)));
         fz_try(ctx) {
