@@ -1585,6 +1585,622 @@ bool opdf_link_delete(opdf_doc *d, int page_number, int id, opdf_error *err) {
     return !(err && err->code);
 }
 
+// --- Page content ------------------------------------------------------------------
+//
+// One processor reads the page's content stream, tracking the graphics and
+// text state, and numbers its text operations and image drawings. Recording,
+// it lists them; rewriting, it is chained to MuPDF's buffer processor and
+// passes everything through except the operation being changed.
+
+typedef struct {
+    fz_matrix ctm;
+    pdf_text_state text;          // text.font is kept
+    char font_name[128];          // the font's resource name, from Tf
+    int fill_n;                   // 1, 3 or 4 for DeviceGray, RGB, CMYK; 0 otherwise
+    float fill[4];
+} content_gstate;
+
+typedef struct content_proc content_proc;
+struct content_proc {
+    pdf_processor super;
+    pdf_processor *out;           // the buffer processor when rewriting
+    pdf_document *doc;
+    fz_matrix page_ctm;
+    content_gstate gs[OPDF_MAX_GSTATE_DEPTH];
+    int top;
+    int overflow;                 // q's past the limit, ignored with their Q's
+    pdf_text_object_state tos;
+    int text_ops, image_ops;
+    // Recording.
+    opdf_page_content *record;
+    int run_capacity, image_capacity;
+    int chars_left;
+    // Rewriting: the operation to replace, and what to draw instead.
+    int target_text, target_image;
+    void (*emit_text)(fz_context *ctx, content_proc *p, void *arg);
+    void (*emit_image)(fz_context *ctx, content_proc *p, const char *name, fz_image *image, void *arg);
+    void *arg;
+};
+
+#define CHAIN(p) ((p)->out)
+#define G(p) (&(p)->gs[(p)->top])
+
+static void cp_q(fz_context *ctx, pdf_processor *proc) {
+    content_proc *p = (content_proc *)proc;
+    if (p->top + 1 >= OPDF_MAX_GSTATE_DEPTH) {
+        p->overflow++;
+    } else {
+        p->gs[p->top + 1] = p->gs[p->top];
+        p->top++;
+        pdf_keep_font(ctx, G(p)->text.font);
+    }
+    if (CHAIN(p)) CHAIN(p)->op_q(ctx, CHAIN(p));
+}
+
+static void cp_Q(fz_context *ctx, pdf_processor *proc) {
+    content_proc *p = (content_proc *)proc;
+    if (p->overflow > 0) {
+        p->overflow--;
+    } else if (p->top > 0) {
+        pdf_drop_font(ctx, G(p)->text.font);
+        G(p)->text.font = NULL;
+        p->top--;
+    }
+    if (CHAIN(p)) CHAIN(p)->op_Q(ctx, CHAIN(p));
+}
+
+static void cp_cm(fz_context *ctx, pdf_processor *proc, float a, float b, float c, float d, float e, float f) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->ctm = fz_concat(fz_make_matrix(a, b, c, d, e, f), G(p)->ctm);
+    if (CHAIN(p)) CHAIN(p)->op_cm(ctx, CHAIN(p), a, b, c, d, e, f);
+}
+
+static void cp_BT(fz_context *ctx, pdf_processor *proc) {
+    content_proc *p = (content_proc *)proc;
+    p->tos.tm = fz_identity;
+    p->tos.tlm = fz_identity;
+    if (CHAIN(p)) CHAIN(p)->op_BT(ctx, CHAIN(p));
+}
+
+static void cp_Tc(fz_context *ctx, pdf_processor *proc, float v) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.char_space = v;
+    if (CHAIN(p)) CHAIN(p)->op_Tc(ctx, CHAIN(p), v);
+}
+
+static void cp_Tw(fz_context *ctx, pdf_processor *proc, float v) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.word_space = v;
+    if (CHAIN(p)) CHAIN(p)->op_Tw(ctx, CHAIN(p), v);
+}
+
+static void cp_Tz(fz_context *ctx, pdf_processor *proc, float v) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.scale = v / 100;
+    if (CHAIN(p)) CHAIN(p)->op_Tz(ctx, CHAIN(p), v);
+}
+
+static void cp_TL(fz_context *ctx, pdf_processor *proc, float v) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.leading = v;
+    if (CHAIN(p)) CHAIN(p)->op_TL(ctx, CHAIN(p), v);
+}
+
+static void cp_Ts(fz_context *ctx, pdf_processor *proc, float v) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.rise = v;
+    if (CHAIN(p)) CHAIN(p)->op_Ts(ctx, CHAIN(p), v);
+}
+
+static void cp_Tr(fz_context *ctx, pdf_processor *proc, int v) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.render = v;
+    if (CHAIN(p)) CHAIN(p)->op_Tr(ctx, CHAIN(p), v);
+}
+
+static void cp_Tf(fz_context *ctx, pdf_processor *proc, const char *name, pdf_font_desc *font, float size) {
+    content_proc *p = (content_proc *)proc;
+    pdf_drop_font(ctx, G(p)->text.font);
+    G(p)->text.font = pdf_keep_font(ctx, font);
+    G(p)->text.size = size;
+    fz_strlcpy(G(p)->font_name, name ? name : "", sizeof G(p)->font_name);
+    if (CHAIN(p)) CHAIN(p)->op_Tf(ctx, CHAIN(p), name, font, size);
+}
+
+static void cp_Td(fz_context *ctx, pdf_processor *proc, float tx, float ty) {
+    content_proc *p = (content_proc *)proc;
+    pdf_tos_translate(&p->tos, tx, ty);
+    if (CHAIN(p)) CHAIN(p)->op_Td(ctx, CHAIN(p), tx, ty);
+}
+
+static void cp_TD(fz_context *ctx, pdf_processor *proc, float tx, float ty) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.leading = -ty;
+    pdf_tos_translate(&p->tos, tx, ty);
+    if (CHAIN(p)) CHAIN(p)->op_TD(ctx, CHAIN(p), tx, ty);
+}
+
+static void cp_Tm(fz_context *ctx, pdf_processor *proc, float a, float b, float c, float d, float e, float f) {
+    content_proc *p = (content_proc *)proc;
+    pdf_tos_set_matrix(&p->tos, a, b, c, d, e, f);
+    if (CHAIN(p)) CHAIN(p)->op_Tm(ctx, CHAIN(p), a, b, c, d, e, f);
+}
+
+static void cp_Tstar(fz_context *ctx, pdf_processor *proc) {
+    content_proc *p = (content_proc *)proc;
+    pdf_tos_newline(&p->tos, G(p)->text.leading);
+    if (CHAIN(p)) CHAIN(p)->op_Tstar(ctx, CHAIN(p));
+}
+
+static void set_fill(content_proc *p, int n, const float *v) {
+    G(p)->fill_n = n;
+    for (int i = 0; i < 4; i++) G(p)->fill[i] = i < n ? v[i] : 0;
+}
+
+static void cp_g(fz_context *ctx, pdf_processor *proc, float g) {
+    content_proc *p = (content_proc *)proc;
+    set_fill(p, 1, &g);
+    if (CHAIN(p)) CHAIN(p)->op_g(ctx, CHAIN(p), g);
+}
+
+static void cp_rg(fz_context *ctx, pdf_processor *proc, float r, float g, float b) {
+    content_proc *p = (content_proc *)proc;
+    float v[3] = { r, g, b };
+    set_fill(p, 3, v);
+    if (CHAIN(p)) CHAIN(p)->op_rg(ctx, CHAIN(p), r, g, b);
+}
+
+static void cp_k(fz_context *ctx, pdf_processor *proc, float c, float m, float y, float k) {
+    content_proc *p = (content_proc *)proc;
+    float v[4] = { c, m, y, k };
+    set_fill(p, 4, v);
+    if (CHAIN(p)) CHAIN(p)->op_k(ctx, CHAIN(p), c, m, y, k);
+}
+
+static void cp_cs(fz_context *ctx, pdf_processor *proc, const char *name, fz_colorspace *cs) {
+    content_proc *p = (content_proc *)proc;
+    float zero[4] = { 0, 0, 0, 1 };
+    // Only the device spaces by their own names: anything else can't be
+    // restored with g, rg or k.
+    if (name && !strcmp(name, "DeviceGray")) set_fill(p, 1, zero);
+    else if (name && !strcmp(name, "DeviceRGB")) set_fill(p, 3, zero);
+    else if (name && !strcmp(name, "DeviceCMYK")) set_fill(p, 4, zero);
+    else set_fill(p, 0, zero);
+    if (CHAIN(p)) CHAIN(p)->op_cs(ctx, CHAIN(p), name, cs);
+}
+
+static void cp_sc_color(fz_context *ctx, pdf_processor *proc, int n, float *color) {
+    content_proc *p = (content_proc *)proc;
+    if (G(p)->fill_n == n) set_fill(p, n, color);
+    else set_fill(p, 0, color);
+    if (CHAIN(p)) CHAIN(p)->op_sc_color(ctx, CHAIN(p), n, color);
+}
+
+static void cp_sc_pattern(fz_context *ctx, pdf_processor *proc, const char *name, pdf_pattern *pat, int n, float *color) {
+    content_proc *p = (content_proc *)proc;
+    set_fill(p, 0, color);
+    if (CHAIN(p)) CHAIN(p)->op_sc_pattern(ctx, CHAIN(p), name, pat, n, color);
+}
+
+static void cp_sc_shade(fz_context *ctx, pdf_processor *proc, const char *name, fz_shade *shade) {
+    content_proc *p = (content_proc *)proc;
+    float none[4] = { 0 };
+    set_fill(p, 0, none);
+    if (CHAIN(p)) CHAIN(p)->op_sc_shade(ctx, CHAIN(p), name, shade);
+}
+
+// --- Recording text
+
+static opdf_text_run *new_run(fz_context *ctx, content_proc *p) {
+    opdf_page_content *c = p->record;
+    if (c->run_count == p->run_capacity) {
+        int grown = p->run_capacity ? p->run_capacity * 2 : 64;
+        opdf_text_run *bigger = realloc(c->runs, (size_t)grown * sizeof *bigger);
+        if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        c->runs = bigger;
+        p->run_capacity = grown;
+    }
+    opdf_text_run *run = &c->runs[c->run_count++];
+    memset(run, 0, sizeof *run);
+    return run;
+}
+
+typedef struct {
+    opdf_text_run *run;
+    fz_buffer *utf8;
+    int capacity;
+    fz_rect bounds;
+} run_builder;
+
+// One glyph of the current string: its Unicode, and its box in page space.
+static void record_glyph(fz_context *ctx, content_proc *p, run_builder *b, int cid) {
+    pdf_font_desc *font = G(p)->text.font;
+    fz_matrix trm;
+    float adv;
+    pdf_tos_make_trm(ctx, &p->tos, &G(p)->text, font, cid, &trm, &adv);
+    if (!b->run) return;
+    int ucs[PDF_MRANGE_CAP];
+    int n = font->to_unicode ? pdf_lookup_cmap_full(font->to_unicode, cid, ucs) : 0;
+    if (n == 0 && cid >= 0 && (size_t)cid < font->cid_to_ucs_len) {
+        ucs[0] = font->cid_to_ucs[cid];
+        n = 1;
+    }
+    if (n == 0 || (n == 1 && ucs[0] == 0)) {
+        ucs[0] = FZ_REPLACEMENT_CHARACTER;
+        n = 1;
+    }
+    if (b->run->quad_count >= OPDF_MAX_RUN_CHARS || p->chars_left <= 0) {
+        b->run->not_editable = OPDF_RUN_TOO_LONG;
+        return;
+    }
+    p->chars_left--;
+    for (int i = 0; i < n; i++) {
+        char utf[8];
+        int len = fz_runetochar(utf, ucs[i]);
+        fz_append_data(ctx, b->utf8, utf, (size_t)len);
+    }
+    fz_matrix m = fz_concat(fz_concat(trm, G(p)->ctm), p->page_ctm);
+    float asc = fz_font_ascender(ctx, font->font), desc = fz_font_descender(ctx, font->font);
+    fz_quad q = fz_transform_quad(fz_quad_from_rect(fz_make_rect(0, desc, adv, asc)), m);
+    if (b->run->quad_count == b->capacity) {
+        int grown = b->capacity ? b->capacity * 2 : 32;
+        float *bigger = realloc(b->run->quads, (size_t)grown * 8 * sizeof(float));
+        if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        b->run->quads = bigger;
+        b->capacity = grown;
+    }
+    // Upper-left, upper-right, lower-left, lower-right, as opdf_char has them.
+    float v[8] = { q.ul.x, q.ul.y, q.ur.x, q.ur.y, q.ll.x, q.ll.y, q.lr.x, q.lr.y };
+    memcpy(&b->run->quads[b->run->quad_count * 8], v, sizeof v);
+    b->run->quad_count++;
+    b->bounds = fz_union_rect(b->bounds, fz_rect_from_quad(q));
+}
+
+// Walks a string's glyphs as MuPDF draws them, moving the text position.
+static void show_string(fz_context *ctx, content_proc *p, run_builder *b, const unsigned char *s, size_t len) {
+    pdf_font_desc *font = G(p)->text.font;
+    const unsigned char *end = s + len;
+    while (s < end) {
+        unsigned int code;
+        int inc = pdf_decode_cmap(font->encoding, (unsigned char *)s, (unsigned char *)end, &code);
+        if (inc <= 0) break;
+        s += inc;
+        int cid = pdf_lookup_cmap(font->encoding, code);
+        if (cid >= 0) record_glyph(ctx, p, b, cid);
+        else pdf_tos_make_trm(ctx, &p->tos, &G(p)->text, font, 0, &(fz_matrix){ 0 }, &(float){ 0 });
+        pdf_tos_move_after_char(ctx, &p->tos);
+        if (code == 32 && inc == 1) {
+            if (font->wmode == 0) p->tos.tm = fz_pre_translate(p->tos.tm, G(p)->text.word_space * G(p)->text.scale, 0);
+            else p->tos.tm = fz_pre_translate(p->tos.tm, 0, G(p)->text.word_space);
+        }
+    }
+}
+
+// The run for this text operation, or NULL when not recording (or over the limit).
+static void begin_run(fz_context *ctx, content_proc *p, run_builder *b) {
+    memset(b, 0, sizeof *b);
+    b->bounds = fz_empty_rect;
+    pdf_font_desc *font = G(p)->text.font;
+    if (!p->record || !font || p->text_ops > OPDF_MAX_CONTENT_OPS) return;
+    b->run = new_run(ctx, p);
+    b->run->op = p->text_ops;
+    b->utf8 = fz_new_buffer(ctx, 64);
+    fz_font *f = font->font;
+    b->run->font = strdup(f && f->name[0] ? f->name : "");
+    if (!b->run->font) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+    b->run->serif = f && fz_font_is_serif(ctx, f);
+    b->run->bold = f && fz_font_is_bold(ctx, f);
+    b->run->italic = f && fz_font_is_italic(ctx, f);
+    b->run->monospaced = f && fz_font_is_monospaced(ctx, f);
+    fz_matrix m = fz_concat(fz_concat(p->tos.tm, G(p)->ctm), p->page_ctm);
+    b->run->size = G(p)->text.size * sqrtf(m.c * m.c + m.d * m.d);
+    b->run->color_n = G(p)->fill_n;
+    memcpy(b->run->color, G(p)->fill, sizeof b->run->color);
+    if (f && f->t3procs) b->run->not_editable = OPDF_RUN_TYPE3;
+    else if (font->wmode) b->run->not_editable = OPDF_RUN_VERTICAL;
+    else if (G(p)->text.render == 3) b->run->not_editable = OPDF_RUN_INVISIBLE;
+}
+
+static void end_run(fz_context *ctx, content_proc *p, run_builder *b) {
+    if (!b->run) return;
+    fz_terminate_buffer(ctx, b->utf8);
+    unsigned char *data;
+    fz_buffer_storage(ctx, b->utf8, &data);
+    b->run->text = strdup((const char *)data);
+    fz_drop_buffer(ctx, b->utf8);
+    b->utf8 = NULL;
+    if (!b->run->text) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+    b->run->rect = rect_to(fz_is_empty_rect(b->bounds) ? fz_make_rect(0, 0, 0, 0) : b->bounds);
+}
+
+// A text operation: replaced when it is the target, else passed on and,
+// when recording, listed.
+static bool text_op_is_target(content_proc *p) {
+    return p->emit_text && p->text_ops == p->target_text;
+}
+
+static void show_text(fz_context *ctx, content_proc *p, pdf_obj *array, const unsigned char *s, size_t len) {
+    run_builder b;
+    pdf_font_desc *font = G(p)->text.font;
+    if (!font) return;
+    begin_run(ctx, p, &b);
+    fz_try(ctx) {
+        if (array) {
+            for (int i = 0, n = pdf_array_len(ctx, array); i < n; i++) {
+                pdf_obj *item = pdf_array_get(ctx, array, i);
+                if (pdf_is_string(ctx, item)) {
+                    show_string(ctx, p, &b, (unsigned char *)pdf_to_str_buf(ctx, item), pdf_to_str_len(ctx, item));
+                } else {
+                    float adj = -pdf_to_real(ctx, item) * G(p)->text.size * 0.001f;
+                    if (font->wmode == 0) p->tos.tm = fz_pre_translate(p->tos.tm, adj * G(p)->text.scale, 0);
+                    else p->tos.tm = fz_pre_translate(p->tos.tm, 0, adj);
+                }
+            }
+        } else {
+            show_string(ctx, p, &b, s, len);
+        }
+        end_run(ctx, p, &b);
+    }
+    fz_catch(ctx) {
+        fz_drop_buffer(ctx, b.utf8);
+        fz_rethrow(ctx);
+    }
+}
+
+static void cp_TJ(fz_context *ctx, pdf_processor *proc, pdf_obj *array) {
+    content_proc *p = (content_proc *)proc;
+    if (text_op_is_target(p)) {
+        p->emit_text(ctx, p, p->arg);
+    } else {
+        show_text(ctx, p, array, NULL, 0);
+        if (CHAIN(p)) CHAIN(p)->op_TJ(ctx, CHAIN(p), array);
+    }
+    p->text_ops++;
+}
+
+static void cp_Tj(fz_context *ctx, pdf_processor *proc, char *str, size_t len) {
+    content_proc *p = (content_proc *)proc;
+    if (text_op_is_target(p)) p->emit_text(ctx, p, p->arg);
+    else {
+        show_text(ctx, p, NULL, (unsigned char *)str, len);
+        if (CHAIN(p)) CHAIN(p)->op_Tj(ctx, CHAIN(p), str, len);
+    }
+    p->text_ops++;
+}
+
+static void cp_squote(fz_context *ctx, pdf_processor *proc, char *str, size_t len) {
+    content_proc *p = (content_proc *)proc;
+    pdf_tos_newline(&p->tos, G(p)->text.leading);
+    if (text_op_is_target(p)) {
+        if (CHAIN(p)) CHAIN(p)->op_Tstar(ctx, CHAIN(p));
+        p->emit_text(ctx, p, p->arg);
+    } else {
+        show_text(ctx, p, NULL, (unsigned char *)str, len);
+        if (CHAIN(p)) CHAIN(p)->op_squote(ctx, CHAIN(p), str, len);
+    }
+    p->text_ops++;
+}
+
+static void cp_dquote(fz_context *ctx, pdf_processor *proc, float aw, float ac, char *str, size_t len) {
+    content_proc *p = (content_proc *)proc;
+    G(p)->text.word_space = aw;
+    G(p)->text.char_space = ac;
+    pdf_tos_newline(&p->tos, G(p)->text.leading);
+    if (text_op_is_target(p)) {
+        if (CHAIN(p)) {
+            CHAIN(p)->op_Tw(ctx, CHAIN(p), aw);
+            CHAIN(p)->op_Tc(ctx, CHAIN(p), ac);
+            CHAIN(p)->op_Tstar(ctx, CHAIN(p));
+        }
+        p->emit_text(ctx, p, p->arg);
+    } else {
+        show_text(ctx, p, NULL, (unsigned char *)str, len);
+        if (CHAIN(p)) CHAIN(p)->op_dquote(ctx, CHAIN(p), aw, ac, str, len);
+    }
+    p->text_ops++;
+}
+
+// --- Images
+
+static void cp_Do_image(fz_context *ctx, pdf_processor *proc, const char *name, fz_image *image) {
+    content_proc *p = (content_proc *)proc;
+    if (p->emit_image && p->image_ops == p->target_image) {
+        p->emit_image(ctx, p, name, image, p->arg);
+    } else {
+        if (p->record && p->image_ops < OPDF_MAX_CONTENT_OPS) {
+            opdf_page_content *c = p->record;
+            if (c->image_count == p->image_capacity) {
+                int grown = p->image_capacity ? p->image_capacity * 2 : 16;
+                opdf_image_placement *bigger = realloc(c->images, (size_t)grown * sizeof *bigger);
+                if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+                c->images = bigger;
+                p->image_capacity = grown;
+            }
+            opdf_image_placement *o = &c->images[c->image_count++];
+            memset(o, 0, sizeof *o);
+            fz_matrix m = fz_concat(G(p)->ctm, p->page_ctm);
+            o->op = p->image_ops;
+            o->rect = rect_to(fz_transform_rect(fz_unit_rect, m));
+            float v[6] = { m.a, m.b, m.c, m.d, m.e, m.f };
+            memcpy(o->matrix, v, sizeof v);
+            // Images aren't decoded for this processor: the size is the XObject's.
+            pdf_obj *xobj = pdf_lookup_resource(ctx, p->super.rstack, PDF_NAME(XObject), name);
+            o->width = image ? image->w : pdf_dict_get_int(ctx, xobj, PDF_NAME(Width));
+            o->height = image ? image->h : pdf_dict_get_int(ctx, xobj, PDF_NAME(Height));
+        }
+        if (CHAIN(p)) CHAIN(p)->op_Do_image(ctx, CHAIN(p), name, image);
+    }
+    p->image_ops++;
+}
+
+static void cp_drop(fz_context *ctx, pdf_processor *proc) {
+    content_proc *p = (content_proc *)proc;
+    for (int i = 0; i <= p->top; i++) {
+        pdf_drop_font(ctx, p->gs[i].text.font);
+        p->gs[i].text.font = NULL;
+    }
+}
+
+// A processor for the page; `out` is the buffer processor when rewriting.
+static content_proc *new_content_proc(fz_context *ctx, pdf_document *doc, pdf_page *page, pdf_processor *out) {
+    content_proc *p = pdf_new_processor(ctx, sizeof *p);
+    p->super.chain = out;
+    p->out = out;
+    p->doc = doc;
+    p->super.drop_processor = cp_drop;
+    p->super.op_q = cp_q;
+    p->super.op_Q = cp_Q;
+    p->super.op_cm = cp_cm;
+    p->super.op_BT = cp_BT;
+    p->super.op_Tc = cp_Tc;
+    p->super.op_Tw = cp_Tw;
+    p->super.op_Tz = cp_Tz;
+    p->super.op_TL = cp_TL;
+    p->super.op_Ts = cp_Ts;
+    p->super.op_Tr = cp_Tr;
+    p->super.op_Tf = cp_Tf;
+    p->super.op_Td = cp_Td;
+    p->super.op_TD = cp_TD;
+    p->super.op_Tm = cp_Tm;
+    p->super.op_Tstar = cp_Tstar;
+    p->super.op_TJ = cp_TJ;
+    p->super.op_Tj = cp_Tj;
+    p->super.op_squote = cp_squote;
+    p->super.op_dquote = cp_dquote;
+    p->super.op_g = cp_g;
+    p->super.op_rg = cp_rg;
+    p->super.op_k = cp_k;
+    p->super.op_cs = cp_cs;
+    p->super.op_sc_color = cp_sc_color;
+    p->super.op_sc_pattern = cp_sc_pattern;
+    p->super.op_sc_shade = cp_sc_shade;
+    p->super.op_Do_image = cp_Do_image;
+    p->gs[0].ctm = fz_identity;
+    p->gs[0].text.scale = 1;
+    p->gs[0].text.size = -1;
+    float black[1] = { 0 };
+    p->top = 0;
+    set_fill(p, 1, black);
+    p->target_text = -1;
+    p->target_image = -1;
+    p->chars_left = OPDF_MAX_PAGE_CHARS;
+    fz_rect mediabox;
+    pdf_page_transform(ctx, page, &mediabox, &p->page_ctm);
+    return p;
+}
+
+// Runs the processor over the page's own content stream (refused when the
+// decoded content is over OPDF_MAX_CONTENT_BYTES).
+static void process_page_content(fz_context *ctx, pdf_document *doc, pdf_page *page, content_proc *p) {
+    pdf_obj *contents = pdf_page_contents(ctx, page);
+    size_t total = 0;
+    if (pdf_is_array(ctx, contents)) {
+        for (int i = 0, n = pdf_array_len(ctx, contents); i < n; i++) total += (size_t)pdf_dict_get_int64(ctx, pdf_array_get(ctx, contents, i), PDF_NAME(Length));
+    } else {
+        total = (size_t)pdf_dict_get_int64(ctx, contents, PDF_NAME(Length));
+    }
+    // /Length is the encoded size: decoded content is checked as it is read
+    // by stopping at the operation limit; this refuses the plainly huge.
+    if (total > OPDF_MAX_CONTENT_BYTES) fz_throw(ctx, FZ_ERROR_LIMIT, "This page's content is too large to edit");
+    pdf_process_contents(ctx, &p->super, doc, pdf_page_resources(ctx, page), contents, NULL, NULL);
+    pdf_close_processor(ctx, &p->super);
+}
+
+bool opdf_page_content_load(opdf_doc *d, int page_number, opdf_page_content *out, opdf_error *err) {
+    clear_error(err);
+    memset(out, 0, sizeof *out);
+    fz_context *ctx = d->ctx;
+    pdf_page *page = NULL;
+    content_proc *p = NULL;
+    fz_var(page);
+    fz_var(p);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        page = load_pdf_page(ctx, d->doc, page_number);
+        p = new_content_proc(ctx, pdf, page, NULL);
+        p->record = out;
+        process_page_content(ctx, pdf, page, p);
+    }
+    fz_always(ctx) {
+        pdf_drop_processor(ctx, &p->super);
+        fz_drop_page(ctx, (fz_page *)page);
+    }
+    fz_catch(ctx) {
+        set_error(err, ctx);
+        opdf_page_content_free(out);
+    }
+    unlock_doc(d);
+    return !(err && err->code);
+}
+
+void opdf_page_content_free(opdf_page_content *c) {
+    if (!c) return;
+    for (int i = 0; i < c->run_count; i++) {
+        free(c->runs[i].text);
+        free(c->runs[i].quads);
+        free(c->runs[i].font);
+    }
+    free(c->runs);
+    free(c->images);
+    memset(c, 0, sizeof *c);
+}
+
+// Rewrites the page's content through `p` (chained to a buffer processor),
+// replacing /Contents with one new compressed stream. Call inside an
+// operation.
+static void rewrite_page_content(fz_context *ctx, pdf_document *pdf, pdf_page *page,
+                                 void (*configure)(content_proc *p, void *arg), void *arg) {
+    fz_buffer *buf = NULL;
+    pdf_processor *out = NULL;
+    content_proc *p = NULL;
+    unsigned char *deflated = NULL;
+    fz_buffer *zbuf = NULL;
+    pdf_obj *dict = NULL, *stream = NULL;
+    fz_var(buf);
+    fz_var(out);
+    fz_var(p);
+    fz_var(deflated);
+    fz_var(zbuf);
+    fz_var(dict);
+    fz_var(stream);
+    fz_try(ctx) {
+        buf = fz_new_buffer(ctx, 4096);
+        out = pdf_new_buffer_processor(ctx, buf, 0, 1);
+        p = new_content_proc(ctx, pdf, page, out);
+        if (configure) configure(p, arg);
+        process_page_content(ctx, pdf, page, p);
+        size_t zlen = 0;
+        deflated = fz_new_deflated_data_from_buffer(ctx, &zlen, buf, FZ_DEFLATE_DEFAULT);
+        zbuf = fz_new_buffer_from_data(ctx, deflated, zlen);
+        deflated = NULL;
+        dict = pdf_new_dict(ctx, pdf, 1);
+        pdf_dict_put(ctx, dict, PDF_NAME(Filter), PDF_NAME(FlateDecode));
+        stream = pdf_add_stream(ctx, pdf, zbuf, dict, 1);
+        pdf_dict_put(ctx, page->obj, PDF_NAME(Contents), stream);
+    }
+    fz_always(ctx) {
+        pdf_drop_processor(ctx, &p->super);
+        pdf_drop_processor(ctx, out);
+        fz_drop_buffer(ctx, buf);
+        fz_free(ctx, deflated);
+        fz_drop_buffer(ctx, zbuf);
+        pdf_drop_obj(ctx, dict);
+        pdf_drop_obj(ctx, stream);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_page_content_rewrite(opdf_doc *d, int page_number, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Rewrite Page", err, {
+        rewrite_page_content(ctx, pdf, pp, NULL, NULL);
+    });
+    return !(err && err->code);
+}
+
 // --- Form fields ---------------------------------------------------------------
 
 // Bytes of names, values and options listed for one page, so a crafted file

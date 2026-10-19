@@ -399,6 +399,66 @@ function makeXMP() {
 	doc.save(out + "/xmp.pdf")
 }
 
+// --- content.pdf: text and images for Edit Content ---------------------------
+// Page 1: a simple-font Tj, a kerned and coloured TJ, CID-font text,
+// Type3 text, invisible text, text inside a Form XObject, one image drawn
+// twice and an inline image. Page 2 is rotated, page 3 cropped.
+function makeContent() {
+	var doc = newDocument()
+	var cid = doc.addFont(new Font("Helvetica"))
+	var helv = new Font("Helvetica")
+	function hex(s) {
+		var out = "<"
+		for (var i = 0; i < s.length; i++) {
+			var g = helv.encodeCharacter(s.charCodeAt(i))
+			out += ("0000" + g.toString(16)).slice(-4)
+		}
+		return out + ">"
+	}
+	var charproc = doc.addStream("500 0 0 0 400 400 d1 0 0 400 400 re f", {})
+	var type3 = doc.addObject({ Type: doc.newName("Font"), Subtype: doc.newName("Type3"),
+		FontBBox: [0, 0, 400, 400], FontMatrix: [0.001, 0, 0, 0.001, 0, 0],
+		CharProcs: { a: charproc }, Encoding: { Type: doc.newName("Encoding"), Differences: [97, doc.newName("a")] },
+		FirstChar: 97, LastChar: 97, Widths: [500], Resources: {} })
+	var form = doc.addStream("BT /F1 12 Tf 0 0 Td (In a form) Tj ET",
+		{ Type: doc.newName("XObject"), Subtype: doc.newName("Form"), BBox: [0, 0, 200, 50], Resources: { Font: { F1: doc.font } } })
+	var pix = new Pixmap(ColorSpace.DeviceRGB, [0, 0, 4, 4], false)
+	pix.clear(128)
+	var image = doc.addImage(new Image(pix))
+	var content =
+		"BT /F1 24 Tf 72 700 Td (Hello world) Tj ET\n" +
+		"BT /F1 18 Tf 1 0 0 rg 72 660 Td [(Ke) -200 (rning)] TJ 0 g ET\n" +
+		"BT /F2 18 Tf 72 620 Td " + hex("Wide text") + " Tj ET\n" +
+		"BT /F3 18 Tf 72 580 Td (aaa) Tj ET\n" +
+		"BT /F1 12 Tf 3 Tr 300 580 Td (hidden) Tj 0 Tr ET\n" +
+		"q 1 0 0 1 72 520 cm /Fm0 Do Q\n" +
+		"q 100 0 0 50 72 400 cm /Im0 Do Q\n" +
+		"q 50 0 0 50 300 400 cm /Im0 Do Q\n" +
+		"q 20 0 0 20 400 300 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x80 EI Q\n"
+	var page = doc.addPage(LETTER, 0, { Font: { F1: doc.font, F2: cid, F3: type3 }, XObject: { Fm0: form, Im0: image } }, content)
+	doc.insertPage(-1, page)
+	var rotated = doc.addPage(LETTER, 90, { Font: { F1: doc.font }, XObject: { Im0: image } },
+		"BT /F1 24 Tf 72 700 Td (Turned) Tj ET\nq 100 0 0 50 72 400 cm /Im0 Do Q\n")
+	doc.insertPage(-1, rotated)
+	var cropped = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, "BT /F1 24 Tf 172 600 Td (Cropped) Tj ET\n")
+	doc.insertPage(-1, cropped)
+	doc.findPage(2).put("CropBox", [100, 100, 500, 700])
+	doc.save(out + "/content.pdf", "compress")
+
+	// A page with more operations than the limit, and deeply nested q's.
+	doc = newDocument()
+	var ops = []
+	for (var j = 0; j < 1000; j++) ops.push("q")
+	ops.push("BT /F1 12 Tf 72 700 Td (deep) Tj ET")
+	for (var k = 0; k < 1000; k++) ops.push("Q")
+	ops.push("BT /F1 2 Tf 10 10 Td")
+	for (var i = 0; i < 210000; i++) ops.push("(a) Tj")
+	ops.push("ET")
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, ops.join("\n"))
+	doc.insertPage(-1, page)
+	doc.save(out + "/contentbomb.pdf", "compress")
+}
+
 // --- Hostile files, for the security tests ----------------------------------
 
 // Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
@@ -556,4 +616,5 @@ makeLong()
 makeForms()
 makeFormBomb()
 makeXMP()
+makeContent()
 print("corpus: wrote the test PDFs to " + out)

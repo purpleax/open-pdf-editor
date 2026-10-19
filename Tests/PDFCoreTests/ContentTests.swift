@@ -106,3 +106,75 @@ import Testing
         }
     }
 }
+
+@Suite struct PageContentTests {
+    @Test func listsTextAndImages() throws {
+        let doc = try Corpus.open("content.pdf")
+        let content = try doc.content(page: 0)
+        let texts = content.runs.map(\.text)
+        #expect(texts.contains("Hello world") && texts.contains("Kerning") && texts.contains("Wide text"))
+        #expect(!texts.contains("In a form"))   // inside a Form XObject
+        let hello = try #require(content.runs.first { $0.text == "Hello world" })
+        #expect(hello.isEditable && abs(hello.size - 24) < 0.1 && hello.isSerif)
+        #expect(hello.quads.count == 11)
+        let kerning = try #require(content.runs.first { $0.text == "Kerning" })
+        #expect(kerning.color == PDFColor(red: 1, green: 0, blue: 0))
+        #expect(content.runs.first { $0.text == "aaa" }?.restriction == .type3)
+        #expect(content.runs.first { $0.text == "hidden" }?.restriction == .invisible)
+        // The run's box is where the page's text says the words are.
+        let pageText = try doc.text(page: 0)
+        let range = try #require(pageText.search("Hello world").first)
+        let words = pageText.rects(for: range).reduce(CGRect.null) { $0.union($1) }
+        #expect(hello.rect.insetBy(dx: -2, dy: -2).contains(words.insetBy(dx: 1, dy: 1)), "\(hello.rect) vs \(words)")
+
+        // One image drawn twice; the inline image isn't listed.
+        #expect(content.images.count == 2)
+        let first = content.images[0]
+        #expect(abs(first.rect.minX - 72) < 0.5 && abs(first.rect.minY - (792 - 450)) < 0.5)
+        #expect(abs(first.rect.width - 100) < 0.5 && first.pixelWidth == 4)
+    }
+
+    @Test func rotatedAndCroppedPages() throws {
+        let doc = try Corpus.open("content.pdf")
+        for page in 1...2 {
+            let content = try doc.content(page: page)
+            let run = try #require(content.runs.first)
+            let pageText = try doc.text(page: page)
+            let range = try #require(pageText.search(run.text).first)
+            let words = pageText.rects(for: range).reduce(CGRect.null) { $0.union($1) }
+            #expect(run.rect.insetBy(dx: -2, dy: -2).contains(words.insetBy(dx: 1, dy: 1)), "page \(page): \(run.rect) vs \(words)")
+        }
+        let image = try #require(try doc.content(page: 1).images.first)
+        #expect(abs(image.rect.width - 50) < 0.5 && abs(image.rect.height - 100) < 0.5)   // turned a quarter
+    }
+
+    /// Writing the content again changes nothing that is drawn.
+    @Test func rewriteDrawsTheSame() throws {
+        let doc = try Corpus.open("content.pdf")
+        for page in 0..<3 {
+            let bounds = try doc.pageBounds()[page]
+            let before = try Pixels(doc.renderPage(page, bounds: bounds, scale: 1))
+            try doc.rewritePageContent(page: page)
+            let after = try Pixels(doc.renderPage(page, bounds: bounds, scale: 1))
+            var different = 0
+            for y in stride(from: 0, to: before.height, by: 2) {
+                for x in stride(from: 0, to: before.width, by: 2) where before.rgb(x, y) != after.rgb(x, y) { different += 1 }
+            }
+            #expect(different == 0, "page \(page): \(different) pixels changed")
+            #expect(try doc.content(page: page).runs.map(\.text) == (try Corpus.open("content.pdf").content(page: page).runs.map(\.text)))
+        }
+        try doc.undo()
+        #expect(doc.canUndo)
+    }
+
+    @Test func limits() throws {
+        let doc = try Corpus.open("contentbomb.pdf")
+        let start = Date()
+        let content = try doc.content(page: 0)
+        #expect(Date().timeIntervalSince(start) < 5)
+        #expect(content.runs.count <= 200_001)
+        // Past 256 nested q's the state is still followed.
+        let deep = try #require(content.runs.first)
+        #expect(deep.text == "deep" && abs(deep.rect.minX - 72) < 1)
+    }
+}

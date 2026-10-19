@@ -308,6 +308,62 @@ int opdf_annot_reply(opdf_doc *doc, int page, int parent, const char *author, co
 // reply with State/StateModel, as other PDF apps write it. NULL state removes it.
 bool opdf_annot_set_status(opdf_doc *doc, int page, int parent, const char *author, const char *state, opdf_error *err);
 
+// --- Page content ----------------------------------------------------------
+//
+// What the page's own content stream draws, for editing: its text
+// operations (Tj, TJ, ' and ") and image drawings (Do of an image), each
+// identified by its order on the page. Text inside Form XObjects, inline
+// images and annotations aren't included.
+
+enum {
+    OPDF_RUN_EDITABLE = 0,
+    OPDF_RUN_TYPE3,       // drawn with a Type3 font
+    OPDF_RUN_VERTICAL,    // vertical writing
+    OPDF_RUN_INVISIBLE,   // render mode 3 (an OCR layer, for one)
+    OPDF_RUN_TOO_LONG,    // over the limits, listed only in part
+};
+
+typedef struct {
+    int op;              // which text operation on the page, from 0
+    char *text;          // UTF-8
+    opdf_rect rect;      // page space
+    int quad_count;
+    float *quads;        // one per character, as in opdf_char
+    char *font;          // the font's name (no subset prefix)
+    bool serif, bold, italic, monospaced;
+    float size;          // as drawn, in points
+    int color_n;         // fill colour: 1 grey, 3 RGB, 4 CMYK; 0 for any other kind
+    float color[4];
+    int not_editable;    // OPDF_RUN_*
+} opdf_text_run;
+
+typedef struct {
+    int op;              // which image drawing on the page, from 0
+    opdf_rect rect;      // page space
+    float matrix[6];     // the image's unit square to page space
+    int width, height;   // pixels
+} opdf_image_placement;
+
+typedef struct {
+    opdf_text_run *runs;
+    int run_count;
+    opdf_image_placement *images;
+    int image_count;
+} opdf_page_content;
+
+// Limits on what is read from a page's content.
+#define OPDF_MAX_CONTENT_BYTES (64 << 20)  // decoded content stream
+#define OPDF_MAX_CONTENT_OPS 200000        // text operations and image drawings
+#define OPDF_MAX_RUN_CHARS 10000
+#define OPDF_MAX_PAGE_CHARS 200000
+#define OPDF_MAX_GSTATE_DEPTH 256
+
+bool opdf_page_content_load(opdf_doc *doc, int page, opdf_page_content *out, opdf_error *err);
+void opdf_page_content_free(opdf_page_content *content);
+// Writes the page's content again through the editing machinery with no
+// change (for tests: what it draws must not change). One undoable step.
+bool opdf_page_content_rewrite(opdf_doc *doc, int page, opdf_error *err);
+
 // --- Form fields -----------------------------------------------------------
 //
 // Each form field widget on a page, identified like annotations by its PDF
