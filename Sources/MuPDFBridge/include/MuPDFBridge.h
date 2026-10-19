@@ -354,6 +354,36 @@ bool opdf_field_set_choices(opdf_doc *doc, int page, int id, const char *const *
 // button stays on unless its group allows none).
 bool opdf_field_toggle(opdf_doc *doc, int page, int id, opdf_error *err);
 
+// Creating and changing fields. Each is one undoable step.
+
+// A new field of this kind (OPDF_FIELD_TEXT, _CHECKBOX, _RADIO, _COMBOBOX,
+// _LISTBOX or _SIGNATURE) with a new unique name, adding the document's
+// form if it has none. A radio button joins the group of the radio button
+// `group` (its id), or starts a group of its own when `group` is 0.
+// Returns the new widget's id, or 0.
+int opdf_field_create(opdf_doc *doc, int page, int type, opdf_rect rect, int group, opdf_error *err);
+
+// The flags a field's settings may change.
+#define OPDF_FIELD_SETTABLE_FLAGS ((1 << 0) | (1 << 1) | (1 << 12) | (1 << 13) | (1 << 18) | (1 << 21) | (1 << 24))
+
+// What opdf_field_update changes; NULL or -1 leaves a setting as it is.
+typedef struct {
+    const char *name;        // the field's own name: no dots, unique among the form's fields
+    const char *tooltip;     // "" removes it
+    int flags_mask;          // which of OPDF_FIELD_SETTABLE_FLAGS to change...
+    int flags;               // ...and to what
+    int max_length;          // text: 0 for none, -1 unchanged
+    int option_count;        // dropdown and list box: -1 unchanged
+    const char *const *option_values;
+    const char *const *option_labels;   // NULL, or a label per value ("" or the value: none)
+} opdf_field_spec;
+
+bool opdf_field_update(opdf_doc *doc, int page, int id, const opdf_field_spec *spec, opdf_error *err);
+// Moves or resizes a field's widget (a matrix on its rectangle).
+bool opdf_field_transform(opdf_doc *doc, int page, int id, opdf_matrix matrix, opdf_error *err);
+// Deletes a field's widget, and the field once it has no widgets left.
+bool opdf_field_delete(opdf_doc *doc, int page, int id, opdf_error *err);
+
 // --- Undo, saving, flattening ---------------------------------------------
 
 // Call once the document is unlocked and before any change. Loads every

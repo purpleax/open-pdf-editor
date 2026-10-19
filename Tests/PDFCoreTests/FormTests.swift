@@ -118,6 +118,98 @@ import Testing
     }
 }
 
+@Suite struct FieldEditingTests {
+    private func temporaryURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
+    }
+
+    /// Every kind made on a page with no form, saved and read back.
+    @Test func createEveryKind() throws {
+        let doc = try Corpus.open("text.pdf")
+        #expect(try !doc.formInfo().hasFields)
+        let text = try doc.createField(.text, page: 0, rect: CGRect(x: 72, y: 600, width: 200, height: 20))
+        let check = try doc.createField(.checkbox, page: 0, rect: CGRect(x: 72, y: 560, width: 14, height: 14))
+        let first = try doc.createField(.radio, page: 0, rect: CGRect(x: 72, y: 520, width: 14, height: 14))
+        let second = try doc.createField(.radio, page: 0, rect: CGRect(x: 100, y: 520, width: 14, height: 14), joining: first)
+        let dropdown = try doc.createField(.dropdown, page: 0, rect: CGRect(x: 72, y: 480, width: 120, height: 20))
+        let list = try doc.createField(.listBox, page: 0, rect: CGRect(x: 72, y: 400, width: 120, height: 60))
+        try doc.createField(.signature, page: 0, rect: CGRect(x: 300, y: 400, width: 200, height: 50))
+
+        var choices = FieldChange()
+        choices.options = [.init(value: "r", label: "Red"), .init(value: "g", label: "Green")]
+        try doc.updateField(page: 0, id: dropdown, choices)
+        choices.options = [.init(value: "One", label: ""), .init(value: "Two", label: "")]
+        choices.isMultiSelect = true
+        try doc.updateField(page: 0, id: list, choices)
+        var named = FieldChange()
+        named.name = "email"
+        named.tooltip = "Your email address"
+        named.isRequired = true
+        named.maxLength = 40
+        try doc.updateField(page: 0, id: text, named)
+
+        try doc.setText("ada@example.com", page: 0, field: text)
+        try doc.toggle(page: 0, field: check)
+        try doc.toggle(page: 0, field: second)
+        try doc.setText("g", page: 0, field: dropdown)
+        try doc.setChoices(["One", "Two"], page: 0, field: list)
+
+        let out = temporaryURL("fields.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let saved = try EngineDocument(url: out)
+        let fields = try saved.fields(page: 0)
+        #expect(fields.map(\.kind) == [.text, .checkbox, .radio, .radio, .dropdown, .listBox, .signature])
+        let email = try #require(fields.first { $0.kind == .text })
+        #expect(email.name == "email" && email.tooltip == "Your email address" && email.isRequired && email.maxLength == 40)
+        #expect(email.value == "ada@example.com")
+        #expect(fields[1].isOn && !fields[2].isOn && fields[3].isOn)
+        #expect(fields[2].name == fields[3].name && fields[2].onState != fields[3].onState)
+        #expect(fields[4].value == "g" && fields[4].options.map(\.label) == ["Red", "Green"])
+        #expect(fields[5].selected == ["One", "Two"] && fields[5].isMultiSelect)
+        #expect(Set(fields.map(\.name)).count == 6)
+        #expect(try saved.formInfo().hasFields)
+    }
+
+    @Test func namesStayUnique() throws {
+        let doc = try Corpus.open("forms.pdf")
+        let zip = try #require(try doc.fields(page: 0).first { $0.name == "zip" })
+        var change = FieldChange()
+        change.name = "name"
+        #expect(throws: EngineError.self) { try doc.updateField(page: 0, id: zip.id, change) }
+        change.name = "address.zip"
+        #expect(throws: EngineError.self) { try doc.updateField(page: 0, id: zip.id, change) }
+        change.name = "postcode"
+        try doc.updateField(page: 0, id: zip.id, change)
+        #expect(try doc.fields(page: 0).contains { $0.name == "postcode" })
+    }
+
+    @Test func moveAndDelete() throws {
+        let doc = try Corpus.open("forms.pdf")
+        let name = try #require(try doc.fields(page: 0).first { $0.name == "name" })
+        try doc.transformField(page: 0, id: name.id, by: CGAffineTransform(translationX: 10, y: -20))
+        let moved = try #require(try doc.fields(page: 0).first { $0.name == "name" })
+        #expect(abs(moved.rect.minX - name.rect.minX - 10) < 0.5)
+        try doc.deleteField(page: 0, id: name.id)
+        #expect(try !doc.fields(page: 0).contains { $0.name == "name" })
+        // Deleting every button of a group removes the group.
+        for button in try doc.fields(page: 0).filter({ $0.name == "size" }) { try doc.deleteField(page: 0, id: button.id) }
+        #expect(try !doc.fields(page: 0).contains { $0.name == "size" })
+        try doc.undo()
+        #expect(try doc.fields(page: 0).filter { $0.name == "size" }.count == 1)
+    }
+
+    @Test func combNeedsALength() throws {
+        let doc = try Corpus.open("forms.pdf")
+        let notes = try #require(try doc.fields(page: 0).first { $0.name == "pin" })
+        var change = FieldChange()
+        change.isComb = true
+        #expect(throws: EngineError.self) { try doc.updateField(page: 0, id: notes.id, change) }
+        change.maxLength = 4
+        try doc.updateField(page: 0, id: notes.id, change)
+    }
+}
+
 @Suite struct FormSecurityTests {
     @Test func readOnlyFieldsRefuseWrites() throws {
         let doc = try Corpus.open("forms.pdf")

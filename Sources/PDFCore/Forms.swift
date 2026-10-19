@@ -12,6 +12,11 @@ public struct FormField: Equatable, Sendable {
     public struct Option: Equatable, Sendable {
         public let value: String
         public let label: String
+
+        public init(value: String, label: String) {
+            self.value = value
+            self.label = label
+        }
     }
 
     public let page: Int
@@ -120,4 +125,91 @@ extension EngineDocument {
         var error = opdf_error()
         guard opdf_field_toggle(handle, Int32(page), Int32(id), &error) else { throw EngineError(error) }
     }
+}
+
+/// Changes to a field's settings: nil leaves a setting as it is.
+public struct FieldChange: Sendable {
+    public var name: String?
+    /// "" removes it.
+    public var tooltip: String?
+    public var isReadOnly: Bool?
+    public var isRequired: Bool?
+    public var isMultiline: Bool?
+    public var isPassword: Bool?
+    public var isComb: Bool?
+    public var allowsTypedChoice: Bool?
+    public var isMultiSelect: Bool?
+    /// Text: the most characters, 0 for any number.
+    public var maxLength: Int?
+    public var options: [FormField.Option]?
+
+    public init() {}
+
+    var flags: (mask: Int32, values: Int32) {
+        var mask: Int32 = 0, values: Int32 = 0
+        for (setting, bit) in [(isReadOnly, 0), (isRequired, 1), (isMultiline, 12), (isPassword, 13),
+                               (allowsTypedChoice, 18), (isMultiSelect, 21), (isComb, 24)] {
+            guard let setting else { continue }
+            mask |= 1 << bit
+            if setting { values |= 1 << bit }
+        }
+        return (mask, values)
+    }
+}
+
+extension EngineDocument {
+    /// A new field of this kind (text, checkbox, radio, dropdown, list box or
+    /// signature) with a new unique name. A radio button joins the group of
+    /// the radio button `group`, or starts its own. Returns its id.
+    @discardableResult
+    public func createField(_ kind: FormField.Kind, page: Int, rect: CGRect, joining group: Int? = nil) throws -> Int {
+        var error = opdf_error()
+        let r = opdf_rect(x0: Float(rect.minX), y0: Float(rect.minY), x1: Float(rect.maxX), y1: Float(rect.maxY))
+        let id = opdf_field_create(handle, Int32(page), Int32(kind.rawValue), r, Int32(group ?? 0), &error)
+        guard id > 0 else { throw EngineError(error) }
+        return Int(id)
+    }
+
+    public func updateField(page: Int, id: Int, _ change: FieldChange) throws {
+        var error = opdf_error()
+        let flags = change.flags
+        let values = (change.options ?? []).map { strdup($0.value) }
+        let labels = (change.options ?? []).map { strdup($0.label) }
+        defer { (values + labels).forEach { free($0) } }
+        let valuePointers = values.map { UnsafePointer<CChar>($0) }
+        let labelPointers = labels.map { UnsafePointer<CChar>($0) }
+        let ok = valuePointers.withUnsafeBufferPointer { v in
+            labelPointers.withUnsafeBufferPointer { l in
+                withOptionalCString(change.name) { name in
+                    withOptionalCString(change.tooltip) { tooltip in
+                        var spec = opdf_field_spec(name: name, tooltip: tooltip, flags_mask: flags.mask, flags: flags.values,
+                                                   max_length: Int32(change.maxLength ?? -1),
+                                                   option_count: change.options == nil ? -1 : Int32(v.count),
+                                                   option_values: v.baseAddress, option_labels: l.baseAddress)
+                        return opdf_field_update(handle, Int32(page), Int32(id), &spec, &error)
+                    }
+                }
+            }
+        }
+        guard ok else { throw EngineError(error) }
+    }
+
+    /// Moves or resizes a field's widget.
+    public func transformField(page: Int, id: Int, by transform: CGAffineTransform) throws {
+        var error = opdf_error()
+        let m = opdf_matrix(a: Float(transform.a), b: Float(transform.b), c: Float(transform.c),
+                            d: Float(transform.d), e: Float(transform.tx), f: Float(transform.ty))
+        guard opdf_field_transform(handle, Int32(page), Int32(id), m, &error) else { throw EngineError(error) }
+    }
+
+    /// Deletes a field's widget, and the field once it has none left.
+    public func deleteField(page: Int, id: Int) throws {
+        var error = opdf_error()
+        guard opdf_field_delete(handle, Int32(page), Int32(id), &error) else { throw EngineError(error) }
+    }
+}
+
+private func withOptionalCString<T>(_ string: String?, _ body: (UnsafePointer<CChar>?) -> T) -> T {
+    guard let string else { return body(nil) }
+    return string.withCString { body($0) }
 }

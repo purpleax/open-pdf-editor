@@ -1808,6 +1808,299 @@ bool opdf_field_toggle(opdf_doc *d, int page_number, int id, opdf_error *err) {
     return !(err && err->code);
 }
 
+// --- Creating and changing form fields ------------------------------------------
+
+// The document's form, made if it has none, with the fonts new fields use.
+static pdf_obj *ensure_form(fz_context *ctx, pdf_document *pdf) {
+    pdf_obj *root = pdf_dict_get(ctx, pdf_trailer(ctx, pdf), PDF_NAME(Root));
+    pdf_obj *form = pdf_dict_get(ctx, root, PDF_NAME(AcroForm));
+    if (!pdf_is_dict(ctx, form)) form = pdf_dict_put_dict(ctx, root, PDF_NAME(AcroForm), 4);
+    if (!pdf_is_array(ctx, pdf_dict_get(ctx, form, PDF_NAME(Fields)))) pdf_dict_put_array(ctx, form, PDF_NAME(Fields), 8);
+    if (!pdf_dict_get(ctx, form, PDF_NAME(DA))) pdf_dict_put_text_string(ctx, form, PDF_NAME(DA), "/Helv 0 Tf 0 g");
+    pdf_obj *dr = pdf_dict_get(ctx, form, PDF_NAME(DR));
+    if (!pdf_is_dict(ctx, dr)) dr = pdf_dict_put_dict(ctx, form, PDF_NAME(DR), 1);
+    pdf_obj *fonts = pdf_dict_get(ctx, dr, PDF_NAME(Font));
+    if (!pdf_is_dict(ctx, fonts)) fonts = pdf_dict_put_dict(ctx, dr, PDF_NAME(Font), 2);
+    const char *names[2] = { "Helv", "ZaDb" };
+    const char *bases[2] = { "Helvetica", "ZapfDingbats" };
+    for (int i = 0; i < 2; i++) {
+        if (pdf_dict_gets(ctx, fonts, names[i])) continue;
+        pdf_obj *font = pdf_add_new_dict(ctx, pdf, 4);
+        fz_try(ctx) {
+            pdf_dict_put(ctx, font, PDF_NAME(Type), PDF_NAME(Font));
+            pdf_dict_put(ctx, font, PDF_NAME(Subtype), PDF_NAME(Type1));
+            pdf_dict_put_name(ctx, font, PDF_NAME(BaseFont), bases[i]);
+            if (i == 0) pdf_dict_put(ctx, font, PDF_NAME(Encoding), PDF_NAME(WinAnsiEncoding));
+            pdf_dict_puts(ctx, fonts, names[i], font);
+        }
+        fz_always(ctx)
+            pdf_drop_obj(ctx, font);
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    }
+    return form;
+}
+
+// The field dictionary a widget belongs to: the widget itself, or its
+// parent when the widget has no name of its own (a radio group's button).
+static pdf_obj *field_holder(fz_context *ctx, pdf_obj *widget) {
+    pdf_obj *parent = pdf_dict_get(ctx, widget, PDF_NAME(Parent));
+    if (!pdf_dict_get(ctx, widget, PDF_NAME(T)) && pdf_is_dict(ctx, parent)) return parent;
+    return widget;
+}
+
+// A thin grey border, as new fields are drawn.
+static void put_field_look(fz_context *ctx, pdf_obj *obj, const char *caption) {
+    pdf_obj *mk = pdf_dict_put_dict(ctx, obj, PDF_NAME(MK), 2);
+    pdf_obj *bc = pdf_dict_put_array(ctx, mk, PDF_NAME(BC), 3);
+    for (int i = 0; i < 3; i++) pdf_array_push_real(ctx, bc, 0.6);
+    if (caption) pdf_dict_put_text_string(ctx, mk, PDF_NAME(CA), caption);
+    pdf_obj *bs = pdf_dict_put_dict(ctx, obj, PDF_NAME(BS), 1);
+    pdf_dict_put_real(ctx, bs, PDF_NAME(W), 1);
+}
+
+// A radio button's or checkbox's state names: until its appearance is made,
+// MuPDF finds the "on" state among /AP/N's keys.
+static void seed_states(fz_context *ctx, pdf_obj *obj, const char *on) {
+    pdf_obj *ap = pdf_dict_put_dict(ctx, obj, PDF_NAME(AP), 1);
+    pdf_obj *n = pdf_dict_put_dict(ctx, ap, PDF_NAME(N), 2);
+    pdf_dict_put_dict(ctx, n, PDF_NAME(Off), 0);
+    pdf_dict_puts_drop(ctx, n, on, pdf_new_dict(ctx, pdf_get_bound_document(ctx, obj), 0));
+    pdf_dict_put(ctx, obj, PDF_NAME(AS), PDF_NAME(Off));
+}
+
+int opdf_field_create(opdf_doc *d, int page_number, int type, opdf_rect rect, int group, opdf_error *err) {
+    clear_error(err);
+    int id = 0;
+    pdf_annot *annot = NULL;
+    pdf_obj *parent = NULL;
+    fz_var(id);
+    fz_var(annot);
+    fz_var(parent);
+    WITH_PAGE_OPERATION(d, page_number, "New Field", err, {
+        fz_rect r = fz_make_rect(rect.x0, rect.y0, rect.x1, rect.y1);
+        if (fz_is_empty_rect(r) || r.x1 - r.x0 > 14400 || r.y1 - r.y0 > 14400) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That field is the wrong size");
+        const char *prefix;
+        switch (type) {
+        case OPDF_FIELD_TEXT: prefix = "Text"; break;
+        case OPDF_FIELD_CHECKBOX: prefix = "Checkbox"; break;
+        case OPDF_FIELD_RADIO: prefix = "Radio"; break;
+        case OPDF_FIELD_COMBOBOX: prefix = "Dropdown"; break;
+        case OPDF_FIELD_LISTBOX: prefix = "List"; break;
+        case OPDF_FIELD_SIGNATURE: prefix = "Signature"; break;
+        default: fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a kind of field that can be made");
+        }
+        pdf_obj *form = ensure_form(ctx, pdf);
+        pdf_obj *fields = pdf_dict_get(ctx, form, PDF_NAME(Fields));
+        if (type == OPDF_FIELD_RADIO && group) {
+            pdf_annot *other = find_widget(ctx, pp, group);
+            if (pdf_widget_type(ctx, other) != PDF_WIDGET_TYPE_RADIOBUTTON) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That isn't a radio button");
+            pdf_obj *holder = field_holder(ctx, pdf_annot_obj(ctx, other));
+            if (holder == pdf_annot_obj(ctx, other)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That radio button's group can't take more buttons");
+            parent = pdf_keep_obj(ctx, holder);
+        }
+        fz_try(ctx) {
+        char name[64];
+        pdf_create_field_name(ctx, pdf, prefix, name, sizeof name);
+        annot = pdf_create_annot(ctx, pp, PDF_ANNOT_WIDGET);
+        fz_try(ctx) {
+            pdf_obj *obj = pdf_annot_obj(ctx, annot);
+            pdf_set_annot_rect(ctx, annot, r);
+            switch (type) {
+            case OPDF_FIELD_TEXT:
+                pdf_dict_put(ctx, obj, PDF_NAME(FT), PDF_NAME(Tx));
+                pdf_dict_put_text_string(ctx, obj, PDF_NAME(DA), "/Helv 0 Tf 0 g");
+                put_field_look(ctx, obj, NULL);
+                break;
+            case OPDF_FIELD_CHECKBOX:
+                pdf_dict_put(ctx, obj, PDF_NAME(FT), PDF_NAME(Btn));
+                pdf_dict_put_text_string(ctx, obj, PDF_NAME(DA), "/ZaDb 0 Tf 0 g");
+                pdf_dict_put(ctx, obj, PDF_NAME(V), PDF_NAME(Off));
+                put_field_look(ctx, obj, "4");
+                seed_states(ctx, obj, "Yes");
+                break;
+            case OPDF_FIELD_RADIO: {
+                if (!parent) {
+                    parent = pdf_add_new_dict(ctx, pdf, 5);
+                    pdf_dict_put(ctx, parent, PDF_NAME(FT), PDF_NAME(Btn));
+                    pdf_dict_put_int(ctx, parent, PDF_NAME(Ff), PDF_BTN_FIELD_IS_RADIO | PDF_BTN_FIELD_IS_NO_TOGGLE_TO_OFF);
+                    pdf_dict_put_text_string(ctx, parent, PDF_NAME(T), name);
+                    pdf_dict_put(ctx, parent, PDF_NAME(V), PDF_NAME(Off));
+                    pdf_dict_put_array(ctx, parent, PDF_NAME(Kids), 2);
+                    pdf_array_push(ctx, fields, parent);
+                }
+                pdf_obj *kids = pdf_dict_get(ctx, parent, PDF_NAME(Kids));
+                if (pdf_array_len(ctx, kids) >= OPDF_MAX_FIELD_OPTIONS) fz_throw(ctx, FZ_ERROR_LIMIT, "This group has too many buttons");
+                // Each button's own "on" state: Choice1, Choice2, ...
+                char state[32];
+                for (int k = 1; ; k++) {
+                    fz_snprintf(state, sizeof state, "Choice%d", k);
+                    bool used = false;
+                    for (int i = 0, n = pdf_array_len(ctx, kids); i < n && !used; i++)
+                        used = pdf_dict_gets(ctx, pdf_dict_getp(ctx, pdf_array_get(ctx, kids, i), "AP/N"), state) != NULL;
+                    if (!used) break;
+                }
+                pdf_dict_put(ctx, obj, PDF_NAME(Parent), parent);
+                pdf_array_push(ctx, kids, obj);
+                pdf_dict_put_text_string(ctx, obj, PDF_NAME(DA), "/ZaDb 0 Tf 0 g");
+                put_field_look(ctx, obj, "l");
+                seed_states(ctx, obj, state);
+                break;
+            }
+            case OPDF_FIELD_COMBOBOX:
+            case OPDF_FIELD_LISTBOX:
+                pdf_dict_put(ctx, obj, PDF_NAME(FT), PDF_NAME(Ch));
+                if (type == OPDF_FIELD_COMBOBOX) pdf_dict_put_int(ctx, obj, PDF_NAME(Ff), PDF_CH_FIELD_IS_COMBO);
+                pdf_dict_put_array(ctx, obj, PDF_NAME(Opt), 0);
+                pdf_dict_put_text_string(ctx, obj, PDF_NAME(DA), "/Helv 0 Tf 0 g");
+                put_field_look(ctx, obj, NULL);
+                break;
+            case OPDF_FIELD_SIGNATURE:
+                pdf_dict_put(ctx, obj, PDF_NAME(FT), PDF_NAME(Sig));
+                put_field_look(ctx, obj, NULL);
+                break;
+            }
+            if (type != OPDF_FIELD_RADIO) {
+                pdf_dict_put_text_string(ctx, obj, PDF_NAME(T), name);
+                pdf_array_push(ctx, fields, obj);
+            }
+            pdf_annot_request_synthesis(ctx, annot);
+            pdf_update_annot(ctx, annot);
+            id = annot_id(ctx, annot);
+        }
+        fz_always(ctx) {
+            pdf_drop_annot(ctx, annot);
+            annot = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+        }
+        fz_always(ctx) {
+            pdf_drop_obj(ctx, parent);
+            parent = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    if (err && err->code) id = 0;
+    return id;
+}
+
+bool opdf_field_update(opdf_doc *d, int page_number, int id, const opdf_field_spec *spec, opdf_error *err) {
+    clear_error(err);
+    pdf_obj *opt = NULL;
+    fz_var(opt);
+    WITH_PAGE_OPERATION(d, page_number, "Change Field", err, {
+        pdf_annot *w = find_widget(ctx, pp, id);
+        pdf_obj *obj = pdf_annot_obj(ctx, w);
+        pdf_obj *holder = field_holder(ctx, obj);
+        int type = pdf_widget_type(ctx, w);
+        fz_try(ctx) {
+        if (spec->name) {
+            size_t len = strlen(spec->name);
+            if (len == 0 || len > 255 || strchr(spec->name, '.')) fz_throw(ctx, FZ_ERROR_ARGUMENT, "A field's name can't be empty, longer than 255 bytes, or contain a full stop");
+            // Fields with the same name share a value, so names stay unique.
+            pdf_obj *fields = pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/AcroForm/Fields");
+            pdf_obj *same = pdf_lookup_field(ctx, fields, spec->name);
+            if (same && pdf_objcmp(ctx, same, holder)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Another field already has that name");
+            pdf_dict_put_text_string(ctx, holder, PDF_NAME(T), spec->name);
+        }
+        if (spec->tooltip) {
+            if (strlen(spec->tooltip) > OPDF_MAX_FIELD_TEXT) fz_throw(ctx, FZ_ERROR_LIMIT, "The tooltip is too long");
+            if (spec->tooltip[0]) pdf_dict_put_text_string(ctx, holder, PDF_NAME(TU), spec->tooltip);
+            else pdf_dict_del(ctx, holder, PDF_NAME(TU));
+        }
+        if (spec->max_length >= 0) {
+            if (type != PDF_WIDGET_TYPE_TEXT) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Only text fields have a length");
+            if (spec->max_length > 100000) fz_throw(ctx, FZ_ERROR_LIMIT, "That length is too long");
+            if (spec->max_length > 0) pdf_dict_put_int(ctx, holder, PDF_NAME(MaxLen), spec->max_length);
+            else pdf_dict_del(ctx, holder, PDF_NAME(MaxLen));
+        }
+        int mask = spec->flags_mask & OPDF_FIELD_SETTABLE_FLAGS;
+        if (mask) {
+            int flags = (pdf_field_flags(ctx, holder) & ~mask) | (spec->flags & mask);
+            pdf_dict_put_int(ctx, holder, PDF_NAME(Ff), flags);
+        }
+        if (type == PDF_WIDGET_TYPE_TEXT && (pdf_field_flags(ctx, holder) & PDF_TX_FIELD_IS_COMB) &&
+            pdf_text_widget_max_len(ctx, w) <= 0)
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "A field split into boxes needs a number of characters");
+        if (spec->option_count >= 0) {
+            if (type != PDF_WIDGET_TYPE_COMBOBOX && type != PDF_WIDGET_TYPE_LISTBOX) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Only dropdowns and lists have choices");
+            if (spec->option_count > OPDF_MAX_FIELD_OPTIONS || (spec->option_count > 0 && !spec->option_values))
+                fz_throw(ctx, FZ_ERROR_LIMIT, "Too many choices");
+            opt = pdf_new_array(ctx, pdf, spec->option_count);
+            for (int i = 0; i < spec->option_count; i++) {
+                const char *value = spec->option_values[i];
+                const char *label = spec->option_labels ? spec->option_labels[i] : NULL;
+                if (!value || strlen(value) > OPDF_MAX_FIELD_TEXT || (label && strlen(label) > OPDF_MAX_FIELD_TEXT))
+                    fz_throw(ctx, FZ_ERROR_ARGUMENT, "A choice is missing or too long");
+                if (label && label[0] && strcmp(label, value)) {
+                    pdf_obj *pair = pdf_array_push_array(ctx, opt, 2);
+                    pdf_array_push_text_string(ctx, pair, value);
+                    pdf_array_push_text_string(ctx, pair, label);
+                } else {
+                    pdf_array_push_text_string(ctx, opt, value);
+                }
+            }
+            pdf_dict_put(ctx, holder, PDF_NAME(Opt), opt);
+            // A value that is no longer a choice goes.
+            const char *value = field_value(ctx, holder);
+            if (value[0] && !is_option(ctx, holder, value)) {
+                pdf_dict_del(ctx, holder, PDF_NAME(V));
+                pdf_dict_del(ctx, holder, PDF_NAME(I));
+            }
+        }
+        pdf_annot_request_synthesis(ctx, w);
+        }
+        fz_always(ctx) {
+            pdf_drop_obj(ctx, opt);
+            opt = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_field_transform(opdf_doc *d, int page_number, int id, opdf_matrix matrix, opdf_error *err) {
+    clear_error(err);
+    fz_matrix m = { matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f };
+    WITH_PAGE_OPERATION(d, page_number, "Move Field", err, {
+        pdf_annot *w = find_widget(ctx, pp, id);
+        fz_rect r = fz_transform_rect(pdf_annot_rect(ctx, w), m);
+        if (fz_is_empty_rect(r) || r.x1 - r.x0 > 14400 || r.y1 - r.y0 > 14400) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That field is the wrong size");
+        pdf_set_annot_rect(ctx, w, r);
+        pdf_annot_request_synthesis(ctx, w);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_field_delete(opdf_doc *d, int page_number, int id, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Delete Field", err, {
+        pdf_annot *w = find_widget(ctx, pp, id);
+        pdf_obj *obj = pdf_annot_obj(ctx, w);
+        pdf_obj *parent = pdf_keep_obj(ctx, pdf_dict_get(ctx, obj, PDF_NAME(Parent)));
+        fz_try(ctx) {
+            pdf_delete_annot(ctx, pp, w);
+            // A group left with no buttons goes too.
+            pdf_obj *fields = pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/AcroForm/Fields");
+            if (parent && pdf_array_len(ctx, pdf_dict_get(ctx, parent, PDF_NAME(Kids))) == 0) {
+                for (int i = 0, n = pdf_array_len(ctx, fields); i < n; i++)
+                    if (!pdf_objcmp(ctx, pdf_array_get(ctx, fields, i), parent)) {
+                        pdf_array_delete(ctx, fields, i);
+                        break;
+                    }
+            }
+        }
+        fz_always(ctx)
+            pdf_drop_obj(ctx, parent);
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    return !(err && err->code);
+}
+
 // --- Undo, saving, flattening -----------------------------------------------
 
 static bool journal_query(opdf_doc *d, int (*query)(fz_context *, pdf_document *)) {
