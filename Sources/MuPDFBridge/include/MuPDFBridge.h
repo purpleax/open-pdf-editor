@@ -374,6 +374,28 @@ bool opdf_image_delete(opdf_doc *doc, int page, int op, opdf_error *err);
 // Draws another image instead, fitted inside the same box.
 bool opdf_image_replace(opdf_doc *doc, int page, int op, const unsigned char *data, size_t len, opdf_error *err);
 
+// Text. A run is one text operation (opdf_text_run.op). Each edit is one
+// undoable step. New characters are drawn with the run's own font when it
+// has their glyphs, and otherwise with `font_data` (an sfnt font file:
+// TrueType or OpenType), embedded with only the glyphs used.
+#define OPDF_MAX_EDIT_TEXT 10000          // bytes of new text
+#define OPDF_MAX_FONT_BYTES (50 << 20)
+
+typedef struct {
+    const char *text;           // the run's new text (UTF-8); NULL keeps it as it is
+    const unsigned char *font_data;
+    size_t font_len;
+    bool whole_font;            // draw the whole run in font_data's font
+    float size_scale;           // > 0: the run's size times this
+    int color_n;                // 1 grey or 3 RGB: a new colour; 0 keeps it
+    float color[3];
+} opdf_text_edit;
+
+bool opdf_text_run_edit(opdf_doc *doc, int page, int op, const opdf_text_edit *edit, opdf_error *err);
+// The characters of `text` (UTF-8) that run `op`'s font can't draw, as a
+// new UTF-8 string (empty when it can draw them all), to free with opdf_free.
+char *opdf_text_run_missing(opdf_doc *doc, int page, int op, const char *text, opdf_error *err);
+
 // Writes the page's content again through the editing machinery with no
 // change (for tests: what it draws must not change). One undoable step.
 bool opdf_page_content_rewrite(opdf_doc *doc, int page, opdf_error *err);

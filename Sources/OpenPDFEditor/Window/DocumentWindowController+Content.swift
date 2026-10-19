@@ -37,9 +37,10 @@ extension DocumentWindowController {
         LinkTargetSheet.ask(on: window, pageCount: viewer.model.pageCount, current: nil, title: "Where does the link go?") { [weak self] target in
             guard let self, let target, let viewer = self.viewer else { return }
             do {
-                viewer.pagesView.selectedContent = try viewer.content.createLink(page: page, rect: rect, to: target)
+                let ref = try viewer.content.createLink(page: page, rect: rect, to: target)
                 viewer.pagesView.contentTool = .select
                 self.contentBar.setTool(.select)
+                viewer.pagesView.selectedContent = ref
             } catch {
                 NSAlert(error: error).beginSheetModal(for: window)
             }
@@ -57,9 +58,10 @@ extension DocumentWindowController {
                 r.size = CGSize(width: width, height: width * image.size.height / max(image.size.width, 1))
             }
             do {
-                viewer.pagesView.selectedContent = try viewer.content.addImage(image, page: page, rect: r)
+                let ref = try viewer.content.addImage(image, page: page, rect: r)
                 viewer.pagesView.contentTool = .select
                 self.contentBar.setTool(.select)
+                viewer.pagesView.selectedContent = ref
             } catch {
                 NSAlert(error: error).beginSheetModal(for: window)
             }

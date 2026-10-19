@@ -215,7 +215,7 @@ extension EngineDocument {
     }
 }
 
-private func withOptionalCString<T>(_ string: String?, _ body: (UnsafePointer<CChar>?) -> T) -> T {
+func withOptionalCString<T>(_ string: String?, _ body: (UnsafePointer<CChar>?) -> T) -> T {
     guard let string else { return body(nil) }
     return string.withCString { body($0) }
 }

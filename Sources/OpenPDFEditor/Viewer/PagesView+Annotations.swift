@@ -11,6 +11,7 @@ extension PagesView {
 
     override func mouseDown(with event: NSEvent) {
         fieldEditor?.finish()
+        textEditor?.finish()
         window?.makeFirstResponder(self)
         if editingFields {
             fieldMouseDown(with: event)

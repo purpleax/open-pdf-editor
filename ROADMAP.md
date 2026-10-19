@@ -137,7 +137,9 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [ ] Headers, footers, watermarks and page numbers
 - [x] Links
   - Edit › Edit Content (⌥⌘E) shows the content bar. With the Link tool, drag out an area and choose a web or email address (http, https, mailto) or a page; links are outlined, and are selected, moved, resized, retargeted (inspector) and deleted like annotations. Each change is one undoable step. MuPDF's pdf_set_link_rect doesn't map page space to PDF space, so the bridge writes /Rect itself.
-- [ ] Edit text within a line: characters, font, size and colour
+- [x] Edit text within a line: characters, font, size and colour
+  - Edit Content's Text tool: click a text run (one text operation of the page's content) to select it; double-click, Return or Edit Text in the inspector to type over it in place. The inspector changes its font (font panel), size and colour (when its fill is grey, RGB or CMYK). New characters use the run's own font when its glyphs are really there; when they aren't, the whole run is drawn in a matching system font (the same font if installed), embedded with only the glyphs used. Text after the edit in the same line of operations moves with it; other text keeps its place.
+  - Not editable, and the inspector says why: Type3 text, vertical text, invisible text (OCR layers), and text inside Form XObjects (not listed). Replaced text stays in the file's earlier revision (incremental saves).
 - [x] Welcome window with New PDF and Open…, and File › New (asked for during the phase)
 - [x] Edit metadata
   - Title, Author, Subject and Keywords are edited in the inspector (one undoable step each), and ModDate is set. A file with XMP metadata gets a new XMP packet to match, keeping its PDF/A identification.

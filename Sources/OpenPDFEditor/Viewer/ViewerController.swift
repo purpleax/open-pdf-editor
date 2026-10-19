@@ -570,6 +570,14 @@ final class ViewerController: NSViewController, PagesViewDelegate {
         onMakeLink?(rect, page)
     }
 
+    func pagesView(_ view: PagesView, contentProblem message: String) {
+        guard let window = view.window else { return NSSound.beep() }
+        let alert = NSAlert()
+        alert.messageText = "The text couldn’t be changed."
+        alert.informativeText = message
+        alert.beginSheetModal(for: window)
+    }
+
     func pagesView(_ view: PagesView, makeImageIn rect: CGRect, onPage page: Int) {
         onMakeImage?(rect, page)
     }

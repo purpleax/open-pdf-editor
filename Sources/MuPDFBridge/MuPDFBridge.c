@@ -1617,15 +1617,32 @@ struct content_proc {
     int chars_left;
     // Rewriting: the operation to replace, and what to draw instead.
     int target_text, target_image;
-    void (*emit_text)(fz_context *ctx, content_proc *p, void *arg);
+    // array (TJ) or str/len (Tj, ' and "): the operation being replaced.
+    void (*emit_text)(fz_context *ctx, content_proc *p, pdf_obj *array, const char *str, size_t len, void *arg);
     void (*emit_image)(fz_context *ctx, content_proc *p, const char *name, fz_image *image, void *arg);
     // Called at the end of the content, with the graphics state balanced.
     void (*emit_end)(fz_context *ctx, content_proc *p, void *arg);
     void *arg;
+    // The state in effect at one text operation (recording).
+    int probe_op;
+    struct run_probe *probe;
 };
+
 
 #define CHAIN(p) ((p)->out)
 #define G(p) (&(p)->gs[(p)->top])
+
+typedef struct run_probe {
+    pdf_font_desc *font;   // kept
+    bool found;
+} run_probe;
+
+static void probe_text_op(fz_context *ctx, content_proc *p) {
+    if (p->probe && !p->probe->found && p->text_ops == p->probe_op && G(p)->text.font) {
+        p->probe->font = pdf_keep_font(ctx, G(p)->text.font);
+        p->probe->found = true;
+    }
+}
 
 static void cp_q(fz_context *ctx, pdf_processor *proc) {
     content_proc *p = (content_proc *)proc;
@@ -1951,8 +1968,9 @@ static void show_text(fz_context *ctx, content_proc *p, pdf_obj *array, const un
 
 static void cp_TJ(fz_context *ctx, pdf_processor *proc, pdf_obj *array) {
     content_proc *p = (content_proc *)proc;
+    probe_text_op(ctx, p);
     if (text_op_is_target(p)) {
-        p->emit_text(ctx, p, p->arg);
+        p->emit_text(ctx, p, array, NULL, 0, p->arg);
     } else {
         show_text(ctx, p, array, NULL, 0);
         if (CHAIN(p)) CHAIN(p)->op_TJ(ctx, CHAIN(p), array);
@@ -1962,7 +1980,8 @@ static void cp_TJ(fz_context *ctx, pdf_processor *proc, pdf_obj *array) {
 
 static void cp_Tj(fz_context *ctx, pdf_processor *proc, char *str, size_t len) {
     content_proc *p = (content_proc *)proc;
-    if (text_op_is_target(p)) p->emit_text(ctx, p, p->arg);
+    probe_text_op(ctx, p);
+    if (text_op_is_target(p)) p->emit_text(ctx, p, NULL, str, len, p->arg);
     else {
         show_text(ctx, p, NULL, (unsigned char *)str, len);
         if (CHAIN(p)) CHAIN(p)->op_Tj(ctx, CHAIN(p), str, len);
@@ -1973,9 +1992,10 @@ static void cp_Tj(fz_context *ctx, pdf_processor *proc, char *str, size_t len) {
 static void cp_squote(fz_context *ctx, pdf_processor *proc, char *str, size_t len) {
     content_proc *p = (content_proc *)proc;
     pdf_tos_newline(&p->tos, G(p)->text.leading);
+    probe_text_op(ctx, p);
     if (text_op_is_target(p)) {
         if (CHAIN(p)) CHAIN(p)->op_Tstar(ctx, CHAIN(p));
-        p->emit_text(ctx, p, p->arg);
+        p->emit_text(ctx, p, NULL, str, len, p->arg);
     } else {
         show_text(ctx, p, NULL, (unsigned char *)str, len);
         if (CHAIN(p)) CHAIN(p)->op_squote(ctx, CHAIN(p), str, len);
@@ -1988,13 +2008,14 @@ static void cp_dquote(fz_context *ctx, pdf_processor *proc, float aw, float ac, 
     G(p)->text.word_space = aw;
     G(p)->text.char_space = ac;
     pdf_tos_newline(&p->tos, G(p)->text.leading);
+    probe_text_op(ctx, p);
     if (text_op_is_target(p)) {
         if (CHAIN(p)) {
             CHAIN(p)->op_Tw(ctx, CHAIN(p), aw);
             CHAIN(p)->op_Tc(ctx, CHAIN(p), ac);
             CHAIN(p)->op_Tstar(ctx, CHAIN(p));
         }
-        p->emit_text(ctx, p, p->arg);
+        p->emit_text(ctx, p, NULL, str, len, p->arg);
     } else {
         show_text(ctx, p, NULL, (unsigned char *)str, len);
         if (CHAIN(p)) CHAIN(p)->op_dquote(ctx, CHAIN(p), aw, ac, str, len);
@@ -2085,6 +2106,7 @@ static content_proc *new_content_proc(fz_context *ctx, pdf_document *doc, pdf_pa
     set_fill(p, 1, black);
     p->target_text = -1;
     p->target_image = -1;
+    p->probe_op = -1;
     p->chars_left = OPDF_MAX_PAGE_CHARS;
     fz_rect mediabox;
     pdf_page_transform(ctx, page, &mediabox, &p->page_ctm);
@@ -2389,6 +2411,350 @@ bool opdf_image_replace(opdf_doc *d, int page_number, int op, const unsigned cha
             fz_rethrow(ctx);
     });
     return !(err && err->code);
+}
+
+// --- Editing text ---------------------------------------------------------------
+
+// The code (1 to 4 bytes) that draws `unicode` in this font, if it has a
+// glyph for it: the font's encoding is searched (at most 70,000 codes),
+// mapping each code through ToUnicode (or the built-in table) and checking
+// the glyph exists and, unless it's a space, has an outline (subset fonts
+// keep codes for glyphs they no longer have).
+static int encode_in_font(fz_context *ctx, pdf_font_desc *font, int unicode, unsigned char out[4]) {
+    if (!font || !font->font || font->font->t3procs || font->wmode) return 0;
+    pdf_cmap *cmap = font->encoding;
+    int budget = 70000;
+    for (int r = 0; cmap && r < cmap->codespace_len; r++) {
+        int n = cmap->codespace[r].n;
+        if (n < 1 || n > 4) continue;
+        unsigned int high = cmap->codespace[r].high;
+        for (unsigned int code = cmap->codespace[r].low; code <= high && budget-- > 0 && code != UINT_MAX; code++) {
+            int cid = pdf_lookup_cmap(cmap, code);
+            if (cid < 0) continue;
+            int ucs[PDF_MRANGE_CAP];
+            int len = font->to_unicode ? pdf_lookup_cmap_full(font->to_unicode, cid, ucs) : 0;
+            if (len == 0 && (size_t)cid < font->cid_to_ucs_len) {
+                ucs[0] = font->cid_to_ucs[cid];
+                len = 1;
+            }
+            if (len != 1 || ucs[0] != unicode) continue;
+            int gid = pdf_font_cid_to_gid(ctx, font, cid);
+            if (unicode != ' ' && (gid <= 0 || fz_is_empty_rect(fz_bound_glyph(ctx, font->font, gid, fz_identity)))) continue;
+            for (int i = 0; i < n; i++) out[i] = (unsigned char)(code >> (8 * (n - 1 - i)));
+            return n;
+        }
+    }
+    return 0;
+}
+
+// The new text, decoded, with how each character is drawn.
+typedef struct {
+    int count;
+    int *unicode;
+    int *len;                 // bytes of its code in the run's font, or 0: the fallback font
+    unsigned char (*code)[4];
+    int *gid;                 // in the fallback font
+} text_plan;
+
+static void drop_plan(fz_context *ctx, text_plan *t) {
+    fz_free(ctx, t->unicode);
+    fz_free(ctx, t->len);
+    fz_free(ctx, t->code);
+    fz_free(ctx, t->gid);
+    memset(t, 0, sizeof *t);
+}
+
+static void plan_text(fz_context *ctx, pdf_font_desc *font, const char *utf8, bool whole_font, text_plan *t) {
+    size_t bytes = strlen(utf8);
+    if (bytes > OPDF_MAX_EDIT_TEXT) fz_throw(ctx, FZ_ERROR_LIMIT, "That text is too long for one edit");
+    int capacity = fz_utflen(utf8);
+    t->unicode = fz_malloc_array(ctx, capacity + 1, int);
+    t->len = fz_malloc_array(ctx, capacity + 1, int);
+    t->code = fz_malloc(ctx, (size_t)(capacity + 1) * 4);
+    t->gid = fz_malloc_array(ctx, capacity + 1, int);
+    for (const char *s = utf8; *s && t->count < capacity; ) {
+        int c;
+        s += fz_chartorune(&c, s);
+        if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+        if (c < 0x20 || (c >= 0x7f && c < 0xa0)) continue;
+        t->unicode[t->count] = c;
+        t->len[t->count] = whole_font ? 0 : encode_in_font(ctx, font, c, t->code[t->count]);
+        t->gid[t->count] = 0;
+        t->count++;
+    }
+}
+
+// A ToUnicode CMap for Identity-H codes (glyph ids).
+static fz_buffer *identity_to_unicode(fz_context *ctx, const int *gids, const int *unicodes, int count) {
+    fz_buffer *buf = fz_new_buffer(ctx, 512);
+    fz_try(ctx) {
+        fz_append_string(ctx, buf,
+            "/CIDInit /ProcSet findresource begin\n12 dict begin\nbegincmap\n"
+            "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def\n"
+            "/CMapName /Adobe-Identity-UCS def\n/CMapType 2 def\n"
+            "1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n");
+        for (int start = 0; start < count; start += 100) {
+            int n = count - start < 100 ? count - start : 100;
+            fz_append_printf(ctx, buf, "%d beginbfchar\n", n);
+            for (int i = start; i < start + n; i++) {
+                int u = unicodes[i];
+                if (u > 0xffff) {
+                    u -= 0x10000;
+                    fz_append_printf(ctx, buf, "<%04x> <%04x%04x>\n", gids[i], 0xd800 + (u >> 10), 0xdc00 + (u & 0x3ff));
+                } else {
+                    fz_append_printf(ctx, buf, "<%04x> <%04x>\n", gids[i], u);
+                }
+            }
+            fz_append_string(ctx, buf, "endbfchar\n");
+        }
+        fz_append_string(ctx, buf, "endcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
+    }
+    fz_catch(ctx) {
+        fz_drop_buffer(ctx, buf);
+        fz_rethrow(ctx);
+    }
+    return buf;
+}
+
+// Embeds the font in `data` for the characters the plan draws with it:
+// subset to those glyphs, with a ToUnicode for them, as a Type0
+// Identity-H font in the page's resources. Fills in the plan's glyph ids.
+static void add_fallback_font(fz_context *ctx, pdf_document *pdf, pdf_page *page, const unsigned char *data, size_t len,
+                              text_plan *t, char name[32]) {
+    if (!data || len < 12 || len > OPDF_MAX_FONT_BYTES) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No font was given for characters the text's own font doesn't have");
+    fz_buffer *buf = NULL, *subset = NULL, *tounicode = NULL;
+    fz_font *full = NULL, *small = NULL;
+    pdf_obj *font = NULL;
+    int *gids = NULL, *unis = NULL;
+    fz_var(buf);
+    fz_var(subset);
+    fz_var(tounicode);
+    fz_var(full);
+    fz_var(small);
+    fz_var(font);
+    fz_var(gids);
+    fz_var(unis);
+    fz_try(ctx) {
+        buf = fz_new_buffer_from_copied_data(ctx, data, len);
+        full = fz_new_font_from_buffer(ctx, NULL, buf, 0, 0);
+        if (fz_font_flags(full)->never_embed) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The font's licence doesn't allow it to be embedded");
+        // Distinct glyphs, with glyph 0 first (the subsetter keeps numbering).
+        gids = fz_malloc_array(ctx, t->count + 1, int);
+        unis = fz_malloc_array(ctx, t->count + 1, int);
+        int n = 0;
+        gids[n++] = 0;
+        unis[0] = 0;
+        for (int i = 0; i < t->count; i++) {
+            if (t->len[i]) continue;
+            int gid = fz_encode_character(ctx, full, t->unicode[i]);
+            if (gid <= 0 && t->unicode[i] != ' ') {
+                char utf[8] = { 0 };
+                fz_runetochar(utf, t->unicode[i]);
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "No font here has the character “%s”", utf);
+            }
+            t->gid[i] = gid;
+            bool seen = false;
+            for (int j = 0; j < n && !seen; j++) seen = gids[j] == gid;
+            if (!seen) {
+                gids[n] = gid;
+                unis[n] = t->unicode[i];
+                n++;
+            }
+        }
+        subset = fz_subset_ttf_for_gids(ctx, buf, gids, n, 0, 1);
+        small = fz_new_font_from_buffer(ctx, full->name, subset, 0, 0);
+        font = pdf_add_cid_font(ctx, pdf, small);
+        tounicode = identity_to_unicode(ctx, gids + 1, unis + 1, n - 1);
+        pdf_dict_put_drop(ctx, font, PDF_NAME(ToUnicode), pdf_add_stream(ctx, pdf, tounicode, NULL, 0));
+        pdf_obj *fonts = own_resources(ctx, pdf, page, PDF_NAME(Font));
+        new_resource_name(ctx, fonts, "OPDFFn", name);
+        pdf_dict_puts(ctx, fonts, name, font);
+    }
+    fz_always(ctx) {
+        fz_drop_buffer(ctx, buf);
+        fz_drop_buffer(ctx, subset);
+        fz_drop_buffer(ctx, tounicode);
+        fz_drop_font(ctx, full);
+        fz_drop_font(ctx, small);
+        pdf_drop_obj(ctx, font);
+        fz_free(ctx, gids);
+        fz_free(ctx, unis);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+typedef struct {
+    const opdf_text_edit *edit;
+    int op;                   // the text operation to change
+    text_plan plan;           // count 0 with no new text: the operation is drawn as it was
+    bool keep;                // draw the original operation (style changes only)
+    char fallback[32];        // the fallback font's resource name, if used
+    bool found;
+} text_edit_state;
+
+static void emit_color(fz_context *ctx, content_proc *p, int n, const float *c) {
+    if (n == 1) CHAIN(p)->op_g(ctx, CHAIN(p), c[0]);
+    else if (n == 3) CHAIN(p)->op_rg(ctx, CHAIN(p), c[0], c[1], c[2]);
+    else if (n == 4) CHAIN(p)->op_k(ctx, CHAIN(p), c[0], c[1], c[2], c[3]);
+}
+
+static void emit_edited_text(fz_context *ctx, content_proc *p, pdf_obj *array, const char *str, size_t len, void *arg) {
+    text_edit_state *e = arg;
+    const opdf_text_edit *edit = e->edit;
+    e->found = true;
+    content_gstate *g = G(p);
+    if (edit->color_n && !g->fill_n) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text's colour can't be changed here");
+    if (!g->font_name[0]) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text's font can't be found");
+    float size = g->text.size * (edit->size_scale > 0 ? edit->size_scale : 1);
+    if (edit->color_n) emit_color(ctx, p, edit->color_n, edit->color);
+    if (size != g->text.size) CHAIN(p)->op_Tf(ctx, CHAIN(p), g->font_name, NULL, size);
+    if (e->keep) {
+        if (array) CHAIN(p)->op_TJ(ctx, CHAIN(p), array);
+        else CHAIN(p)->op_Tj(ctx, CHAIN(p), (char *)str, len);
+    } else {
+        // Runs of characters in the same font, each one Tj.
+        text_plan *t = &e->plan;
+        unsigned char *bytes = fz_malloc(ctx, (size_t)t->count * 4 + 1);
+        fz_try(ctx) {
+            int i = 0;
+            bool in_fallback = false;
+            while (i < t->count) {
+                bool fallback = t->len[i] == 0;
+                if (fallback != in_fallback) {
+                    CHAIN(p)->op_Tf(ctx, CHAIN(p), fallback ? e->fallback : g->font_name, NULL, size);
+                    in_fallback = fallback;
+                }
+                size_t n = 0;
+                for (; i < t->count && (t->len[i] == 0) == fallback; i++) {
+                    if (fallback) {
+                        bytes[n++] = (unsigned char)(t->gid[i] >> 8);
+                        bytes[n++] = (unsigned char)t->gid[i];
+                    } else {
+                        memcpy(bytes + n, t->code[i], (size_t)t->len[i]);
+                        n += (size_t)t->len[i];
+                    }
+                }
+                CHAIN(p)->op_Tj(ctx, CHAIN(p), (char *)bytes, n);
+            }
+            if (in_fallback) CHAIN(p)->op_Tf(ctx, CHAIN(p), g->font_name, NULL, size);
+        }
+        fz_always(ctx)
+            fz_free(ctx, bytes);
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    }
+    if (size != g->text.size) CHAIN(p)->op_Tf(ctx, CHAIN(p), g->font_name, NULL, g->text.size);
+    if (edit->color_n) emit_color(ctx, p, g->fill_n, g->fill);
+}
+
+static void configure_text_edit(content_proc *p, void *arg) {
+    text_edit_state *e = arg;
+    p->emit_text = emit_edited_text;
+    p->target_text = e->op;
+    p->arg = e;
+}
+
+// The run's font and recorded text, from a recording pass.
+static opdf_text_run *find_run(fz_context *ctx, pdf_document *pdf, pdf_page *page, int op, opdf_page_content *content, run_probe *probe) {
+    content_proc *p = new_content_proc(ctx, pdf, page, NULL);
+    fz_try(ctx) {
+        p->record = content;
+        p->probe = probe;
+        p->probe_op = op;
+        process_page_content(ctx, pdf, page, p);
+    }
+    fz_always(ctx)
+        pdf_drop_processor(ctx, &p->super);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+    for (int i = 0; i < content->run_count; i++)
+        if (content->runs[i].op == op) return &content->runs[i];
+    fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such text");
+}
+
+bool opdf_text_run_edit(opdf_doc *d, int page_number, int op, const opdf_text_edit *edit, opdf_error *err) {
+    clear_error(err);
+    opdf_page_content content = { 0 };
+    run_probe probe = { 0 };
+    text_edit_state state = { 0 };
+    WITH_PAGE_OPERATION(d, page_number, "Edit Text", err, {
+        fz_try(ctx) {
+            opdf_text_run *run = find_run(ctx, pdf, pp, op, &content, &probe);
+            if (run->not_editable != OPDF_RUN_EDITABLE) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text can't be edited here");
+            if (!probe.found) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text's font can't be found");
+            if (edit->size_scale < 0 || edit->size_scale > 100) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That size is out of range");
+            if (edit->color_n != 0 && edit->color_n != 1 && edit->color_n != 3) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That colour isn't grey or RGB");
+            state.edit = edit;
+            state.keep = !edit->text && !edit->whole_font;
+            if (!state.keep) {
+                plan_text(ctx, probe.font, edit->text ? edit->text : run->text, edit->whole_font, &state.plan);
+                bool needs_fallback = false;
+                for (int i = 0; i < state.plan.count; i++) needs_fallback |= state.plan.len[i] == 0;
+                if (needs_fallback) add_fallback_font(ctx, pdf, pp, edit->font_data, edit->font_len, &state.plan, state.fallback);
+            }
+            state.op = op;
+            rewrite_page_content(ctx, pdf, pp, configure_text_edit, &state);
+            if (!state.found) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such text");
+        }
+        fz_always(ctx) {
+            drop_plan(ctx, &state.plan);
+            pdf_drop_font(ctx, probe.font);
+            probe.font = NULL;
+            opdf_page_content_free(&content);
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    return !(err && err->code);
+}
+
+char *opdf_text_run_missing(opdf_doc *d, int page_number, int op, const char *text, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = d->ctx;
+    pdf_page *page = NULL;
+    opdf_page_content content = { 0 };
+    run_probe probe = { 0 };
+    text_plan plan = { 0 };
+    fz_buffer *out = NULL;
+    char *result = NULL;
+    fz_var(page);
+    fz_var(out);
+    fz_var(result);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        page = load_pdf_page(ctx, d->doc, page_number);
+        find_run(ctx, pdf, page, op, &content, &probe);
+        if (!probe.found) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text's font can't be found");
+        plan_text(ctx, probe.font, text ? text : "", false, &plan);
+        out = fz_new_buffer(ctx, 16);
+        for (int i = 0; i < plan.count; i++) {
+            if (plan.len[i]) continue;
+            char utf[8];
+            fz_append_data(ctx, out, utf, (size_t)fz_runetochar(utf, plan.unicode[i]));
+        }
+        fz_terminate_buffer(ctx, out);
+        unsigned char *data;
+        fz_buffer_storage(ctx, out, &data);
+        result = strdup((const char *)data);
+        if (!result) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+    }
+    fz_always(ctx) {
+        drop_plan(ctx, &plan);
+        pdf_drop_font(ctx, probe.font);
+        opdf_page_content_free(&content);
+        fz_drop_buffer(ctx, out);
+        fz_drop_page(ctx, (fz_page *)page);
+    }
+    fz_catch(ctx) {
+        set_error(err, ctx);
+        free(result);
+        result = NULL;
+    }
+    unlock_doc(d);
+    return result;
 }
 
 bool opdf_page_content_rewrite(opdf_doc *d, int page_number, opdf_error *err) {

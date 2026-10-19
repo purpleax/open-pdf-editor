@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 import PDFCore
 import Testing
@@ -264,5 +265,110 @@ import Testing
         #expect(throws: EngineError.self) { try doc.addImage(fake, page: 0, rect: CGRect(x: 0, y: 0, width: 10, height: 10)) }
         #expect(throws: EngineError.self) { try doc.deleteImage(page: 0, op: 9) }
         #expect(throws: EngineError.self) { try doc.setImageRect(page: 0, op: 0, rect: .zero) }
+    }
+}
+
+@Suite struct TextEditingTests {
+    private func temporaryURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
+    }
+
+    private func run(_ doc: EngineDocument, _ text: String, page: Int = 0) throws -> TextRun {
+        try #require(try doc.content(page: page).runs.first { $0.text == text })
+    }
+
+    @Test func replaceTextInItsOwnFont() throws {
+        let doc = try Corpus.open("content.pdf")
+        let hello = try run(doc, "Hello world")
+        let kerning = try run(doc, "Kerning")
+        #expect(try doc.missingCharacters(in: "Hello there, café", page: 0, op: hello.op) == "")
+        try doc.editText(page: 0, op: hello.op, text: "Hello there, café")
+        let edited = try run(doc, "Hello there, café")
+        #expect(edited.op == hello.op && abs(edited.rect.minX - hello.rect.minX) < 0.5 && abs(edited.size - hello.size) < 0.1)
+        #expect(edited.rect.width > hello.rect.width)
+        #expect(try doc.text(page: 0).string.contains("Hello there, café"))
+        // Other operations keep their place.
+        #expect(try run(doc, "Kerning").rect == kerning.rect)
+        try doc.undo()
+        #expect(try doc.content(page: 0).runs.contains { $0.text == "Hello world" })
+    }
+
+    @Test func fallbackFontForMissingCharacters() throws {
+        let doc = try Corpus.open("content.pdf")
+        let hello = try run(doc, "Hello world")
+        let text = "Hello Ωμέγα"
+        let missing = try doc.missingCharacters(in: text, page: 0, op: hello.op)
+        #expect(missing == "Ωμέγα")
+        let font = try #require(FontFile.fallback(for: hello, covering: missing))
+        try doc.editText(page: 0, op: hello.op, text: text, font: try FontFile.data(for: font))
+        #expect(try doc.text(page: 0).string.contains(text))
+        // The text is drawn where it was.
+        let edited = try #require(try doc.content(page: 0).runs.first { $0.op == hello.op })
+        #expect(abs(edited.rect.minX - hello.rect.minX) < 0.5)
+        let pixels = try Pixels(doc.renderPage(0, bounds: try doc.pageBounds()[0], scale: 1))
+        var ink = 0
+        for x in Int(edited.rect.midX)..<Int(edited.rect.maxX) {
+            for y in Int(edited.rect.minY)..<Int(edited.rect.maxY) where pixels.rgb(x, y)[0] < 100 { ink += 1 }
+        }
+        #expect(ink > 20, "the Greek letters are drawn")
+        // Only the glyphs used are embedded.
+        let source = Corpus.root.appendingPathComponent("content.pdf")
+        let out = temporaryURL("fallback.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let grown = try Data(contentsOf: out).count - Data(contentsOf: source).count
+        #expect(grown < 150_000, "the file grew by \(grown) bytes")
+        #expect(try EngineDocument(url: out).text(page: 0).string.contains(text))
+    }
+
+    @Test func cidFontText() throws {
+        let doc = try Corpus.open("content.pdf")
+        let wide = try run(doc, "Wide text")
+        try doc.editText(page: 0, op: wide.op, text: "Wider text!")
+        #expect(try doc.content(page: 0).runs.contains { $0.text == "Wider text!" })
+        #expect(try doc.text(page: 0).string.contains("Wider text!"))
+    }
+
+    @Test func sizeColourAndFont() throws {
+        let doc = try Corpus.open("content.pdf")
+        let kerning = try run(doc, "Kerning")
+        try doc.editText(page: 0, op: kerning.op, sizeScale: 2, color: PDFColor(red: 0, green: 0, blue: 1))
+        let bigger = try run(doc, "Kerning")
+        #expect(abs(bigger.size - kerning.size * 2) < 0.1)
+        #expect(bigger.color == PDFColor(red: 0, green: 0, blue: 1))
+        // The colour and size after it are as they were.
+        let after = try #require(try doc.content(page: 0).runs.first { $0.op == kerning.op + 1 })
+        #expect(after.color == PDFColor(red: 0, green: 0, blue: 0) && abs(after.size - 18) < 0.1)
+
+        let menlo = CTFontCreateWithName("Menlo-Regular" as CFString, 12, nil)
+        let hello = try run(doc, "Hello world")
+        try doc.editText(page: 0, op: hello.op, font: try FontFile.data(for: menlo), wholeFont: true)
+        let changed = try run(doc, "Hello world")
+        #expect(changed.fontName.contains("Menlo"), "font \(changed.fontName) mono \(changed.isMonospaced)")
+    }
+
+    @Test func refusesWhatItShould() throws {
+        let doc = try Corpus.open("content.pdf")
+        let type3 = try run(doc, "aaa")
+        #expect(throws: EngineError.self) { try doc.editText(page: 0, op: type3.op, text: "bbb") }
+        let hello = try run(doc, "Hello world")
+        #expect(throws: EngineError.self) { try doc.editText(page: 0, op: hello.op, text: "Ω") }   // no font given
+        #expect(throws: EngineError.self) { try doc.editText(page: 0, op: 999, text: "x") }
+        #expect(throws: EngineError.self) { try doc.editText(page: 0, op: hello.op, text: String(repeating: "x", count: 20_000)) }
+        #expect(throws: EngineError.self) { try doc.editText(page: 0, op: hello.op, font: Data("not a font".utf8), wholeFont: true) }
+        #expect(!doc.canUndo)
+    }
+
+    @Test func signedDocumentsStayIncremental() throws {
+        let source = Corpus.root.appendingPathComponent("signed.pdf")
+        let original = try Data(contentsOf: source)
+        let doc = try EngineDocument(url: source)
+        let first = try #require(try doc.content(page: 0).runs.first)
+        try doc.editText(page: 0, op: first.op, text: "Changed")
+        let out = temporaryURL("signed.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let saved = try Data(contentsOf: out)
+        #expect(saved.prefix(original.count) == original)
     }
 }

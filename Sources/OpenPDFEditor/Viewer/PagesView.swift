@@ -50,6 +50,8 @@ protocol PagesViewDelegate: AnyObject {
     func pagesViewCropModeDidChange(_ view: PagesView)
     /// The selected page content changed (while editing content).
     func pagesView(_ view: PagesView, didSelectContent content: ContentRef?)
+    /// Something in Edit Content can't be done; tell the person why.
+    func pagesView(_ view: PagesView, contentProblem message: String)
     /// A link's area was dragged out: ask where it goes, then make it.
     func pagesView(_ view: PagesView, makeLinkIn rect: CGRect, onPage page: Int)
     /// An image's area was dragged out (or a point clicked, with an empty
@@ -102,6 +104,7 @@ final class PagesView: NSView, NSMenuItemValidation {
         didSet {
             guard editingContent != oldValue else { return }
             fieldEditor?.finish()
+            textEditor?.finish()
             contentGesture = .none
             contentTool = .select
             selectedContent = nil
@@ -118,8 +121,16 @@ final class PagesView: NSView, NSMenuItemValidation {
         }
     }
     var contentTool = ContentTool.select {
-        didSet { window?.invalidateCursorRects(for: self) }
+        didSet {
+            guard contentTool != oldValue else { return }
+            textEditor?.finish()
+            selectedContent = nil
+            refreshContentOutlines()
+            window?.invalidateCursorRects(for: self)
+        }
     }
+    /// The text run being typed over, if any.
+    var textEditor: TextRunEditor?
     var selectedContent: ContentRef? {
         didSet {
             guard selectedContent != oldValue else { return }
@@ -239,6 +250,7 @@ final class PagesView: NSView, NSMenuItemValidation {
     func apply(layout: PageLayout, rotation: Int) {
         // The field being typed into would be left where the page was.
         fieldEditor?.finish()
+        textEditor?.finish()
         self.layout = layout
         self.rotation = rotation
         setFrameSize(layout.size)
@@ -325,7 +337,7 @@ final class PagesView: NSView, NSMenuItemValidation {
     }
 
     private func applyContentOutlines(to view: PageView, page: Int) {
-        let rects = editingContent ? (content?.items(page: page).map(\.rect) ?? []) : []
+        let rects = editingContent ? (content?.items(page: page, text: contentTool == .text).map(\.rect) ?? []) : []
         view.setContentOutlines(rects, transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
     }
 
@@ -584,6 +596,10 @@ final class PagesView: NSView, NSMenuItemValidation {
             return
         }
         interpretKeyEvents([event])
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        if editingContent, case .text = selectedContent { beginTextEdit() }
     }
 
     override func moveUp(_ sender: Any?) { delegate?.pagesView(self, scrollBy: -1) }

@@ -428,6 +428,23 @@ enum SelfTest {
             document.undoManager?.redo()
             say("after redoing: \(viewer.content.item(ref)?.rect.integral ?? .zero)")
         } catch { say("FAIL image: \(error)") }
+        // Text: the heading selected with the Text tool, edited in place,
+        // then given a character its font lacks.
+        viewer.pagesView.contentTool = .text
+        if let heading = viewer.model.content(page: 0)?.runs.first(where: { $0.text == "Chapter One" }) {
+            click(viewer, page: 0, at: CGPoint(x: heading.rect.midX, y: heading.rect.midY))
+            say("text selected: \(String(describing: viewer.pagesView.selectedContent))")
+            viewer.pagesView.beginTextEdit()
+            viewer.pagesView.textEditor?.debugType("Chapter One, edited")
+            viewer.pagesView.textEditor?.finish()
+            say("after editing: \(viewer.model.content(page: 0)?.runs.first { $0.op == heading.op }?.text ?? "?")")
+            do {
+                try viewer.content.setText(.text(page: 0, op: heading.op), "Chapter Ω")
+                try viewer.content.setColor(.text(page: 0, op: heading.op), PDFColor(red: 0.8, green: 0, blue: 0))
+            } catch { say("FAIL text: \(error)") }
+            say("fallback: \(viewer.model.content(page: 0)?.runs.first { $0.op == heading.op }?.text ?? "?"); page text has it: \(viewer.model.text(page: 0).string.contains("Chapter Ω"))")
+            viewer.pagesView.selectedContent = .text(page: 0, op: heading.op)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             snapshot(window, "content-1-links")
             document.save(withDelegate: nil, didSave: nil, contextInfo: nil)

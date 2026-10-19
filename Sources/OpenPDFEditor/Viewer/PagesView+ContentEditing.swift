@@ -15,6 +15,15 @@ extension PagesView {
             selectedContent = nil
             return
         }
+        if contentTool == .text {
+            guard let item = content.hit(point, page: page, tolerance: tolerance, text: true) else {
+                selectedContent = nil
+                return
+            }
+            selectedContent = item.ref
+            if event.clickCount == 2 { beginTextEdit() }
+            return
+        }
         if contentTool == .link || contentTool == .image {
             contentGesture = .create(page: page, start: point, current: point)
             return
@@ -114,20 +123,48 @@ extension PagesView {
                                  transform: model.pageToView(page: page, rotation: rotation), dashed: true)
     }
 
-    /// The selected item's outline and grips.
+    /// The selected item's outline and grips (text runs aren't moved, so have none).
     func applyContentSelection(to view: PageView, page: Int) {
         guard let ref = selectedContent, ref.page == page, let item = content?.item(ref) else {
             view.setAnnotationSelection(outline: nil, handles: [], transform: .identity, zoom: zoom)
             return
         }
-        view.setAnnotationSelection(outline: CGPath(rect: item.rect, transform: nil), handles: rectHandles(item.rect).map(\.1),
+        var handles = rectHandles(item.rect).map(\.1)
+        if case .text = ref { handles = [] }
+        view.setAnnotationSelection(outline: CGPath(rect: item.rect.insetBy(dx: -1, dy: -1), transform: nil), handles: handles,
                                     transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
+    }
+
+    /// Edits the selected text run in place.
+    func beginTextEdit() {
+        textEditor?.finish()
+        guard let ref = selectedContent, case .text = ref, let content, let item = content.item(ref), let run = item.run,
+              let frame = convert(item.rect, fromPage: ref.page) else { return }
+        if let reason = ContentController.restriction(run) {
+            delegate?.pagesView(self, contentProblem: reason)
+            return
+        }
+        let editor = TextRunEditor(ref: ref, run: run, frame: frame)
+        editor.onEnd = { [weak self, weak editor] text in
+            guard let self else { return }
+            if self.textEditor === editor { self.textEditor = nil }
+            self.window?.makeFirstResponder(self)
+            guard let text else { return }
+            do {
+                try content.setText(ref, text)
+            } catch {
+                self.delegate?.pagesView(self, contentProblem: "\(error)")
+            }
+        }
+        textEditor = editor
+        editor.show(in: self)
     }
 
     func contentCursor(at location: NSPoint) -> NSCursor {
         guard let content, let (page, point) = pageAndPoint(at: location), layout.frames[page]?.contains(location) == true else {
             return .arrow
         }
+        if contentTool == .text { return content.hit(point, page: page, tolerance: tolerance, text: true) != nil ? .iBeam : .arrow }
         if contentTool != .select { return .crosshair }
         if let ref = selectedContent, ref.page == page, let item = content.item(ref), contentHandle(at: point, of: item.rect) != nil {
             return .crosshair

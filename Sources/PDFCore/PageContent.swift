@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import MuPDFBridge
 
 /// A text operation on a page, as Edit Content shows it.
@@ -65,6 +66,38 @@ extension EngineDocument {
                            pixelWidth: Int(i.width), pixelHeight: Int(i.height))
         }
         return PageContent(runs: runs, images: images)
+    }
+
+    /// The characters of `text` that a run's own font can't draw.
+    public func missingCharacters(in text: String, page: Int, op: Int) throws -> String {
+        var error = opdf_error()
+        guard let missing = opdf_text_run_missing(handle, Int32(page), Int32(op), text, &error) else { throw EngineError(error) }
+        defer { opdf_free(missing) }
+        return String(cString: missing)
+    }
+
+    /// Changes a text run. `font` (an sfnt file) draws the characters the
+    /// run's font lacks, or with `wholeFont` the whole run.
+    public func editText(page: Int, op: Int, text: String? = nil, font: Data? = nil, wholeFont: Bool = false,
+                         sizeScale: CGFloat? = nil, color: PDFColor? = nil) throws {
+        var error = opdf_error()
+        let fontData = font ?? Data()
+        let ok = fontData.withUnsafeBytes { raw in
+            withOptionalCString(text) { cText in
+                var edit = opdf_text_edit()
+                edit.text = cText
+                edit.font_data = raw.bindMemory(to: UInt8.self).baseAddress
+                edit.font_len = font == nil ? 0 : raw.count
+                edit.whole_font = wholeFont
+                edit.size_scale = Float(sizeScale ?? 0)
+                if let color {
+                    edit.color_n = 3
+                    edit.color = (Float(color.red), Float(color.green), Float(color.blue))
+                }
+                return opdf_text_run_edit(handle, Int32(page), Int32(op), &edit, &error)
+            }
+        }
+        guard ok else { throw EngineError(error) }
     }
 
     /// Writes the page's content again with no change (tests).
