@@ -180,6 +180,27 @@ import Testing
         #expect(throws: EngineError.self) { try PDFExporter(url: corpus("not-a-pdf.pdf")) }
     }
 
+    @Test func fontNamesCantInjectMarkup() throws {
+        let html = temporaryURL("evil.html"), docx = temporaryURL("evil.docx")
+        defer { for u in [html, docx] { try? FileManager.default.removeItem(at: u) } }
+        let exporter = try PDFExporter(url: corpus("exportbomb.pdf"))
+        try exporter.export(.html, pages: 0...0, to: html)
+        let page = try String(contentsOf: html, encoding: .utf8)
+        #expect(page.contains("Hello") && !page.contains("<script") && !page.contains("x\">"))
+        try exporter.export(.word, pages: 0...0, to: docx)
+        let xml = try unzip(docx, "word/document.xml")
+        #expect(xml.contains("Hello") && !xml.contains("<script"))
+        #expect(try XMLDocument(xmlString: xml).rootElement() != nil)
+    }
+
+    @Test func crowdedPagesStayQuickInWord() throws {
+        let docx = temporaryURL("crowded.docx")
+        defer { try? FileManager.default.removeItem(at: docx) }
+        let started = Date()
+        try PDFExporter(url: corpus("exportbomb.pdf")).export(.word, pages: 1...1, to: docx)
+        #expect(Date().timeIntervalSince(started) < 8)
+    }
+
     /// Every corpus file through every format: errors are fine, crashes and
     /// hangs are not.
     @Test func hostileFiles() throws {

@@ -213,6 +213,12 @@ From the first release-time security review (all findings above Low fixed, plus 
   - File › Export…: Word Document, Web Page, Plain Text, PNG Images, JPEG Images (quality), TIFF Image (one file, a page per page); all pages, this page or a range; 72 to 600 dpi for images. What's exported is the document as it is now, unsaved changes included.
   - Word gets recognised text as text and leaves out the scan under it; pictures are given to Word as PNG. The web page leaves out the scan too.
   - Several PNG or JPEG pages go into a new folder named like the file chosen (never over an existing one); pages too large for the resolution are drawn smaller and the app says so.
+- [x] Security review before release: one High and two Mediums fixed.
+  - High: font names went into the exported web page and Word document as they were, so a crafted PDF (a /BaseFont holding `"><script …>`) could put a script into the exported page, or break the Word file's XML. Font names are now cut down to letters, digits and `space . _ + -` before any writer sees them.
+  - Medium: Word's layout takes time growing with the square of a page's characters and can't be cancelled inside a page, so a page of 40,000 tiny characters held the conversion thread for minutes. Word export now takes at most 20,000 characters a page (a few seconds at worst).
+  - Medium: the recognised-text layer always used the font name OPDFOCR0 and changed font dictionaries in place, so pages sharing resources couldn't be recognised together, and removing one page's layer could break another's. Each page now gets its own copy of its font resources and a free name; and only streams this app wrote (marked, and starting with its own marked content) are removed.
+  - Also fixed: a double free if memory ran out while writing a content stream; the duplicate-word check now ignores text clipped away (as the viewer does); an error from Word's writer is no longer silently dropped with the rest of the page.
+  - Left for later (Low): putting the recognised text on the pages runs on the main thread, so a page that is very slow to read freezes the window for as long when recognition finishes; Word export decodes and re-encodes an image each time it is drawn; Word export shows all invisible text (as it is copyable anyway; the export note says so).
 
 ## Phase 9: 1.0 (1.0.0)
 

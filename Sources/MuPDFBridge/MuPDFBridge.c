@@ -3370,8 +3370,10 @@ static void rewrite_page_content(fz_context *ctx, pdf_document *pdf, pdf_page *p
         process_page_content(ctx, pdf, page, p);
         size_t zlen = 0;
         deflated = fz_new_deflated_data_from_buffer(ctx, &zlen, buf, FZ_DEFLATE_DEFAULT);
-        zbuf = fz_new_buffer_from_data(ctx, deflated, zlen);
+        // The buffer takes the data, and frees it if it fails.
+        unsigned char *data = deflated;
         deflated = NULL;
+        zbuf = fz_new_buffer_from_data(ctx, data, zlen);
         dict = pdf_new_dict(ctx, pdf, 1);
         pdf_dict_put(ctx, dict, PDF_NAME(Filter), PDF_NAME(FlateDecode));
         stream = pdf_add_stream(ctx, pdf, zbuf, dict, 1);
@@ -6233,26 +6235,65 @@ static bool stream_mentions(fz_context *ctx, pdf_obj *stm, const char *needle) {
 // Removes the page's recognised-text layer: marked streams are dropped from
 // /Contents; a layer merged into other content (by editing it) is cut out
 // by rewriting. Its font resources go too. True if there was one.
+// A stream this code wrote as a layer: marked in its dictionary, and
+// starting with the layer's own marked content.
+static bool is_layer_stream(fz_context *ctx, pdf_obj *stm) {
+    if (!pdf_is_stream(ctx, stm) || pdf_dict_gets(ctx, stm, "OPDFOCR") != PDF_TRUE) return false;
+    fz_buffer *b = pdf_load_stream(ctx, stm);
+    unsigned char *data;
+    size_t len = fz_buffer_storage(ctx, b, &data);
+    static const char start[] = "/OPDFOCR BMC\n";
+    bool ours = len >= sizeof start - 1 && !memcmp(data, start, sizeof start - 1);
+    fz_drop_buffer(ctx, b);
+    return ours;
+}
+
+// The page's font resources as a dictionary of its own, safe to change
+// without touching other pages that shared its resources.
+static pdf_obj *own_font_dict(fz_context *ctx, pdf_document *pdf, pdf_page *page) {
+    own_resources(ctx, pdf, page, PDF_NAME(Font));
+    pdf_obj *res = pdf_dict_get(ctx, page->obj, PDF_NAME(Resources));
+    if (pdf_is_indirect(ctx, res)) {
+        res = pdf_copy_dict(ctx, res);
+        pdf_dict_put_drop(ctx, page->obj, PDF_NAME(Resources), res);
+    }
+    pdf_obj *fonts = pdf_copy_dict(ctx, pdf_dict_get(ctx, res, PDF_NAME(Font)));
+    pdf_dict_put_drop(ctx, res, PDF_NAME(Font), fonts);
+    return fonts;
+}
+
 static bool remove_text_layer(fz_context *ctx, pdf_document *pdf, pdf_page *page) {
     bool removed = false;
     pdf_obj *contents = pdf_dict_get(ctx, page->obj, PDF_NAME(Contents));
-    if (pdf_is_stream(ctx, contents) && pdf_dict_gets(ctx, contents, "OPDFOCR")) {
+    if (is_layer_stream(ctx, contents)) {
         pdf_dict_del(ctx, page->obj, PDF_NAME(Contents));
         removed = true;
     } else if (pdf_is_array(ctx, contents)) {
-        bool marked = false;
-        for (int i = 0, n = pdf_array_len(ctx, contents); i < n && !marked; i++)
-            marked = pdf_dict_gets(ctx, pdf_array_get(ctx, contents, i), "OPDFOCR") != NULL;
-        if (marked) {
-            // A copy, in case the array is shared with other pages.
-            pdf_obj *copy = pdf_new_array(ctx, pdf, pdf_array_len(ctx, contents));
-            for (int i = 0, n = pdf_array_len(ctx, contents); i < n; i++) {
-                pdf_obj *stm = pdf_array_get(ctx, contents, i);
-                if (pdf_dict_gets(ctx, stm, "OPDFOCR")) removed = true;
-                else pdf_array_push(ctx, copy, stm);
+        int n = pdf_array_len(ctx, contents);
+        bool *layer = fz_calloc(ctx, (size_t)(n > 0 ? n : 1), sizeof *layer);
+        fz_try(ctx) {
+            bool marked = false;
+            for (int i = 0; i < n; i++) marked |= layer[i] = is_layer_stream(ctx, pdf_array_get(ctx, contents, i));
+            if (marked) {
+                // A copy, in case the array is shared with other pages.
+                pdf_obj *copy = pdf_new_array(ctx, pdf, n);
+                fz_try(ctx) {
+                    for (int i = 0; i < n; i++)
+                        if (!layer[i]) pdf_array_push(ctx, copy, pdf_array_get(ctx, contents, i));
+                }
+                fz_catch(ctx) {
+                    pdf_drop_obj(ctx, copy);
+                    fz_rethrow(ctx);
+                }
+                // Only now: this drops the old array.
+                pdf_dict_put_drop(ctx, page->obj, PDF_NAME(Contents), copy);
+                removed = true;
             }
-            pdf_dict_put_drop(ctx, page->obj, PDF_NAME(Contents), copy);
         }
+        fz_always(ctx)
+            fz_free(ctx, layer);
+        fz_catch(ctx)
+            fz_rethrow(ctx);
     }
     if (!removed) {
         // Merged into other content: rewrite the page without it.
@@ -6270,9 +6311,13 @@ static bool remove_text_layer(fz_context *ctx, pdf_document *pdf, pdf_page *page
         }
     }
     if (removed) {
-        pdf_obj *res = pdf_dict_get(ctx, page->obj, PDF_NAME(Resources));
-        pdf_obj *fonts = pdf_dict_get(ctx, res, PDF_NAME(Font));
-        if (pdf_is_dict(ctx, fonts)) {
+        pdf_obj *fonts = pdf_dict_get(ctx, pdf_dict_get(ctx, page->obj, PDF_NAME(Resources)), PDF_NAME(Font));
+        bool any = false;
+        for (int i = 0, n = pdf_dict_len(ctx, fonts); i < n && !any; i++)
+            any = is_ocr_font_resource(ctx, pdf_to_name(ctx, pdf_dict_get_key(ctx, fonts, i)), pdf_dict_get_val(ctx, fonts, i));
+        if (any) {
+            // From this page's own copy: pages sharing its resources keep theirs.
+            fonts = own_font_dict(ctx, pdf, page);
             for (int i = pdf_dict_len(ctx, fonts) - 1; i >= 0; i--) {
                 const char *key = pdf_to_name(ctx, pdf_dict_get_key(ctx, fonts, i));
                 if (is_ocr_font_resource(ctx, key, pdf_dict_get_val(ctx, fonts, i)))
@@ -6303,7 +6348,7 @@ static char_boxes page_char_boxes(fz_context *ctx, pdf_page *page) {
     fz_var(text);
     fz_var(dev);
     fz_try(ctx) {
-        fz_stext_options options = { 0 };
+        fz_stext_options options = { .flags = FZ_STEXT_CLIP };
         text = fz_new_stext_page(ctx, pdf_bound_page(ctx, page, FZ_CROP_BOX));
         dev = fz_new_stext_device(ctx, text, &options);
         pdf_run_page_contents(ctx, page, dev, fz_identity, NULL);
@@ -6363,7 +6408,7 @@ static bool sane_point(float x, float y) {
 
 // Appends one word, or nothing for a word that can't be drawn sensibly.
 // Returns true if it was added.
-static bool append_ocr_word(fz_context *ctx, fz_buffer *buf, const opdf_ocr_word *w, fz_matrix to_pdf) {
+static bool append_ocr_word(fz_context *ctx, fz_buffer *buf, const opdf_ocr_word *w, fz_matrix to_pdf, const char *font) {
     if (!w->text || w->length <= 0 || w->length > OPDF_MAX_OCR_WORD_LENGTH) return false;
     for (int i = 0; i < 4; i++)
         if (!sane_point(w->quad[2 * i], w->quad[2 * i + 1])) return false;
@@ -6386,7 +6431,7 @@ static bool append_ocr_word(fz_context *ctx, fz_buffer *buf, const opdf_ocr_word
     if (!(tz >= 5 && tz <= 5000)) return false;
     // Text space to page space (y down): x along the baseline, y up to the top.
     fz_matrix tm = fz_concat(fz_make_matrix(dx, dy, dy, -dx, llx, lly), to_pdf);
-    fz_append_printf(ctx, buf, "/OPDFOCR0 %g Tf\n%g Tz\n%g %g %g %g %g %g Tm\n", size, tz, tm.a, tm.b, tm.c, tm.d, tm.e, tm.f);
+    fz_append_printf(ctx, buf, "/%s %g Tf\n%g Tz\n%g %g %g %g %g %g Tm\n", font, size, tz, tm.a, tm.b, tm.c, tm.d, tm.e, tm.f);
     if (w->right_to_left && w->length > 1) {
         // Text in reading order, drawn from the right (as output-pdfocr.c
         // does), so copying keeps the order and selection runs leftwards; a
@@ -6421,6 +6466,7 @@ static int set_text_layer(fz_context *ctx, pdf_document *pdf, pdf_page *page, co
     fz_buffer *zbuf = NULL;
     pdf_obj *dict = NULL;
     char_boxes chars = { 0 };
+    char font_name[32] = "";
     fz_var(buf);
     fz_var(deflated);
     fz_var(zbuf);
@@ -6436,6 +6482,9 @@ static int set_text_layer(fz_context *ctx, pdf_document *pdf, pdf_page *page, co
             fz_matrix ctm;
             pdf_page_transform(ctx, page, &mediabox, &ctm);
             fz_matrix to_pdf = fz_invert_matrix(ctm);
+            // A font name the page doesn't use (its own OCR fonts were just
+            // removed).
+            new_resource_name(ctx, pdf_dict_get(ctx, pdf_page_resources(ctx, page), PDF_NAME(Font)), "OPDFOCR", font_name);
             buf = fz_new_buffer(ctx, 4096);
             fz_append_string(ctx, buf, "/OPDFOCR BMC\nq\nBT\n3 Tr\n");
             for (int i = 0; i < layer->count; i++) {
@@ -6445,22 +6494,18 @@ static int set_text_layer(fz_context *ctx, pdf_document *pdf, pdf_page *page, co
                 bool finite = true;
                 for (int k = 0; k < 8; k++) finite = finite && isfinite(w->quad[k]);
                 if (finite && already_has_text(&chars, fz_rect_from_quad(q))) continue;
-                if (append_ocr_word(ctx, buf, w, to_pdf)) added++;
+                if (append_ocr_word(ctx, buf, w, to_pdf, font_name)) added++;
             }
             fz_append_string(ctx, buf, "ET\nQ\nEMC\n");
         }
         if (added > 0) {
             if (!*font) *font = new_glyphless_font(ctx, pdf);
-            pdf_obj *fonts = own_resources(ctx, pdf, page, PDF_NAME(Font));
-            // The name the layer's content uses. Ours were just removed, so
-            // anything still by that name is the page's own: refuse rather
-            // than replace it.
-            if (pdf_dict_gets(ctx, fonts, "OPDFOCR0")) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This page already uses the font name OPDFOCR0");
-            pdf_dict_puts(ctx, fonts, "OPDFOCR0", *font);
+            pdf_dict_puts(ctx, own_font_dict(ctx, pdf, page), font_name, *font);
             size_t zlen = 0;
             deflated = fz_new_deflated_data_from_buffer(ctx, &zlen, buf, FZ_DEFLATE_DEFAULT);
-            zbuf = fz_new_buffer_from_data(ctx, deflated, zlen);
+            unsigned char *data = deflated;
             deflated = NULL;
+            zbuf = fz_new_buffer_from_data(ctx, data, zlen);
             dict = pdf_new_dict(ctx, pdf, 2);
             pdf_dict_put(ctx, dict, PDF_NAME(Filter), PDF_NAME(FlateDecode));
             pdf_dict_puts(ctx, dict, "OPDFOCR", PDF_TRUE);
@@ -7085,6 +7130,9 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
 // - drawing with absurd matrices, and text past a limit per page, is left out.
 
 #define OPDF_MAX_EXPORT_CHARS_PER_PAGE 1000000
+// Word's layout (extract) takes time growing with the square of a page's
+// characters, and can't be cancelled inside a page: 20,000 take ~3 s.
+#define OPDF_MAX_DOCX_CHARS_PER_PAGE 20000
 #define OPDF_MAX_EXPORT_IMAGE_PIXELS (40 * 1024 * 1024)
 
 struct opdf_export {
@@ -7112,10 +7160,23 @@ static bool sane_matrix(fz_matrix m) {
     return true;
 }
 
+// Takes the text's characters from the page's allowance (false when it is
+// used up), and makes its fonts' names safe: the writers put them into
+// HTML and Word's XML as they are (a /BaseFont can hold quotes and angle
+// brackets). The fonts belong to the export's own copy of the document.
 static bool take_chars(export_filter *f, const fz_text *text) {
     int n = text_glyphs(text);
-    if (n > OPDF_MAX_EXPORT_CHARS_PER_PAGE - f->chars) return false;
+    int cap = f->docx ? OPDF_MAX_DOCX_CHARS_PER_PAGE : OPDF_MAX_EXPORT_CHARS_PER_PAGE;
+    if (n > cap - f->chars) return false;
     f->chars += n;
+    for (fz_text_span *span = text->head; span; span = span->next) {
+        if (!span->font) continue;
+        for (char *c = span->font->name; *c && c < span->font->name + sizeof span->font->name; c++) {
+            bool ok = (*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9') ||
+                      *c == ' ' || *c == '.' || *c == '_' || *c == '+' || *c == '-';
+            if (!ok) *c = '-';
+        }
+    }
     return true;
 }
 
@@ -7150,13 +7211,29 @@ static void ef_stroke_text(fz_context *ctx, fz_device *dev, const fz_text *text,
         fz_stroke_text(ctx, TARGET(dev), text, stroke, ctm, cs, color, alpha, params);
 }
 
+// Clipping must stay balanced with pop_clip, so text over the allowance
+// clips with no characters (an empty clip path) rather than being dropped.
 static void ef_clip_text(fz_context *ctx, fz_device *dev, const fz_text *text, fz_matrix ctm, fz_rect scissor) {
-    fz_clip_text(ctx, TARGET(dev), text, ctm, scissor);
+    if (take_chars((export_filter *)dev, text)) {
+        fz_clip_text(ctx, TARGET(dev), text, ctm, scissor);
+    } else {
+        fz_path *empty = fz_new_path(ctx);
+        fz_try(ctx) fz_clip_path(ctx, TARGET(dev), empty, 0, ctm, scissor);
+        fz_always(ctx) fz_drop_path(ctx, empty);
+        fz_catch(ctx) fz_rethrow(ctx);
+    }
 }
 
 static void ef_clip_stroke_text(fz_context *ctx, fz_device *dev, const fz_text *text, const fz_stroke_state *stroke,
                                 fz_matrix ctm, fz_rect scissor) {
-    fz_clip_stroke_text(ctx, TARGET(dev), text, stroke, ctm, scissor);
+    if (take_chars((export_filter *)dev, text)) {
+        fz_clip_stroke_text(ctx, TARGET(dev), text, stroke, ctm, scissor);
+    } else {
+        fz_path *empty = fz_new_path(ctx);
+        fz_try(ctx) fz_clip_path(ctx, TARGET(dev), empty, 0, ctm, scissor);
+        fz_always(ctx) fz_drop_path(ctx, empty);
+        fz_catch(ctx) fz_rethrow(ctx);
+    }
 }
 
 static void ef_ignore_text(fz_context *ctx, fz_device *dev, const fz_text *text, fz_matrix ctm) {
@@ -7198,18 +7275,23 @@ static void ef_fill_image(fz_context *ctx, fz_device *dev, fz_image *image, fz_m
     fz_try(ctx) {
         png = fz_new_buffer_from_image_as_png(ctx, image, fz_default_color_params);
         copy = fz_new_image_from_buffer(ctx, png);
-        fz_fill_image(ctx, f->target, copy, ctm, alpha, params);
     }
-    fz_always(ctx) {
-        fz_drop_image(ctx, copy);
+    fz_always(ctx)
         fz_drop_buffer(ctx, png);
-    }
     fz_catch(ctx) {
         // An image that can't be decoded is left out; running out of memory
         // or being cancelled stops the export.
+        fz_drop_image(ctx, copy);
         if (fz_caught(ctx) == FZ_ERROR_SYSTEM || fz_caught(ctx) == FZ_ERROR_LIMIT) fz_rethrow(ctx);
         fz_ignore_error(ctx);
+        return;
     }
+    fz_try(ctx)
+        fz_fill_image(ctx, f->target, copy, ctm, alpha, params);
+    fz_always(ctx)
+        fz_drop_image(ctx, copy);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
 }
 
 static void ef_fill_image_mask(fz_context *ctx, fz_device *dev, fz_image *image, fz_matrix ctm, fz_colorspace *cs,

@@ -240,7 +240,7 @@ final class ExportOptions: NSObject {
         resolutionRow?.isHidden = !f.isImage
         qualityRow?.isHidden = f != .jpeg
         switch f {
-        case .word: note.stringValue = "Text, pictures and simple layout, to edit in Word or Pages. Recognised text is included."
+        case .word: note.stringValue = "Text, pictures and simple layout, to edit in Word or Pages. Recognised text, and any other invisible text, is included as ordinary text."
         case .html: note.stringValue = "One web page with the text and pictures, laid out as on the pages."
         case .text: note.stringValue = "Just the text, in reading order."
         case .png, .jpeg: note.stringValue = "A picture of each page. Several pages go into a new folder with this name."

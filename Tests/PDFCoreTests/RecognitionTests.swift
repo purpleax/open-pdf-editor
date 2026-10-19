@@ -173,6 +173,23 @@ import Testing
         #expect(throws: EngineError.self) { try doc.setTextLayers([RecognizedPage(page: 99, words: [])]) }
     }
 
+    @Test func pagesSharingResourcesAndStreamsThatClaimToBeLayers() throws {
+        let doc = try Corpus.open("sharedres.pdf")
+        let word = { (t: String) in [RecognizedWord(text: t, rect: CGRect(x: 72, y: 300, width: 60, height: 14))] }
+        // Two pages with one resources dictionary, in one step.
+        #expect(try doc.setTextLayers([RecognizedPage(page: 0, words: word("First")), RecognizedPage(page: 1, words: word("Second"))]) == 2)
+        // Removing one page's layer leaves the other's whole.
+        try doc.setTextLayers([RecognizedPage(page: 0, words: [])])
+        #expect(try !doc.text(page: 0).string.contains("First") && doc.text(page: 0).string.contains("Shared 0"))
+        #expect(try doc.text(page: 1).string.contains("Second") && doc.text(page: 1).string.contains("Shared 1"))
+        // A stream marked like a layer that isn't one stays.
+        try doc.setTextLayers([RecognizedPage(page: 2, words: word("Added"))])
+        let text = try doc.text(page: 2).string
+        #expect(text.contains("Keep me") && text.contains("Added"))
+        try doc.setTextLayers([RecognizedPage(page: 2, words: [])])
+        #expect(try doc.text(page: 2).string.contains("Keep me"))
+    }
+
     @Test func removedEvenAfterEditingMergesTheContent() throws {
         let doc = try Corpus.open("scanned.pdf")
         try doc.setTextLayers([RecognizedPage(page: 4, words: [RecognizedWord(text: "Layer", rect: CGRect(x: 72, y: 300, width: 40, height: 14))])])

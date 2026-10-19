@@ -689,6 +689,41 @@ function makeScanned() {
 	doc.save(out + "/scanned.pdf", "compress")
 }
 
+// --- From the 0.8.0 review ---------------------------------------------------
+// exportbomb.pdf: page 0 in a font whose name is markup; page 1 with 40,000
+// tiny scattered characters (Word's layout is quadratic in them).
+// sharedres.pdf: pages 0 and 1 share one resources dictionary; page 2's only
+// content is visible text in a stream that claims to be a recognised layer.
+function makeReviewFiles() {
+	var doc = newDocument()
+	var evil = doc.addObject({ Type: doc.newName("Font"), Subtype: doc.newName("Type1"),
+		BaseFont: doc.newName("x\"><script src=//e.invalid>") })
+	var page = doc.addPage(LETTER, 0, { Font: { F1: evil } }, "BT /F1 12 Tf 72 700 Td (Hello) Tj ET\n")
+	doc.insertPage(-1, page)
+	var ops = ["BT /F1 0.5 Tf"]
+	for (var i = 0; i < 400; i++) {
+		var line = ""
+		for (var j = 0; j < 50; j++) line += "ab"
+		ops.push("1 0 0 1 10 " + (780 - i * 0.7).toFixed(2) + " Tm (" + line + ") Tj")
+	}
+	ops.push("ET")
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, ops.join("\n"))
+	doc.insertPage(-1, page)
+	doc.save(out + "/exportbomb.pdf", "compress")
+
+	doc = newDocument()
+	var shared = doc.addObject({ Font: { F1: doc.font } })
+	for (var k = 0; k < 2; k++) {
+		page = doc.addPage(LETTER, 0, {}, "BT /F1 12 Tf 72 700 Td (Shared " + k + ") Tj ET\n")
+		page.put("Resources", shared)
+		doc.insertPage(-1, page)
+	}
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, "BT /F1 12 Tf 72 700 Td (Keep me) Tj ET\n")
+	doc.insertPage(-1, page)
+	doc.findPage(2).get("Contents").put("OPDFOCR", true)
+	doc.save(out + "/sharedres.pdf", "compress")
+}
+
 // --- Hostile files, for the security tests ----------------------------------
 
 // Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
@@ -851,4 +886,5 @@ makeFormBomb()
 makeXMP()
 makeContent()
 makeScanned()
+makeReviewFiles()
 print("corpus: wrote the test PDFs to " + out)
