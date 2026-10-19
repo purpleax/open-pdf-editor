@@ -150,6 +150,29 @@ typedef struct {
 
 bool opdf_page_text_info(opdf_doc *doc, int page, opdf_text_info *info, opdf_error *err);
 
+// A recognised word: its text as UTF-16 (characters of the Basic
+// Multilingual Plane only, no controls; a space after it if one follows on
+// its line) and its box in page space, corners as in opdf_char: upper-left,
+// upper-right, lower-left, lower-right. The baseline runs along the bottom.
+typedef struct {
+    const uint16_t *text;
+    int length;
+    float quad[8];
+    bool right_to_left;  // text in reading order that runs right to left
+} opdf_ocr_word;
+
+typedef struct {
+    int page;
+    const opdf_ocr_word *words;
+    int count;           // at most 20,000; 0 removes the page's layer
+} opdf_text_layer;
+
+// Puts recognised text on pages as invisible, searchable text, replacing
+// each page's earlier layer. Words the page already has as text (more than
+// half their box covered) and words that can't be drawn are left out.
+// One undoable step. *words_added (may be NULL) is set to the words added.
+bool opdf_text_layers_set(opdf_doc *doc, const opdf_text_layer *layers, int count, int *words_added, opdf_error *err);
+
 // --- Links ------------------------------------------------------------------
 
 typedef struct {
