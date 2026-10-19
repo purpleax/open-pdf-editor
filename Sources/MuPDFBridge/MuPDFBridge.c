@@ -1563,17 +1563,25 @@ static bool field_trees_ok(fz_context *ctx, pdf_obj *roots) {
     return ok;
 }
 
+// Nodes already walked while listing a page, so its fields share the work.
+typedef struct {
+    num_set sound;
+    num_set damaged;
+} field_checks;
+
 // MuPDF's walks for a widget start at the widget or at one of its
 // ancestors (/Parent and /Kids needn't agree), so the tree under each of
-// them is checked. `checked` (may be NULL) remembers nodes already found
-// sound, so a page's fields share the work.
-static bool field_group_ok(fz_context *ctx, pdf_obj *widget, num_set *checked) {
+// them is checked. `checks` may be NULL.
+static bool field_group_ok(fz_context *ctx, pdf_obj *widget, field_checks *checks) {
     pdf_obj *node = widget;
     for (int i = 0; i < 64; i++) {
-        bool known = checked && pdf_is_indirect(ctx, node) && num_set_contains(checked, pdf_to_num(ctx, node));
-        if (!known) {
-            if (!field_trees_ok(ctx, node)) return false;
-            if (checked && pdf_is_indirect(ctx, node)) num_set_add(ctx, checked, pdf_to_num(ctx, node));
+        bool indirect = checks && pdf_is_indirect(ctx, node);
+        int num = indirect ? pdf_to_num(ctx, node) : 0;
+        if (indirect && num_set_contains(&checks->damaged, num)) return false;
+        if (!indirect || !num_set_contains(&checks->sound, num)) {
+            bool ok = field_trees_ok(ctx, node);
+            if (indirect) num_set_add(ctx, ok ? &checks->sound : &checks->damaged, num);
+            if (!ok) return false;
         }
         pdf_obj *parent = pdf_dict_get(ctx, node, PDF_NAME(Parent));
         if (!pdf_is_dict(ctx, parent)) return true;
@@ -1647,7 +1655,7 @@ static bool fillable(fz_context *ctx, pdf_annot *w) {
     }
 }
 
-static void fill_field(fz_context *ctx, pdf_annot *w, opdf_field *o, int *budget, num_set *checked) {
+static void fill_field(fz_context *ctx, pdf_annot *w, opdf_field *o, int *budget, field_checks *checks) {
     pdf_obj *obj = pdf_annot_obj(ctx, w);
     bool cut = false;
     o->id = annot_id(ctx, w);
@@ -1725,7 +1733,7 @@ static void fill_field(fz_context *ctx, pdf_annot *w, opdf_field *o, int *budget
         }
     }
     if (o->type == PDF_WIDGET_TYPE_SIGNATURE) o->is_signed = pdf_widget_is_signed(ctx, w) != 0;
-    o->read_only = o->id == 0 || cut || !fillable(ctx, w) || !field_group_ok(ctx, obj, checked);
+    o->read_only = o->id == 0 || cut || !fillable(ctx, w) || !field_group_ok(ctx, obj, checks);
 }
 
 opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_error *err) {
@@ -1735,8 +1743,8 @@ opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_erro
     fz_page *page = NULL;
     opdf_field *items = NULL;
     int n = 0, capacity = 0;
-    // Field trees found sound, shared by the page's fields.
-    num_set checked = { 0 };
+    // Field trees already walked, shared by the page's fields.
+    field_checks checks = { { 0 }, { 0 } };
     fz_var(page);
     fz_var(items);
     fz_var(n);
@@ -1766,7 +1774,7 @@ opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_erro
             // A malformed field is listed read-only with what could be read,
             // rather than hiding the page's other fields.
             fz_try(ctx)
-                fill_field(ctx, w, &items[n - 1], &budget, &checked);
+                fill_field(ctx, w, &items[n - 1], &budget, &checks);
             fz_catch(ctx) {
                 if (fz_caught(ctx) == FZ_ERROR_SYSTEM) fz_rethrow(ctx);
                 items[n - 1].read_only = true;
@@ -1775,7 +1783,8 @@ opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_erro
     }
     fz_always(ctx) {
         fz_drop_page(ctx, page);
-        num_set_free(&checked);
+        num_set_free(&checks.sound);
+        num_set_free(&checks.damaged);
     }
     fz_catch(ctx) {
         set_error(err, ctx);
@@ -2030,7 +2039,10 @@ int opdf_field_create(opdf_doc *d, int page_number, int type, opdf_rect rect, in
         // pdf_create_field_name starts at 0, slow on forms with many names).
         char name[64];
         bool named = false;
-        for (int i = pdf_array_len(ctx, fields), tries = 0; tries < 1000 && !named; i++, tries++) {
+        // 100 tries from the number of fields on, then further afield.
+        int base = pdf_array_len(ctx, fields);
+        for (int tries = 0; tries < 200 && !named; tries++) {
+            int i = tries < 100 ? base + tries : base + 1000 + tries * 7919;
             fz_snprintf(name, sizeof name, "%s%d", prefix, i);
             named = !pdf_lookup_field(ctx, fields, name);
         }
