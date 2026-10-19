@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 0.6.0</title>
-      <pubDate>Mon, 19 Oct 2026 10:32:06 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.6.0</link>
-      <sparkle:version>7</sparkle:version>
-      <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+      <title>Open PDF Editor 0.7.0</title>
+      <pubDate>Mon, 19 Oct 2026 12:31:16 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.0</link>
+      <sparkle:version>8</sparkle:version>
+      <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.6.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Security and signing. Tools › Redact marks text or areas, and Tools › Apply Redactions… removes whatever is under the marks for good (text, pictures, drawings, comments, links and form fields), draws black boxes, clears out hidden leftovers and saves; it can also delete the file's earlier versions. File › Security… sets a password to open the document and an owner password that limits printing, copying, editing, comments and filling in forms, with 256-bit AES encryption. Documents whose owner limits what you can do now show what isn't allowed, with a way to enter the owner password. Click a signature field to sign it with a certificate from your keychain, and see in the inspector who signed, whether the document has changed since and whether the certificate is trusted. Draw or import your handwritten signature in Tools › Signatures… and place it with the Signature tool. Settings has a new switch, off to begin with, for checking certificates online. Saving automatically is now a choice in Settings, also off to begin with: changes are kept when you choose File › Save, and closing a changed document asks first; turn on Save changes automatically for the previous behaviour, with File › Revert To for earlier versions.</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.6.0/Open-PDF-Editor-0.6.0.zip" sparkle:edSignature="KjHAfLpwoQn6QcarySqvVLQXzviuT9lflWmXax1FnPom8urFadqffVSv0VmsD2a/GQ+Ry/M7A/mmsjB65i9bCg==" length="32273713" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Editing like a word processor. Click anywhere in a page's text and a cursor appears: type, delete, select across lines and press Return, and the paragraph re-wraps in its box, keeping its font where the PDF has the letters. The new formatting bar and Format menu change the font, size, bold, italic, underline (⌘B, ⌘I, ⌘U), colour and alignment, and Add Text puts a new text box anywhere. Start with the Edit button in the toolbar, Edit › Edit Content (⌥⌘E), or Edit Text when you right-click text. Lines you don't change stay exactly as they were; drag the grip on a box's right to change the width it wraps at; and a box that runs into the text below says so, since text doesn't flow from one paragraph to the next.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.7.0/Open-PDF-Editor-0.7.0.zip" sparkle:edSignature="GOt/TyDDRsnuj/erGvjHYVdNitPnl34lqDvqHnB1EtbKmC7aQFPFskt1jOmJCpLgua2lPB7a1UaFYlUsyUsTBQ==" length="32360874" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
