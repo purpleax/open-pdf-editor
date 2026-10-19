@@ -18,15 +18,22 @@ final class PageEditor {
     private var model: DocumentModel { viewer.model }
     private var window: NSWindow? { viewer.view.window }
 
-    /// The kinds of file that can become pages.
+    /// The kinds of file that can become pages: PDFs and images, and other
+    /// documents when Settings allows them (the engine checks again, by
+    /// content).
     static var insertableTypes: [UTType] {
-        var types: [UTType] = [.pdf, .png, .jpeg, .tiff, .gif, .bmp, .svg, .html, .plainText, .epub]
+        var types: [UTType] = [.pdf, .png, .jpeg, .tiff, .gif, .bmp]
+        for ext in ["jxr", "pnm", "pbm", "pgm", "ppm", "pam", "psd"] {
+            if let type = UTType(filenameExtension: ext), !types.contains(type) { types.append(type) }
+        }
+        guard Settings.convertsDocuments else { return types }
+        types += [.svg, .html, .plainText, .epub]
         for identifier in ["com.microsoft.xps", "org.openxmlformats.wordprocessingml.document",
                            "org.openxmlformats.spreadsheetml.sheet", "org.openxmlformats.presentationml.presentation",
                            "com.comicbook.cbz", "public.fictionbook"] {
-            if let type = UTType(identifier) { types.append(type) }
+            if let type = UTType(identifier), !types.contains(type) { types.append(type) }
         }
-        for ext in ["cbz", "fb2", "xps", "oxps", "mobi", "jxr", "pnm", "pbm", "pgm", "ppm", "pam", "psd"] {
+        for ext in ["cbz", "fb2", "xps", "oxps", "mobi"] {
             if let type = UTType(filenameExtension: ext), !types.contains(type) { types.append(type) }
         }
         return types
@@ -240,6 +247,7 @@ final class PageEditor {
     func convert(_ files: [URL], pageSize: CGSize = CGSize(width: 612, height: 792),
                  completion: @escaping @MainActor @Sendable (Result<URL, Error>) -> Void) {
         let cancel = ConversionCancel()
+        let allowDocuments = Settings.convertsDocuments
         let progress = ProgressSheet.show(on: window, message: files.count == 1 ? "Converting…" : "Combining \(files.count) files…",
                                           cancel: cancel)
         EngineExecutor.conversion.async {
@@ -249,7 +257,7 @@ final class PageEditor {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
                 let url = folder.appendingPathComponent("combined.pdf")
                 do {
-                    try PDFFiles.combine(files, into: url, pageSize: pageSize, cancel: cancel)
+                    try PDFFiles.combine(files, into: url, pageSize: pageSize, allowDocuments: allowDocuments, cancel: cancel)
                 } catch {
                     try? FileManager.default.removeItem(at: folder)
                     throw error

@@ -14,6 +14,8 @@ enum MainMenu {
         let check = app.addItem(withTitle: "Check for Updates…", action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)), keyEquivalent: "")
         check.target = updater
         app.addItem(.separator())
+        app.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+        app.addItem(.separator())
         let services = app.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
         services.submenu = NSMenu(title: "Services")
         NSApp.servicesMenu = services.submenu

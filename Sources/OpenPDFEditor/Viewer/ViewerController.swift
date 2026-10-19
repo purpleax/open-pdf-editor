@@ -497,12 +497,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
 
     func pagesView(_ view: PagesView, activate link: PageLink, onPage page: Int) {
         if link.isExternal {
-            guard let url = URL(string: link.uri), let scheme = url.scheme?.lowercased(),
-                  ["http", "https", "mailto"].contains(scheme) else {
-                NSSound.beep()
-                return
-            }
-            NSWorkspace.shared.open(url)
+            WebLinks.open(link.uri, from: view.window)
         } else if let target = link.targetPage {
             go(to: ViewLocation(page: target, point: link.targetPoint))
         }

@@ -84,6 +84,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         acknowledgements?.showWindow(nil)
     }
 
+    @objc func showSettings(_ sender: Any?) {
+        SettingsWindowController.shared.showWindow(nil)
+    }
+
     @objc func openWebsite(_ sender: Any?) {
         NSWorkspace.shared.open(Self.website)
     }
@@ -99,9 +103,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let open = NSOpenPanel()
         open.allowsMultipleSelection = true
         open.allowedContentTypes = PageEditor.insertableTypes
-        open.message = "Choose PDFs, images or other documents. They are combined in name order."
+        open.message = Settings.convertsDocuments
+            ? "Choose PDFs, images or other documents. They are combined in name order."
+            : "Choose PDFs or images. They are combined in name order. (Other documents can be turned on in Settings.)"
         open.prompt = "Choose"
         guard open.runModal() == .OK, !open.urls.isEmpty else { return }
+        let allowDocuments = Settings.convertsDocuments
         let files = open.urls.sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
         let save = NSSavePanel()
         save.allowedContentTypes = [.pdf]
@@ -113,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let progress = ProgressSheet.show(on: nil, message: files.count == 1 ? "Converting…" : "Combining \(files.count) files…",
                                           cancel: cancel)
         EngineExecutor.conversion.async {
-            let result = Result { try PageEditor.writeReplacing(url) { try PDFFiles.combine(files, into: $0, cancel: cancel) } }
+            let result = Result { try PageEditor.writeReplacing(url) { try PDFFiles.combine(files, into: $0, allowDocuments: allowDocuments, cancel: cancel) } }
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     progress?.close()

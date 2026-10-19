@@ -71,7 +71,7 @@ import Testing
         let stop = Flag()
         let group = DispatchGroup()
         DispatchQueue.global().async(group: group) {
-            while !stop.isSet { try? PDFFiles.combine([text], into: out) }
+            while !stop.isSet { try? PDFFiles.combine([text], into: out, allowDocuments: true) }
         }
         for _ in 0..<2 {
             DispatchQueue.global().async(group: group) {
@@ -87,6 +87,30 @@ import Testing
         #expect(try doc.annotations(page: 0).first?.kind == .freeText)
     }
 
+    /// With other documents turned off in Settings, only PDFs and images are
+    /// read, by content: an HTML file named .png is refused too.
+    @Test func documentsCanBeTurnedOff() throws {
+        let image = temporaryURL("square.png")
+        let html = temporaryURL("page.html")
+        let disguised = temporaryURL("page.png")
+        let text = temporaryURL("notes.txt")
+        let url = temporaryURL("combined.pdf")
+        defer { [image, html, disguised, text, url].forEach { try? FileManager.default.removeItem(at: $0) } }
+        try PageTests.writePNG(to: image, width: 400, height: 300)
+        let page = "<html><body><p>Converted</p><img src=\"square.png\"></body></html>"
+        try page.write(to: html, atomically: true, encoding: .utf8)
+        try page.write(to: disguised, atomically: true, encoding: .utf8)
+        try "Plain text\n".write(to: text, atomically: true, encoding: .utf8)
+
+        try PDFFiles.combine([Corpus.root.appendingPathComponent("text.pdf"), image], into: url, allowDocuments: false)
+        #expect(try EngineDocument(url: url).pageCount() == 4)
+        for file in [html, disguised, text] {
+            #expect(throws: EngineError.self) { try PDFFiles.combine([file], into: url, allowDocuments: false) }
+        }
+        try PDFFiles.combine([html], into: url, allowDocuments: true)
+        #expect(try EngineDocument(url: url).text(page: 0).string.contains("Converted"))
+    }
+
     @Test func conversionCanBeCancelled() throws {
         let big = temporaryURL("big.txt")
         let url = temporaryURL("big.pdf")
@@ -96,13 +120,13 @@ import Testing
 
         let cancelledFirst = ConversionCancel()
         cancelledFirst.cancel()
-        #expect(throws: EngineError.self) { try PDFFiles.combine([big], into: url, cancel: cancelledFirst) }
+        #expect(throws: EngineError.self) { try PDFFiles.combine([big], into: url, allowDocuments: true, cancel: cancelledFirst) }
 
         let cancel = ConversionCancel()
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { cancel.cancel() }
         let start = Date()
         do {
-            try PDFFiles.combine([big], into: url, cancel: cancel)
+            try PDFFiles.combine([big], into: url, allowDocuments: true, cancel: cancel)
             Issue.record("a 36 MB text file converted in under 0.3 s")
         } catch let error as EngineError {
             #expect(error.message == "Cancelled")

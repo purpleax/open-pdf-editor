@@ -395,7 +395,10 @@ final class PagesView: NSView, NSMenuItemValidation {
             NSCursor.arrow.set()
             return
         }
-        if link(at: point, page: page) != nil {
+        let link = link(at: point, page: page)
+        let address = link.flatMap { $0.isExternal ? WebLinks.url($0.uri)?.absoluteString : nil }
+        if toolTip != address { toolTip = address }
+        if link != nil {
             NSCursor.pointingHand.set()
         } else if let text = model.cachedText(page: page), text.lines.contains(where: { $0.bounds.insetBy(dx: -2, dy: -2).contains(point) }) {
             NSCursor.iBeam.set()

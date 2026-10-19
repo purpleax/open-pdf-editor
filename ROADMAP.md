@@ -109,9 +109,10 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [ ] Fill in and save forms
 - [ ] Create and edit text fields, checkboxes, radio buttons, dropdowns and signature fields
 - [ ] Flatten forms
-- [ ] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)
+- [x] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)
   - Open web and email links (pages and bookmarks): a PDF can send you to any address its author chose
   - Create PDF from HTML, SVG, EPUB, XPS, Word, Excel and PowerPoint files: MuPDF's parsers for those formats, and HTML and SVG reading images from the source file's folder
+  - With links off, clicking one shows its address and offers Settings; link tooltips show the address. With conversion off, the engine registers only the PDF and image handlers and checks each file's content, so a renamed file is refused too.
 - [x] Updates only through Check for Updates…: no automatic checks, including where an earlier version saved a yes to Sparkle's question
 
 ## Phase 5: Content editing (0.5.0)

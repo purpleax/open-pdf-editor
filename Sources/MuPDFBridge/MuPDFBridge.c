@@ -2007,11 +2007,13 @@ void opdf_cancel_free(opdf_cancel *cancel) { free(cancel); }
 
 // A context whose memory is counted against a budget of its own; release
 // the budget with release_budget after dropping the context. `owner` and
-// `alloc` must outlive the context. `all_handlers` registers every document
-// handler: only ever in a context like this, which never holds the open
-// document.
+// `alloc` must outlive the context. `handlers` registers document handlers
+// (only ever in a context like this, which never holds the open document):
+// none, PDF and images only, or every kind MuPDF reads.
+enum capped_handlers { NO_HANDLERS, PDF_AND_IMAGE_HANDLERS, ALL_HANDLERS };
+extern fz_document_handler img_document_handler;
 static fz_context *new_capped_context(allocator_owner *owner, fz_alloc_context *alloc, opdf_cancel *cancel,
-                                      bool all_handlers) {
+                                      enum capped_handlers handlers) {
     owner->budget = -1;
     owner->limit = OPDF_CONVERSION_MEMORY;
     owner->cancel = cancel;
@@ -2028,9 +2030,15 @@ static fz_context *new_capped_context(allocator_owner *owner, fz_alloc_context *
     fz_context *ctx = fz_new_context(alloc, shared_locks(), FZ_STORE_DEFAULT);
     if (!ctx) return NULL;
     make_quiet(ctx);
-    if (all_handlers) {
-        fz_try(ctx)
-            fz_register_document_handlers(ctx);
+    if (handlers != NO_HANDLERS) {
+        fz_try(ctx) {
+            if (handlers == ALL_HANDLERS) {
+                fz_register_document_handlers(ctx);
+            } else {
+                fz_register_document_handler(ctx, &pdf_document_handler);
+                fz_register_document_handler(ctx, &img_document_handler);
+            }
+        }
         fz_catch(ctx) {
             fz_drop_context(ctx);
             return NULL;
@@ -2057,11 +2065,12 @@ static void set_capped_error(opdf_error *err, fz_context *ctx, allocator_owner *
 }
 
 bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
-                        opdf_cancel *cancel, opdf_error *err) {
+                        bool allow_documents, opdf_cancel *cancel, opdf_error *err) {
     clear_error(err);
     allocator_owner allocator;
     fz_alloc_context alloc;
-    fz_context *ctx = new_capped_context(&allocator, &alloc, cancel, true);
+    fz_context *ctx = new_capped_context(&allocator, &alloc, cancel,
+                                         allow_documents ? ALL_HANDLERS : PDF_AND_IMAGE_HANDLERS);
     if (!ctx) {
         set_no_context_error(err, &allocator);
         release_budget(&allocator);
@@ -2086,6 +2095,10 @@ bool opdf_convert_files(const char *const *paths, int count, const char *out_pat
         out = pdf_create_document(ctx);
         int pages_total = 0;
         for (int f = 0; f < count; f++) {
+            // With only the PDF and image handlers registered, a file is
+            // recognised by its content as one of those, or refused.
+            if (!allow_documents && !fz_recognize_document_content(ctx, paths[f]))
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "Only PDFs and images can be converted while converting other documents is turned off in Settings");
             src = fz_open_document(ctx, paths[f]);
             if (fz_needs_password(ctx, src)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "A file is password protected");
             pdf_document *src_pdf = pdf_specifics(ctx, src);
@@ -2169,7 +2182,7 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
     clear_error(err);
     allocator_owner allocator;
     fz_alloc_context alloc;
-    fz_context *ctx = new_capped_context(&allocator, &alloc, cancel, false);
+    fz_context *ctx = new_capped_context(&allocator, &alloc, cancel, NO_HANDLERS);
     if (!ctx) {
         set_no_context_error(err, &allocator);
         release_budget(&allocator);

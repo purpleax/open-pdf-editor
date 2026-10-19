@@ -139,15 +139,15 @@ import UniformTypeIdentifiers
         let text = temporaryURL("notes.txt")
         let url = temporaryURL("combined.pdf")
         defer { [image, text, url].forEach { try? FileManager.default.removeItem(at: $0) } }
-        try writePNG(to: image, width: 400, height: 300)
+        try Self.writePNG(to: image, width: 400, height: 300)
         try "Plain text becomes a page.\n".write(to: text, atomically: true, encoding: .utf8)
-        try PDFFiles.combine([Corpus.root.appendingPathComponent("text.pdf"), image, text], into: url)
+        try PDFFiles.combine([Corpus.root.appendingPathComponent("text.pdf"), image, text], into: url, allowDocuments: true)
         let combined = try EngineDocument(url: url)
         #expect(try combined.pageCount() == 5)
         #expect(try titles(combined).prefix(3) == ["Chapter One", "Chapter Two", "Chapter Three"])
         #expect(try combined.text(page: 4).string.contains("Plain text becomes a page."))
-        #expect(throws: EngineError.self) { try PDFFiles.combine([Corpus.root.appendingPathComponent("encrypted.pdf")], into: url) }
-        #expect(throws: EngineError.self) { try PDFFiles.combine([], into: url) }
+        #expect(throws: EngineError.self) { try PDFFiles.combine([Corpus.root.appendingPathComponent("encrypted.pdf")], into: url, allowDocuments: true) }
+        #expect(throws: EngineError.self) { try PDFFiles.combine([], into: url, allowDocuments: true) }
     }
 
     @Test func reduce() throws {
@@ -155,8 +155,8 @@ import UniformTypeIdentifiers
         let source = temporaryURL("big.pdf")
         let small = temporaryURL("small.pdf")
         defer { [image, source, small].forEach { try? FileManager.default.removeItem(at: $0) } }
-        try writePNG(to: image, width: 3000, height: 3000, noisy: true)
-        try PDFFiles.combine([image], into: source)
+        try Self.writePNG(to: image, width: 3000, height: 3000, noisy: true)
+        try PDFFiles.combine([image], into: source, allowDocuments: true)
         try PDFFiles.reduce(source, quality: .medium, into: small)
         let before = try FileManager.default.attributesOfItem(atPath: source.path)[.size] as? Int ?? 0
         let after = try FileManager.default.attributesOfItem(atPath: small.path)[.size] as? Int ?? 0
@@ -165,7 +165,7 @@ import UniformTypeIdentifiers
         #expect(throws: EngineError.self) { try PDFFiles.reduce(Corpus.root.appendingPathComponent("encrypted.pdf"), quality: .high, into: small) }
     }
 
-    private func writePNG(to url: URL, width: Int, height: Int, noisy: Bool = false) throws {
+    static func writePNG(to url: URL, width: Int, height: Int, noisy: Bool = false) throws {
         let space = CGColorSpaceCreateDeviceRGB()
         let context = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                              space: space, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))

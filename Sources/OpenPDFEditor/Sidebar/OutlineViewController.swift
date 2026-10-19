@@ -82,7 +82,12 @@ final class OutlineViewController: NSViewController, NSOutlineViewDataSource, NS
         let identifier = NSUserInterfaceItemIdentifier("OutlineCell")
         let cell = (outlineView.makeView(withIdentifier: identifier, owner: nil) as? OutlineCell) ?? OutlineCell(identifier: identifier)
         cell.title.stringValue = item.title
-        cell.title.toolTip = item.title
+        // A web link's tooltip shows where it goes.
+        if item.page == nil, let url = item.uri.flatMap(WebLinks.url) {
+            cell.title.toolTip = "\(item.title)\n\(url.absoluteString)"
+        } else {
+            cell.title.toolTip = item.title
+        }
         cell.pageLabel.stringValue = item.page.map { "\($0 + 1)" } ?? ""
         return cell
     }
@@ -91,9 +96,8 @@ final class OutlineViewController: NSViewController, NSOutlineViewDataSource, NS
         guard let item = outlineView.item(atRow: outlineView.clickedRow) as? OutlineItem else { return }
         if let page = item.page {
             viewer.go(to: ViewLocation(page: page, point: item.point))
-        } else if let uri = item.uri, let url = URL(string: uri), let scheme = url.scheme?.lowercased(),
-                  ["http", "https", "mailto"].contains(scheme) {
-            NSWorkspace.shared.open(url)
+        } else if let uri = item.uri, WebLinks.url(uri) != nil {
+            WebLinks.open(uri, from: view.window)
         }
     }
 }

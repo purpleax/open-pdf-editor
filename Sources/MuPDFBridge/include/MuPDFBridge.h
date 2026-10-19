@@ -342,11 +342,12 @@ void opdf_cancel_free(opdf_cancel *cancel);
 // Makes one PDF of several files: PDFs (pages copied as they are), images,
 // and the other kinds MuPDF reads (EPUB, XPS, CBZ, SVG, HTML, text, Office),
 // which are laid out on pages of width x height points. Uses its own MuPDF
-// context with every document handler; nothing is open afterwards.
-// Memory is capped (and cancel, which may be NULL, stops it at the next
-// allocation).
+// context, with every document handler only when allow_documents is true
+// (otherwise only PDFs and images are read, whatever a file is named);
+// nothing is open afterwards. Memory is capped (and cancel, which may be
+// NULL, stops it at the next allocation).
 bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
-                        opdf_cancel *cancel, opdf_error *err);
+                        bool allow_documents, opdf_cancel *cancel, opdf_error *err);
 
 // Writes a smaller copy of the PDF at in_path to out_path: images above a
 // resolution are downsampled and recompressed (quality 0 high, 1 medium,

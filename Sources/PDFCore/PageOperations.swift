@@ -90,9 +90,10 @@ public enum PDFFiles {
 
     /// Makes one PDF of these files, in order: PDFs are copied as they are;
     /// images and the other kinds MuPDF reads are laid out on pages of
-    /// `pageSize` where they reflow.
+    /// `pageSize` where they reflow. Unless `allowDocuments`, only PDFs and
+    /// images are read (by content, whatever a file is named).
     public static func combine(_ files: [URL], into url: URL, pageSize: CGSize = CGSize(width: 612, height: 792),
-                               cancel: ConversionCancel? = nil) throws {
+                               allowDocuments: Bool, cancel: ConversionCancel? = nil) throws {
         var error = opdf_error()
         let paths = files.map { strdup($0.path(percentEncoded: false)) }
         defer { paths.forEach { free($0) } }
@@ -100,7 +101,7 @@ public enum PDFFiles {
         let ok = url.withUnsafeFileSystemRepresentation { out in
             out.map { out in constPaths.withUnsafeBufferPointer {
                 opdf_convert_files($0.baseAddress, Int32($0.count), out, Float(pageSize.width), Float(pageSize.height),
-                                   cancel?.handle, &error)
+                                   allowDocuments, cancel?.handle, &error)
             } } ?? false
         }
         guard ok else { throw EngineError(error) }
