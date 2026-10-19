@@ -37,10 +37,14 @@ enum MainMenu {
         file.addItem(.separator())
         file.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         file.addItem(withTitle: "Save", action: #selector(NSDocument.save(_:)), keyEquivalent: "s")
-        file.addItem(withTitle: "Duplicate", action: #selector(NSDocument.duplicate(_:)), keyEquivalent: "S")
-        file.addItem(withTitle: "Rename…", action: #selector(NSDocument.rename(_:)), keyEquivalent: "")
-        file.addItem(withTitle: "Move To…", action: #selector(NSDocument.move(_:)), keyEquivalent: "")
-        file.addItem(withTitle: "Revert To", action: #selector(NSDocument.revertToSaved(_:)), keyEquivalent: "")
+        // With autosave: Duplicate, Rename, Move To and Revert To (versions);
+        // without: Save As… and Revert to Saved (see FileMenuDelegate).
+        file.addItem(withTitle: "Save As…", action: #selector(NSDocument.saveAs(_:)), keyEquivalent: "S").tag = FileMenuDelegate.manualTag
+        file.addItem(withTitle: "Duplicate", action: #selector(NSDocument.duplicate(_:)), keyEquivalent: "S").tag = FileMenuDelegate.autosaveTag
+        file.addItem(withTitle: "Rename…", action: #selector(NSDocument.rename(_:)), keyEquivalent: "").tag = FileMenuDelegate.autosaveTag
+        file.addItem(withTitle: "Move To…", action: #selector(NSDocument.move(_:)), keyEquivalent: "").tag = FileMenuDelegate.autosaveTag
+        file.addItem(withTitle: "Revert To", action: #selector(NSDocument.revertToSaved(_:)), keyEquivalent: "").tag = FileMenuDelegate.revertTag
+        file.delegate = FileMenuDelegate.shared
         file.addItem(withTitle: "Show in Finder", action: #selector(AppDelegate.showInFinder(_:)), keyEquivalent: "")
         file.addItem(.separator())
         file.addItem(withTitle: "Create PDF from Files…", action: #selector(AppDelegate.createPDFFromFiles(_:)), keyEquivalent: "n")
@@ -206,5 +210,28 @@ enum MainMenu {
         let sub = NSMenu(title: title)
         item.submenu = sub
         return sub
+    }
+}
+
+/// Shows the File menu's saving items for the Settings choice: Duplicate,
+/// Rename, Move To and Revert To with autosave, Save As… and Revert to Saved
+/// without.
+@MainActor
+final class FileMenuDelegate: NSObject, NSMenuDelegate {
+    static let shared = FileMenuDelegate()
+    static let manualTag = 9001
+    static let autosaveTag = 9002
+    static let revertTag = 9003
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let automatic = Settings.savesAutomatically
+        for item in menu.items {
+            switch item.tag {
+            case Self.manualTag: item.isHidden = automatic
+            case Self.autosaveTag: item.isHidden = !automatic
+            case Self.revertTag: item.title = automatic ? "Revert To" : "Revert to Saved"
+            default: break
+            }
+        }
     }
 }

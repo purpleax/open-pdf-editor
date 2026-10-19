@@ -1,10 +1,19 @@
 import AppKit
 
-/// Switches for features that add a security risk. Each is off until turned
-/// on in the Settings window (ROADMAP.md, Decisions: Risky features).
+/// The Settings window's switches: features that add a security risk, each
+/// off until turned on (ROADMAP.md, Decisions: Risky features), and saving.
 enum Settings {
     private static let openWebLinksKey = "OpenWebLinks"
     private static let convertDocumentsKey = "ConvertDocuments"
+    private static let autosaveKey = "AutosaveDocuments"
+
+    /// Documents save themselves as they change (macOS autosave, with
+    /// Versions); off, they are saved with File › Save, and closing asks.
+    /// Read from any thread (NSDocument asks from its own).
+    nonisolated static var savesAutomatically: Bool {
+        get { UserDefaults.standard.bool(forKey: autosaveKey) }
+        set { UserDefaults.standard.set(newValue, forKey: autosaveKey) }
+    }
 
     /// Clicking a web or email link in a page or bookmark opens it.
     static var opensWebLinks: Bool {
@@ -64,9 +73,10 @@ final class SettingsWindowController: NSWindowController {
 
     private let links = NSButton(checkboxWithTitle: "Open web and email links", target: nil, action: nil)
     private let documents = NSButton(checkboxWithTitle: "Convert other documents into PDFs", target: nil, action: nil)
+    private let autosave = NSButton(checkboxWithTitle: "Save changes automatically", target: nil, action: nil)
 
     private init() {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 200),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.isReleasedWhenClosed = false
@@ -76,7 +86,11 @@ final class SettingsWindowController: NSWindowController {
         links.action = #selector(toggle(_:))
         documents.target = self
         documents.action = #selector(toggle(_:))
+        autosave.target = self
+        autosave.action = #selector(toggle(_:))
         let stack = NSStackView(views: [
+            autosave,
+            Self.note("Documents save themselves as you work, and File › Revert To shows earlier versions. Off, changes are kept only when you choose File › Save, and closing a changed document asks first."),
             links,
             Self.note("Clicking a link in a page or bookmark opens the web page or email address its author chose."),
             documents,
@@ -86,6 +100,7 @@ final class SettingsWindowController: NSWindowController {
         stack.alignment = .leading
         stack.spacing = 6
         stack.setCustomSpacing(16, after: stack.views[1])
+        stack.setCustomSpacing(16, after: stack.views[3])
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         window.contentView = stack
         window.setContentSize(stack.fittingSize)
@@ -101,6 +116,7 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func reload() {
+        autosave.state = Settings.savesAutomatically ? .on : .off
         links.state = Settings.opensWebLinks ? .on : .off
         documents.state = Settings.convertsDocuments ? .on : .off
     }
@@ -108,6 +124,7 @@ final class SettingsWindowController: NSWindowController {
     @objc private func toggle(_ sender: NSButton) {
         if sender === links { Settings.opensWebLinks = sender.state == .on }
         if sender === documents { Settings.convertsDocuments = sender.state == .on }
+        if sender === autosave { Settings.savesAutomatically = sender.state == .on }
     }
 
     /// A line under a checkbox, in line with its title rather than its box.

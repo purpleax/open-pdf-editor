@@ -21,7 +21,7 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Undo | MuPDF's document journal, bridged to `NSUndoManager` | 2026-10-18 |
 | Security review | Before every release, a separate review acting as a security researcher scans the code (the C bridge, PDF parsing, links, attachments, the update path and release scripts). Findings above Low are fixed before publishing. | 2026-10-18 |
 | Saving | Every save writes the original file byte for byte with all changes since opening appended as one incremental update (keeps signatures valid). The open document is never itself saved: MuPDF writes a snapshot and the bridge restores its incremental-section count, so saves don't disturb the undo journal and each save is complete on its own. Repaired files are written whole. Redaction and Reduce File Size will force a full rewrite. | 2026-10-19 |
-| Autosave | Autosave in place with Versions, as in Preview (File › Revert To, Duplicate, Rename, Move To); possible because saving keeps undo history | 2026-10-19 |
+| Autosave | A Settings switch, Save changes automatically, off by default (changed 2026-10-19 from always on). On: autosave in place with Versions, as in Preview (File › Revert To, Duplicate, Rename, Move To). Off: File › Save and Save As…, Revert to Saved, and closing a changed document asks. Undo survives saving either way. | 2026-10-19 |
 | Annotation replies and status | Replies are Text annotations with /IRT, and review status a hidden reply with /State and /StateModel Review, as Acrobat writes them. They are not drawn on the page; they appear in the Comments list. | 2026-10-19 |
 | Markup tools | A markup bar under the toolbar (View › Show Markup Toolbar, ⇧⌘A) with the tools, colour and line width, as in Preview; the inspector edits the selected annotation | 2026-10-19 |
 | Risky features | Any feature that adds a security risk (for example form JavaScript) gets a switch in a Settings window (⌘,) and is off until turned on. The phase that adds the first such feature adds the Settings window. Each one is named in its roadmap item, with what it exposes. Features already in the app that get a switch: opening web and email links, and converting non-PDF, non-image documents in Create PDF from Files. Saving attachments has none (it already warns and quarantines). | 2026-10-19 |
@@ -173,6 +173,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **Next release** (draft): Saving automatically is now a choice in Settings, and off to begin with: changes are kept when you choose File › Save, and closing a changed document asks first. Turn on Save changes automatically for the previous behaviour, with File › Revert To for earlier versions.
 
 - **0.5.0**: Editing. Edit › Edit Content (⌥⌘E) lets you change what's on the page: click text with the Text tool and double-click to retype it, or change its font, size and colour in the inspector (when a character isn't in the PDF's own font, a matching Mac font is embedded with just the letters used); add, move, resize, replace and delete images; and draw links to web pages, email addresses or other pages. Pages › Add Headers & Footers, Add Page Numbers and Add Watermark stamp text on all or some pages, and can be removed again. Change the document's title, author, subject and keywords in the inspector. When no document is open, a new welcome window offers New PDF or Open…, and File › New makes a blank PDF. Every change can be undone.
 

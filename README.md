@@ -15,7 +15,7 @@ A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.c
 - Headers, footers, page numbers and watermarks; edit the document's title, author, subject and keywords
 - Fill in forms; add, move and set up text fields, checkboxes, radio buttons, dropdowns, list boxes and signature fields; flatten forms
 - Settings switches, off until turned on, for opening web links and converting documents other than PDFs and images
-- Undo that survives saving; autosave with Versions; saves keep digital signatures valid
+- Undo that survives saving; autosave with Versions as a setting; saves keep digital signatures valid
 - Password-protected PDFs, printing, window tabs, full screen, Dark Mode and VoiceOver
 - Updates when you choose Check for Updates…
 

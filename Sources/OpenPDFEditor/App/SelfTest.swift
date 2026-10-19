@@ -38,7 +38,9 @@ enum SelfTest {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 let environment = ProcessInfo.processInfo.environment
-                if environment["OPDF_SELFTEST_FORMS"] != nil {
+                if environment["OPDF_SELFTEST_MANUAL"] != nil {
+                    manualSaveSteps(document)
+                } else if environment["OPDF_SELFTEST_FORMS"] != nil {
                     formSteps(document)
                 } else if environment["OPDF_SELFTEST_CONTENT"] != nil {
                     contentSteps(document)
@@ -461,6 +463,34 @@ enum SelfTest {
                 if let url = document.fileURL, let saved = try? EngineDocument(url: url) {
                     say("saved: title \(saved.metadata("info:Title") ?? "none"), links \((try? saved.links(page: 0).count) ?? -1)")
                 }
+                finish()
+            }
+        }
+    }
+
+    /// Saving by hand (Settings › Save changes automatically off): an edit
+    /// leaves the document marked changed until File › Save.
+    static func manualSaveSteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let viewer = controller.viewer, let window = controller.window else {
+            say("FAIL no viewer")
+            return finish()
+        }
+        say("autosaves: \(EditorDocument.autosavesInPlace)")
+        let note = try? viewer.annotations.createNote(page: 0, at: CGPoint(x: 400, y: 200))
+        say("note made: \(note != nil); edited: \(document.isDocumentEdited); window shows it: \(window.isDocumentEdited)")
+        if let file = NSApp.mainMenu?.item(withTitle: "File")?.submenu {
+            FileMenuDelegate.shared.menuNeedsUpdate(file)
+            let shown = file.items.filter { !$0.isHidden && $0.tag >= FileMenuDelegate.manualTag }.map(\.title)
+            say("File menu saving items: \(shown)")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            let onDisk = (try? EngineDocument(url: document.fileURL!).annotations(page: 0).count) ?? -1
+            say("annotations on disk before saving: \(onDisk); edited: \(document.isDocumentEdited); window shows it: \(window.isDocumentEdited)")
+            document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let saved = (try? EngineDocument(url: document.fileURL!).annotations(page: 0).count) ?? -1
+                say("after File › Save: on disk \(saved); edited: \(document.isDocumentEdited)")
                 finish()
             }
         }

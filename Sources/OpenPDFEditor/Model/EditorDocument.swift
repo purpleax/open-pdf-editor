@@ -24,8 +24,9 @@ final class EditorDocument: NSDocument, EditRecorder {
 
     override nonisolated class var readableTypes: [String] { ["com.adobe.pdf"] }
     override nonisolated class var writableTypes: [String] { ["com.adobe.pdf"] }
-    override nonisolated class var autosavesInPlace: Bool { true }
-    override nonisolated class var preservesVersions: Bool { true }
+    // Settings › Save changes automatically (off by default).
+    override nonisolated class var autosavesInPlace: Bool { Settings.savesAutomatically }
+    override nonisolated class var preservesVersions: Bool { Settings.savesAutomatically }
     override nonisolated class func canConcurrentlyReadDocuments(ofType typeName: String) -> Bool { true }
 
     override nonisolated func read(from url: URL, ofType typeName: String) throws {
@@ -66,8 +67,12 @@ final class EditorDocument: NSDocument, EditRecorder {
 
     // MARK: Undo
 
+    // The change count is kept here as well as from the undo manager: with
+    // autosave off, closing must know of every change. (Each edit, undo and
+    // redo counts the same either way, so the edited state stays right.)
     func didEdit(actionName: String, change: ModelChange) {
         registerUndo(actionName: actionName, change: change, redo: false)
+        updateChangeCount(.changeDone)
     }
 
     /// Each step undone or redone registers its opposite, as NSUndoManager expects.
@@ -91,6 +96,7 @@ final class EditorDocument: NSDocument, EditRecorder {
         }
         model.changed(change)
         registerUndo(actionName: actionName, change: change, redo: !redo)
+        updateChangeCount(redo ? .changeRedone : .changeUndone)
     }
 
     // MARK: Saving

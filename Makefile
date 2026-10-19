@@ -59,17 +59,20 @@ selftest: build corpus
 	cp "$$(swift build -c release --arch arm64 --scratch-path .build-selftest --show-bin-path)/$(EXE)" "build/selftest/Self Test.app/Contents/MacOS/$(EXE)"
 	scripts/sign-app.sh "build/selftest/Self Test.app"
 	OPDF_SELFTEST="$(CURDIR)/build/corpus/text.pdf" OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest" \
-		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
 	cat build/selftest/log.txt
 	OPDF_SELFTEST="$(CURDIR)/build/corpus/forms.pdf" OPDF_SELFTEST_FORMS=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/forms" \
-		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
 	cat build/selftest/forms/log.txt
 	OPDF_SELFTEST="$(CURDIR)/build/corpus/text.pdf" OPDF_SELFTEST_CONTENT=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/content" \
-		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
 	cat build/selftest/content/log.txt
 	OPDF_SELFTEST_WELCOME="$(CURDIR)/build/selftest/welcome" \
-		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
 	cat build/selftest/welcome/log.txt
+	OPDF_SELFTEST="$(CURDIR)/build/corpus/text.pdf" OPDF_SELFTEST_MANUAL=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/manual" \
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments NO
+	cat build/selftest/manual/log.txt
 
 # Copy the app to /Applications.
 install: build
