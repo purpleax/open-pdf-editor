@@ -384,6 +384,21 @@ function makeFormTrees() {
 	doc.save(out + "/formbig.pdf", "compress")
 }
 
+// --- xmp.pdf: Info and matching XMP metadata, claiming PDF/A-2b ------------
+function makeXMP() {
+	var doc = newDocument()
+	addTextPage(doc, LETTER, [[72, 90, 24, "Metadata"]])
+	var info = doc.addObject({ Title: doc.newString("Old title"), Author: doc.newString("Old author"),
+		Producer: doc.newString("make-corpus") })
+	doc.getTrailer().put("Info", info)
+	var xmp = '<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">' +
+		'<rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/" pdfaid:part="2" pdfaid:conformance="B">' +
+		'<dc:title><rdf:Alt><rdf:li xml:lang="x-default">Old title</rdf:li></rdf:Alt></dc:title></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>'
+	var stream = doc.addStream(xmp, { Type: doc.newName("Metadata"), Subtype: doc.newName("XML") })
+	doc.getTrailer().get("Root").put("Metadata", stream)
+	doc.save(out + "/xmp.pdf")
+}
+
 // --- Hostile files, for the security tests ----------------------------------
 
 // Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
@@ -540,4 +555,5 @@ makeLayers()
 makeLong()
 makeForms()
 makeFormBomb()
+makeXMP()
 print("corpus: wrote the test PDFs to " + out)

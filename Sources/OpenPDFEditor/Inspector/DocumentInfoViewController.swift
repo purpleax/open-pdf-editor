@@ -1,14 +1,19 @@
 import AppKit
 import PDFCore
 
-/// The inspector: the document's properties.
+/// The inspector: the document's properties. Title, Author, Subject and
+/// Keywords can be changed; each change is one undoable step.
 @MainActor
-final class DocumentInfoViewController: NSViewController {
+final class DocumentInfoViewController: NSViewController, NSTextFieldDelegate {
     let viewer: ViewerController
     let fileURL: URL?
     private let list = NSStackView()
     private var pageSizeField: NSTextField?
     private var pageCountField: NSTextField?
+    /// The editable fields, by Info key.
+    private var editable: [String: NSTextField] = [:]
+    private var valueFields: [String: NSTextField] = [:]
+    private static let editableKeys = ["Title", "Author", "Subject", "Keywords"]
 
     init(viewer: ViewerController, fileURL: URL?) {
         self.viewer = viewer
@@ -84,8 +89,22 @@ final class DocumentInfoViewController: NSViewController {
             let name = NSTextField(labelWithString: label)
             name.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
             name.textColor = .secondaryLabelColor
-            let field = NSTextField(wrappingLabelWithString: value ?? "—")
-            field.isSelectable = true
+            let field: NSTextField
+            if Self.editableKeys.contains(label) {
+                field = NSTextField(string: value ?? "")
+                field.placeholderString = "—"
+                field.isEditable = viewer.model.isEditable
+                field.delegate = self
+                field.target = self
+                field.action = #selector(infoCommitted(_:))
+                field.lineBreakMode = .byTruncatingTail
+                field.setAccessibilityLabel(label)
+                editable[label] = field
+            } else {
+                field = NSTextField(wrappingLabelWithString: value ?? "—")
+                field.isSelectable = true
+                valueFields[label] = field
+            }
             field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             if label == "Page Size" { pageSizeField = field }
             if label == "Pages" { pageCountField = field }
@@ -102,6 +121,45 @@ final class DocumentInfoViewController: NSViewController {
         }
         if let stack = list.superview { list.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true }
         pageDidChange()
+    }
+
+    /// Shows the document's information again (after a change, undo or redo),
+    /// leaving alone a field being typed in.
+    func reload() {
+        guard isViewLoaded else { return }
+        let engine = viewer.model.engine
+        for (key, field) in editable where field.currentEditor() == nil {
+            field.stringValue = engine.metadata("info:\(key)") ?? ""
+        }
+        let dates = DateFormatter()
+        dates.dateStyle = .medium
+        dates.timeStyle = .short
+        if let modified = engine.metadata("info:ModDate") {
+            valueFields["Modified"]?.stringValue = PDFDate.parse(modified).map(dates.string) ?? modified
+        }
+    }
+
+    @objc private func infoCommitted(_ sender: NSTextField) {
+        guard let key = editable.first(where: { $0.value === sender })?.key else { return }
+        let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard value != (viewer.model.engine.metadata("info:\(key)") ?? "") else { return }
+        do {
+            try viewer.model.edit("Change \(key)", pages: []) { engine in
+                switch key {
+                case "Title": try engine.setMetadata(title: value)
+                case "Author": try engine.setMetadata(author: value)
+                case "Subject": try engine.setMetadata(subject: value)
+                default: try engine.setMetadata(keywords: value)
+                }
+            }
+        } catch {
+            NSSound.beep()
+            reload()
+        }
+    }
+
+    func controlTextDidEndEditing(_ notification: Notification) {
+        if let field = notification.object as? NSTextField { infoCommitted(field) }
     }
 
     func pageDidChange() {

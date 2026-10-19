@@ -115,6 +115,18 @@ public final class EngineDocument: @unchecked Sendable {
         return String(cString: value)
     }
 
+    /// Sets the document's information (nil leaves a value, "" removes it)
+    /// and its modification date, as one step.
+    public func setMetadata(title: String? = nil, author: String? = nil, subject: String? = nil, keywords: String? = nil,
+                            now: Date = Date()) throws {
+        var error = opdf_error()
+        let copies: [UnsafeMutablePointer<CChar>?] = [title, author, subject, keywords].map { $0.flatMap { strdup($0) } }
+        defer { copies.forEach { free($0) } }
+        let p = copies.map { $0.map { UnsafePointer($0) } }
+        var spec = opdf_metadata_spec(title: p[0], author: p[1], subject: p[2], keywords: p[3])
+        guard opdf_metadata_set(handle, &spec, Int64(now.timeIntervalSince1970), &error) else { throw EngineError(error) }
+    }
+
     /// The transform from page space to view space: scaled, rotated clockwise
     /// by `rotation` degrees (a multiple of 90) and moved so the page's
     /// top-left corner is at the origin.

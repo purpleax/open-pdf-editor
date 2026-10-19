@@ -63,6 +63,7 @@ final class InspectorViewController: NSViewController {
     func refresh() {
         annotation.reload()
         field.reload()
+        document.reload()
         update()
     }
 

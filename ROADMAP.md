@@ -135,7 +135,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [ ] Headers, footers, watermarks and page numbers
 - [ ] Links
 - [ ] Edit text within a line: characters, font, size and colour
-- [ ] Edit metadata
+- [x] Edit metadata
+  - Title, Author, Subject and Keywords are edited in the inspector (one undoable step each), and ModDate is set. A file with XMP metadata gets a new XMP packet to match, keeping its PDF/A identification.
 
 ## Phase 6: Security and signing (0.6.0)
 

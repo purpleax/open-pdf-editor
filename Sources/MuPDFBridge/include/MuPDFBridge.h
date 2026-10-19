@@ -70,6 +70,21 @@ bool opdf_page_bounds_all(opdf_doc *doc, opdf_rect *out, int count, opdf_error *
 // A new string to free with opdf_free, or NULL when there is none.
 char *opdf_metadata(opdf_doc *doc, const char *key);
 
+// What opdf_metadata_set changes: NULL leaves a value as it is, "" removes
+// it. Each is at most OPDF_MAX_METADATA_TEXT bytes.
+typedef struct {
+    const char *title;
+    const char *author;
+    const char *subject;
+    const char *keywords;
+} opdf_metadata_spec;
+#define OPDF_MAX_METADATA_TEXT 65536
+
+// Sets the document's Title, Author, Subject and Keywords, and its ModDate
+// to `now` (seconds since 1970). A document with XMP metadata gets a new
+// XMP packet to match, keeping its PDF/A identification. One undoable step.
+bool opdf_metadata_set(opdf_doc *doc, const opdf_metadata_spec *spec, int64_t now, opdf_error *err);
+
 // The matrix from page space to view space for a page with these bounds.
 opdf_matrix opdf_page_matrix(opdf_rect bounds, float scale, int rotation);
 

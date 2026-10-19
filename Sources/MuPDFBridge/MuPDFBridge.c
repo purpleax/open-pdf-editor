@@ -2552,6 +2552,159 @@ bool opdf_flatten_form(opdf_doc *d, opdf_error *err) {
         } \
     } while (0)
 
+// --- Metadata -------------------------------------------------------------------
+
+static void append_xml_escaped(fz_context *ctx, fz_buffer *buf, const char *s) {
+    for (; s && *s; s++) {
+        switch (*s) {
+        case '&': fz_append_string(ctx, buf, "&amp;"); break;
+        case '<': fz_append_string(ctx, buf, "&lt;"); break;
+        case '>': fz_append_string(ctx, buf, "&gt;"); break;
+        case '"': fz_append_string(ctx, buf, "&quot;"); break;
+        default:
+            // Control characters aren't allowed in XML 1.0.
+            if ((unsigned char)*s >= 0x20 || *s == '\t' || *s == '\n' || *s == '\r') fz_append_byte(ctx, buf, *s);
+        }
+    }
+}
+
+// A PDF/A identification value from an old XMP packet ("1", "B"...), as
+// an attribute or an element; at most 8 letters and digits, else NULL.
+static bool find_xmp_value(const char *xmp, size_t len, const char *name, char out[9]) {
+    size_t n = strlen(name);
+    for (size_t i = 0; i + n < len; i++) {
+        if (memcmp(xmp + i, name, n)) continue;
+        size_t j = i + n;
+        if (j < len && xmp[j] == '=') j++;
+        if (j < len && (xmp[j] == '"' || xmp[j] == '\'' || xmp[j] == '>')) j++;
+        else continue;
+        size_t k = 0;
+        while (j < len && k < 8 && ((xmp[j] >= '0' && xmp[j] <= '9') || (xmp[j] >= 'A' && xmp[j] <= 'Z') || (xmp[j] >= 'a' && xmp[j] <= 'z')))
+            out[k++] = xmp[j++];
+        out[k] = 0;
+        if (k > 0) return true;
+    }
+    return false;
+}
+
+static void iso_date(int64_t t, char out[32]) {
+    time_t secs = (time_t)t;
+    struct tm tm;
+    gmtime_r(&secs, &tm);
+    strftime(out, 32, "%Y-%m-%dT%H:%M:%SZ", &tm);
+}
+
+// Rewrites the XMP packet from the Info dictionary.
+static void rewrite_xmp(fz_context *ctx, pdf_document *pdf, pdf_obj *stream, pdf_obj *info, int64_t now) {
+    char part[9] = "", conformance[9] = "";
+    fz_buffer *old = NULL, *buf = NULL;
+    fz_var(old);
+    fz_var(buf);
+    fz_try(ctx) {
+        // Only the first 4 MB of the old packet are looked at.
+        old = pdf_load_stream(ctx, stream);
+        unsigned char *data;
+        size_t len = fz_buffer_storage(ctx, old, &data);
+        if (len > (4 << 20)) len = 4 << 20;
+        bool pdfa = find_xmp_value((const char *)data, len, "pdfaid:part", part);
+        if (pdfa) find_xmp_value((const char *)data, len, "pdfaid:conformance", conformance);
+        buf = fz_new_buffer(ctx, 2048);
+        char modified[32];
+        iso_date(now, modified);
+        fz_append_string(ctx, buf,
+            "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+            "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n"
+            "<rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
+            "<rdf:Description rdf:about=\"\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\""
+            " xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\"");
+        if (part[0]) fz_append_string(ctx, buf, " xmlns:pdfaid=\"http://www.aiim.org/pdfa/ns/id/\"");
+        fz_append_string(ctx, buf, ">\n");
+        const char *title = pdf_dict_get_text_string(ctx, info, PDF_NAME(Title));
+        const char *author = pdf_dict_get_text_string(ctx, info, PDF_NAME(Author));
+        const char *subject = pdf_dict_get_text_string(ctx, info, PDF_NAME(Subject));
+        const char *keywords = pdf_dict_get_text_string(ctx, info, PDF_NAME(Keywords));
+        const char *producer = pdf_dict_get_text_string(ctx, info, PDF_NAME(Producer));
+        if (title[0]) {
+            fz_append_string(ctx, buf, "<dc:title><rdf:Alt><rdf:li xml:lang=\"x-default\">");
+            append_xml_escaped(ctx, buf, title);
+            fz_append_string(ctx, buf, "</rdf:li></rdf:Alt></dc:title>\n");
+        }
+        if (author[0]) {
+            fz_append_string(ctx, buf, "<dc:creator><rdf:Seq><rdf:li>");
+            append_xml_escaped(ctx, buf, author);
+            fz_append_string(ctx, buf, "</rdf:li></rdf:Seq></dc:creator>\n");
+        }
+        if (subject[0]) {
+            fz_append_string(ctx, buf, "<dc:description><rdf:Alt><rdf:li xml:lang=\"x-default\">");
+            append_xml_escaped(ctx, buf, subject);
+            fz_append_string(ctx, buf, "</rdf:li></rdf:Alt></dc:description>\n");
+        }
+        if (keywords[0]) {
+            fz_append_string(ctx, buf, "<pdf:Keywords>");
+            append_xml_escaped(ctx, buf, keywords);
+            fz_append_string(ctx, buf, "</pdf:Keywords>\n");
+        }
+        if (producer[0]) {
+            fz_append_string(ctx, buf, "<pdf:Producer>");
+            append_xml_escaped(ctx, buf, producer);
+            fz_append_string(ctx, buf, "</pdf:Producer>\n");
+        }
+        int64_t created = pdf_dict_get_date(ctx, info, PDF_NAME(CreationDate));
+        if (created > 0) {
+            char date[32];
+            iso_date(created, date);
+            fz_append_printf(ctx, buf, "<xmp:CreateDate>%s</xmp:CreateDate>\n", date);
+        }
+        fz_append_printf(ctx, buf, "<xmp:ModifyDate>%s</xmp:ModifyDate>\n<xmp:MetadataDate>%s</xmp:MetadataDate>\n", modified, modified);
+        if (part[0]) {
+            fz_append_printf(ctx, buf, "<pdfaid:part>%s</pdfaid:part>\n", part);
+            if (conformance[0]) fz_append_printf(ctx, buf, "<pdfaid:conformance>%s</pdfaid:conformance>\n", conformance);
+        }
+        fz_append_string(ctx, buf, "</rdf:Description>\n</rdf:RDF>\n</x:xmpmeta>\n<?xpacket end=\"w\"?>");
+        pdf_dict_del(ctx, stream, PDF_NAME(Filter));
+        pdf_dict_del(ctx, stream, PDF_NAME(DecodeParms));
+        pdf_dict_put(ctx, stream, PDF_NAME(Type), PDF_NAME(Metadata));
+        pdf_dict_put(ctx, stream, PDF_NAME(Subtype), PDF_NAME(XML));
+        pdf_update_stream(ctx, pdf, stream, buf, 0);
+    }
+    fz_always(ctx) {
+        fz_drop_buffer(ctx, old);
+        fz_drop_buffer(ctx, buf);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_metadata_set(opdf_doc *d, const opdf_metadata_spec *spec, int64_t now, opdf_error *err) {
+    clear_error(err);
+    WITH_DOC_OPERATION(d, "Change Info", err, {
+        const char *values[4] = { spec->title, spec->author, spec->subject, spec->keywords };
+        pdf_obj *keys[4] = { PDF_NAME(Title), PDF_NAME(Author), PDF_NAME(Subject), PDF_NAME(Keywords) };
+        for (int i = 0; i < 4; i++)
+            if (values[i] && strlen(values[i]) > OPDF_MAX_METADATA_TEXT) fz_throw(ctx, FZ_ERROR_LIMIT, "That is too long for the document's information");
+        pdf_obj *trailer = pdf_trailer(ctx, pdf);
+        pdf_obj *info = pdf_dict_get(ctx, trailer, PDF_NAME(Info));
+        if (!pdf_is_dict(ctx, info)) {
+            // Adding an object can start a new section with its own copy
+            // of the trailer: the Info goes in the current one.
+            pdf_obj *made = pdf_add_new_dict(ctx, pdf, 4);
+            trailer = pdf_trailer(ctx, pdf);
+            pdf_dict_put_drop(ctx, trailer, PDF_NAME(Info), made);
+            info = made;
+        }
+        for (int i = 0; i < 4; i++) {
+            if (!values[i]) continue;
+            if (values[i][0]) pdf_dict_put_text_string(ctx, info, keys[i], values[i]);
+            else pdf_dict_del(ctx, info, keys[i]);
+        }
+        pdf_dict_put_date(ctx, info, PDF_NAME(ModDate), now);
+        pdf_obj *xmp = pdf_dict_getp(ctx, trailer, "Root/Metadata");
+        if (pdf_is_stream(ctx, xmp)) rewrite_xmp(ctx, pdf, xmp, info, now);
+    });
+    unlock_doc(d);
+    return !(err && err->code);
+}
+
 // Page numbers as a set: true for each page listed (and in range).
 static bool *page_set(fz_context *ctx, const int *pages, int count, int total) {
     bool *set = checked_calloc(ctx, (size_t)(total > 0 ? total : 1), sizeof *set);
