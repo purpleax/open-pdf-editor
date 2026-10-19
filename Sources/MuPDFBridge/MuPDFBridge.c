@@ -1844,7 +1844,9 @@ static void cp_Tf(fz_context *ctx, pdf_processor *proc, const char *name, pdf_fo
     pdf_drop_font(ctx, G(p)->text.font);
     G(p)->text.font = pdf_keep_font(ctx, font);
     G(p)->text.size = size;
-    fz_strlcpy(G(p)->font_name, name ? name : "", sizeof G(p)->font_name);
+    // A name too long to keep whole isn't kept at all: a shortened one could
+    // be another font's.
+    fz_strlcpy(G(p)->font_name, name && strlen(name) < sizeof G(p)->font_name ? name : "", sizeof G(p)->font_name);
     if (CHAIN(p)) CHAIN(p)->op_Tf(ctx, CHAIN(p), name, font, size);
 }
 
@@ -1999,6 +2001,8 @@ static void log_glyph(fz_context *ctx, content_proc *p, int cid, fz_matrix trm, 
     glyph_unicode(G(p)->text.font, cid, ucs);
     fz_matrix m = fz_concat(fz_concat(trm, G(p)->ctm), p->page_ctm);
     float across = sqrtf(m.a * m.a + m.b * m.b);
+    // Glyphs nowhere near the page (or nowhere at all) aren't text to edit.
+    if (!isfinite(m.e) || !isfinite(m.f) || fabsf(m.e) > 1e6f || fabsf(m.f) > 1e6f || !isfinite(across)) return;
     content_glyph *g = &p->glyphs[p->glyph_count++];
     g->op = p->text_ops;
     g->index = index;
@@ -2527,6 +2531,15 @@ static unsigned grid_key(int cx, int cy) {
     return (unsigned)cx * 73856093u ^ (unsigned)cy * 19349663u;
 }
 
+// The 1-point cell of a coordinate (glyphs are only logged within ±1e6).
+static int grid_cell(float v) {
+    return isfinite(v) ? (int)floorf(fmaxf(-1e6f, fminf(1e6f, v))) : 0;
+}
+
+// The most glyphs looked at in one cell's chain: a page can pile glyphs on
+// one spot (or on cells that hash alike) to make matching slow.
+#define OPDF_MAX_GRID_CHAIN 256
+
 static void grid_build(fz_context *ctx, glyph_grid *g, const content_glyph *glyphs, int count) {
     unsigned size = 64;
     while (size < (unsigned)count * 2) size <<= 1;
@@ -2537,7 +2550,7 @@ static void grid_build(fz_context *ctx, glyph_grid *g, const content_glyph *glyp
     if (!g->head || !g->next || !g->used) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
     for (unsigned i = 0; i < size; i++) g->head[i] = -1;
     for (int i = 0; i < count; i++) {
-        unsigned h = grid_key((int)floorf(glyphs[i].x), (int)floorf(glyphs[i].y)) & g->mask;
+        unsigned h = grid_key(grid_cell(glyphs[i].x), grid_cell(glyphs[i].y)) & g->mask;
         g->next[i] = g->head[h];
         g->head[h] = i;
     }
@@ -2553,12 +2566,14 @@ static void grid_free(glyph_grid *g) {
 // The unused glyph drawn at the character's origin: the same character
 // (or, for a ligature, the same font) within half a point.
 static int grid_match(glyph_grid *g, const content_glyph *glyphs, const content_font *fonts, fz_stext_char *ch) {
-    int cx = (int)floorf(ch->origin.x), cy = (int)floorf(ch->origin.y);
+    if (!isfinite(ch->origin.x) || !isfinite(ch->origin.y)) return -1;
+    int cx = grid_cell(ch->origin.x), cy = grid_cell(ch->origin.y);
     int best = -1;
     float best_d = 0.5f * 0.5f;
     for (int dx = -1; dx <= 1; dx++)
-        for (int dy = -1; dy <= 1; dy++)
-            for (int i = g->head[grid_key(cx + dx, cy + dy) & g->mask]; i >= 0; i = g->next[i]) {
+        for (int dy = -1; dy <= 1; dy++) {
+            int walked = 0;
+            for (int i = g->head[grid_key(cx + dx, cy + dy) & g->mask]; i >= 0 && walked++ < OPDF_MAX_GRID_CHAIN; i = g->next[i]) {
                 if (g->used[i]) continue;
                 const content_glyph *gl = &glyphs[i];
                 float ddx = gl->x - ch->origin.x, ddy = gl->y - ch->origin.y, d = ddx * ddx + ddy * ddy;
@@ -2568,6 +2583,7 @@ static int grid_match(glyph_grid *g, const content_glyph *glyphs, const content_
                 best = i;
                 best_d = d;
             }
+        }
     if (best >= 0) g->used[best] = true;
     return best;
 }
@@ -2717,22 +2733,15 @@ static void add_paragraph(fz_context *ctx, para_builder *b, line_piece *pieces, 
 // Splits a line at gaps wider than 3 em (table cells, a bullet and its text).
 static int split_line(fz_stext_line *line, line_piece *out, int max) {
     int n = 0;
-    fz_stext_char *start = line->first_char;
-    for (fz_stext_char *ch = line->first_char; ch && ch->next && n < max - 1; ch = ch->next) {
-        fz_stext_char *next = ch->next;
-        // Spaces don't count as the end of what precedes the gap.
-        if (next->c == ' ') continue;
-        fz_stext_char *before = ch;
-        float gap = fz_rect_from_quad(next->quad).x0 - fz_rect_from_quad(before->quad).x1;
-        if (ch->c == ' ') {
-            // Measure from the last character that isn't a space.
-            fz_stext_char *last = start;
-            for (fz_stext_char *c = start; c != next; c = c->next) if (c->c != ' ') last = c;
-            gap = fz_rect_from_quad(next->quad).x0 - fz_rect_from_quad(last->quad).x1;
-        }
-        if (gap > 3 * char_size(next)) {
-            out[n++] = (line_piece){ line, start, next };
-            start = next;
+    fz_stext_char *start = line->first_char, *last = NULL;   // the last character that isn't a space
+    for (fz_stext_char *ch = line->first_char; ch && n < max - 1; ch = ch->next) {
+        if (ch->c != ' ') {
+            // Spaces don't count as the end of what precedes the gap.
+            if (last && fz_rect_from_quad(ch->quad).x0 - fz_rect_from_quad(last->quad).x1 > 3 * char_size(ch)) {
+                out[n++] = (line_piece){ line, start, ch };
+                start = ch;
+            }
+            last = ch;
         }
     }
     if (start) out[n++] = (line_piece){ line, start, NULL };
@@ -3102,7 +3111,9 @@ bool opdf_font_encode(opdf_doc *d, int page_number, const char *resource, const 
             // The first code for it whose glyph is really there (subsets
             // keep codes for glyphs they dropped).
             while (e > entries && e[-1].unicode == chars[i]) e--;
-            for (; e < entries + n && e->unicode == chars[i]; e++) {
+            // At most a few codes are tried (a font can map thousands to one character).
+            int tries = 0;
+            for (; e < entries + n && e->unicode == chars[i] && tries++ < 16; e++) {
                 int gid = pdf_font_cid_to_gid(ctx, font, e->cid);
                 if (chars[i] != ' ' && (gid <= 0 || fz_is_empty_rect(fz_bound_glyph(ctx, font->font, gid, fz_identity)))) continue;
                 out[i].len = e->len;
@@ -6755,7 +6766,7 @@ typedef struct {
     const unsigned char *lens;    // NULL entries' fonts are embedded: 2-byte glyph ids
     const float *xs;
     float *advances;              // per glyph, in em
-    char (*names)[32];            // each font's resource name
+    char (*names)[128];           // each font's resource name
     bool *embedded;               // per font
     const opdf_glyph_ref *drops;
     int drop_count;
@@ -6884,14 +6895,16 @@ static int glyphs_to_drop(fz_context *ctx, pdf_document *pdf, pdf_page *page, co
             const content_glyph *g = &p->glyphs[i];
             opdf_glyph_ref key = { g->op, g->index };
             if (bsearch(&key, given, (size_t)drop_count, sizeof key, compare_glyph_refs)) continue;
-            int cx = (int)floorf(g->x), cy = (int)floorf(g->y);
+            int cx = grid_cell(g->x), cy = grid_cell(g->y);
             bool shadow = false;
             for (int dx = -1; dx <= 1 && !shadow; dx++)
-                for (int dy = -1; dy <= 1 && !shadow; dy++)
-                    for (int j = grid.head[grid_key(cx + dx, cy + dy) & grid.mask]; j >= 0 && !shadow; j = grid.next[j]) {
+                for (int dy = -1; dy <= 1 && !shadow; dy++) {
+                    int walked = 0;
+                    for (int j = grid.head[grid_key(cx + dx, cy + dy) & grid.mask]; j >= 0 && !shadow && walked++ < OPDF_MAX_GRID_CHAIN; j = grid.next[j]) {
                         float ddx = dropped[j].x - g->x, ddy = dropped[j].y - g->y;
                         shadow = dropped[j].ucs == g->ucs && ddx * ddx + ddy * ddy <= 0.25f;
                     }
+                }
             if (shadow) all[n++] = key;
         }
         qsort(all, (size_t)n, sizeof *all, compare_glyph_refs);
@@ -6957,7 +6970,8 @@ bool opdf_paragraph_replace(opdf_doc *d, int page_number, const opdf_glyph_ref *
             pdf_obj *page_fonts = pdf_dict_get(ctx, pdf_page_resources(ctx, pp), PDF_NAME(Font));
             for (int f = 0; f < font_count; f++) {
                 if (fonts[f].resource) {
-                    // One of the page's fonts, by the name its content uses.
+                    // One of the page's fonts, by the name its content uses (whole).
+                    if (strlen(fonts[f].resource) >= sizeof t.names[f]) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That font's name is too long");
                     pdf_obj *dict = pdf_dict_gets(ctx, page_fonts, fonts[f].resource);
                     if (!pdf_is_dict(ctx, dict) || pdf_name_eq(ctx, pdf_dict_get(ctx, dict, PDF_NAME(Subtype)), PDF_NAME(Type3)))
                         fz_throw(ctx, FZ_ERROR_ARGUMENT, "The page has no font named %s", fonts[f].resource);
@@ -6970,6 +6984,7 @@ bool opdf_paragraph_replace(opdf_doc *d, int page_number, const opdf_glyph_ref *
                 for (int r = 0; r < run_count; r++) {
                     if (runs[r].font != f) continue;
                     for (int g = runs[r].first; g < runs[r].first + runs[r].count; g++) {
+                        if (n >= glyph_count) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The text's runs overlap");
                         gids[n] = (int)codes[g];
                         unis[n++] = unicode[g];
                     }
@@ -6990,7 +7005,7 @@ bool opdf_paragraph_replace(opdf_doc *d, int page_number, const opdf_glyph_ref *
                 n = 0;
                 for (int r = 0; r < run_count; r++) {
                     if (runs[r].font != f) continue;
-                    for (int g = runs[r].first; g < runs[r].first + runs[r].count; g++) t.advances[g] = adv[n++];
+                    for (int g = runs[r].first; g < runs[r].first + runs[r].count && n < glyph_count; g++) t.advances[g] = adv[n++];
                 }
             }
             // Advances in the page's fonts, from their widths.

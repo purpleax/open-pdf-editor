@@ -90,6 +90,34 @@ import Testing
         #expect(try doc.encode(["A"], inFont: "F9", page: 0).allSatisfy { !$0.exists })
     }
 
+    @Test func hostilePagesStayQuickAndNamesStayWhole() throws {
+        let doc = try Corpus.open("parabomb.pdf")
+        for page in 0..<2 {
+            let start = Date()
+            _ = try doc.paragraphs(page: page)
+            #expect(Date().timeIntervalSince(start) < 5, "page \(page) took too long")
+        }
+        let page = try doc.paragraphs(page: 2)
+        // A 40-character font name is kept whole; one too long to keep isn't kept at all.
+        #expect(page.fonts.map(\.resource).contains("F" + String(repeating: "x", count: 39)))
+        #expect(page.fonts.contains { $0.resource.isEmpty })
+        #expect(!page.fonts.contains { $0.resource.count > 100 })
+        // Text drawn absurdly far away isn't a paragraph.
+        #expect(!page.paragraphs.contains { $0.text.contains("Far away") })
+        // Editing the paragraph in the long-named font draws it in that font, by its whole name.
+        let para = try #require(page.paragraphs.first { $0.text == "A long font name" })
+        let resource = "F" + String(repeating: "x", count: 39)
+        let codes = try doc.encode(Array(para.text.unicodeScalars), inFont: resource, page: 2)
+        let run = GlyphRun(font: 0, size: 12, fill: [0], baseline: para.lines[0].baseline,
+                           glyphs: zip(para.characters, codes).map { GlyphRun.Glyph(code: UInt32($1.code.first ?? 32), length: 1, x: $0.origin.x, scalar: $0.scalar) })
+        try doc.replaceText(page: 2, dropping: para.glyphs, fonts: [.page(resource: resource)], runs: [run], actionName: "Edit Text")
+        #expect(try doc.paragraphs(page: 2).paragraphs.contains { $0.text == "A long font name" })
+        // A name too long is refused rather than cut short.
+        #expect(throws: EngineError.self) {
+            try doc.replaceText(page: 2, dropping: [], fonts: [.page(resource: "F" + String(repeating: "y", count: 129))], runs: [run], actionName: "x")
+        }
+    }
+
     @Test func limits() throws {
         // Hundreds of thousands of operations: listed within the limits, quickly.
         let bomb = try Corpus.open("contentbomb.pdf")

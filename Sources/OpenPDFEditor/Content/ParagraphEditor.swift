@@ -50,7 +50,8 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
     private let undo = UndoManager()
     /// A page font's codes and widths, from the engine.
     private let encode: ([Unicode.Scalar], String) -> [FontCode]
-    private var widths: [Int: [Unicode.Scalar: CGFloat?]] = [:]
+    /// Each page font's codes for characters asked about (nil: not in it).
+    private var codes: [Int: [Unicode.Scalar: FontCode?]] = [:]
     private var ended = false
     /// Called once: true to commit, false to drop the changes.
     var onEnd: ((ParagraphEditor, Bool) -> Void)?
@@ -312,6 +313,7 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
         normalize(in: range)
         let text = storage.string as NSString
         guard range.length > 0, NSMaxRange(range) <= text.length else { return }
+        lookUp(charactersByFont(in: range))
         var i = range.location
         while i < NSMaxRange(range) {
             let composed = text.rangeOfComposedCharacterSequence(at: i)
@@ -427,13 +429,38 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
         MainActor.assumeIsolated { onSelectionChange?() }
     }
 
-    /// A character's width in a page font (in em), if the font has it.
-    private func width(of scalar: Unicode.Scalar, inFont f: Int) -> CGFloat? {
-        if let known = widths[f]?[scalar] { return known }
-        let resource = fonts[f].resource
-        let width: CGFloat? = resource.isEmpty ? nil : encode([scalar], resource).first.flatMap { $0.exists ? $0.advance : nil }
-        widths[f, default: [:]][scalar] = width
-        return width
+    /// A character's code and width in a page font, if the font has it.
+    private func code(of scalar: Unicode.Scalar, inFont f: Int) -> FontCode? {
+        if let known = codes[f]?[scalar] { return known }
+        lookUp([f: [scalar]])
+        return codes[f]?[scalar] ?? nil
+    }
+
+    private func width(of scalar: Unicode.Scalar, inFont f: Int) -> CGFloat? { code(of: scalar, inFont: f)?.advance }
+
+    /// Asks the engine once per font for the characters not known yet.
+    private func lookUp(_ wanted: [Int: Set<Unicode.Scalar>]) {
+        for (f, scalars) in wanted where f < fonts.count {
+            let missing = Array(scalars.filter { codes[f]?[$0] == nil })
+            guard !missing.isEmpty else { continue }
+            let resource = fonts[f].resource
+            let found = resource.isEmpty ? [] : encode(missing, resource)
+            for (i, scalar) in missing.enumerated() {
+                let code = i < found.count && found[i].exists ? found[i] : nil
+                codes[f, default: [:]][scalar] = .some(code)
+            }
+        }
+    }
+
+    /// The characters of the text still in each page font.
+    private func charactersByFont(in range: NSRange) -> [Int: Set<Unicode.Scalar>] {
+        var wanted: [Int: Set<Unicode.Scalar>] = [:]
+        let text = storage.string as NSString
+        storage.enumerateAttribute(.pdfFont, in: range) { value, sub, _ in
+            guard let f = value as? Int else { return }
+            for scalar in text.substring(with: sub).unicodeScalars { wanted[f, default: []].insert(scalar) }
+        }
+        return wanted
     }
 
     nonisolated func undoManager(for view: NSTextView) -> UndoManager? {
@@ -509,8 +536,8 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
         }
         // The runs, from the layout of the lines that change.
         var fontList: [TextFont] = [], fontIndex: [String: Int] = [:], runs: [GlyphRun] = []
-        var pageCodes: [Int: [Unicode.Scalar: FontCode]] = [:]
         let text = storage.string as NSString
+        lookUp(charactersByFont(in: NSRange(location: 0, length: storage.length)))
         func index(_ key: String, _ make: () throws -> TextFont) rethrows -> Int {
             if let i = fontIndex[key] { return i }
             fontList.append(try make())
@@ -539,8 +566,7 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
                 // In the page font, if the character is still in it and the font has it.
                 var glyph: GlyphRun.Glyph?, fontNumber = 0
                 if let f = attributes[.pdfFont] as? Int, f < fonts.count, !fonts[f].resource.isEmpty {
-                    if pageCodes[f]?[scalar] == nil, let code = encode([scalar], fonts[f].resource).first { pageCodes[f, default: [:]][scalar] = code }
-                    if let code = pageCodes[f]?[scalar], code.exists {
+                    if let code = code(of: scalar, inFont: f), code.exists {
                         fontNumber = index("page:" + fonts[f].resource) { .page(resource: fonts[f].resource) }
                         glyph = GlyphRun.Glyph(code: code.code.reduce(0) { $0 << 8 | UInt32($1) }, length: code.code.count, x: x, scalar: scalar)
                     }

@@ -410,6 +410,32 @@ function makeParagraphs() {
 	doc.save(out + "/paragraphs.pdf", "compress")
 }
 
+// --- parabomb.pdf: pages that would make paragraph editing slow or wrong:
+// a 120,000-character line in a 1-point font, 30,000 glyphs drawn on one
+// spot, fonts with long names (40 and 130 characters), and a glyph placed
+// absurdly far off the page.
+function makeParaBomb() {
+	var doc = newDocument()
+	var long = ""
+	for (var i = 0; i < 60000; i++) long += "a "
+	var page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, "BT /F1 1 Tf 0 700 Td (" + long + ") Tj ET\n")
+	doc.insertPage(-1, page)
+	var pile = "BT /F1 12 Tf\n"
+	for (var i = 0; i < 30000; i++) pile += "1 0 0 1 72 700 Tm (" + String.fromCharCode(65 + (i % 26)) + ") Tj\n"
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, pile + "ET\n")
+	doc.insertPage(-1, page)
+	var forty = "F" + new Array(40).join("x"), huge = "F" + new Array(130).join("y")
+	var fonts = {}
+	fonts[forty] = doc.font
+	fonts[huge] = doc.font
+	page = doc.addPage(LETTER, 0, { Font: fonts },
+		"BT /" + forty + " 12 Tf 72 700 Td (A long font name) Tj ET\n" +
+		"BT /" + huge + " 12 Tf 72 600 Td (An even longer one) Tj ET\n" +
+		"BT /" + forty + " 12 Tf 1 0 0 1 1e30 1e30 Tm (Far away) Tj ET\n")
+	doc.insertPage(-1, page)
+	doc.save(out + "/parabomb.pdf", "compress")
+}
+
 // --- formbomb.pdf: more fields and choices than the limits, a name over
 // MuPDF's 16 KB, and fields that are their own parents.
 function makeFormBomb() {
@@ -761,6 +787,7 @@ makeLong()
 makeForms()
 makeRedactLeftovers()
 makeParagraphs()
+makeParaBomb()
 makeFormBomb()
 makeXMP()
 makeContent()
