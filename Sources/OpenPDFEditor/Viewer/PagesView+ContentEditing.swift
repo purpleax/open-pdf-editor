@@ -15,18 +15,20 @@ extension PagesView {
             selectedContent = nil
             return
         }
-        if contentTool == .text {
+        if contentTool != .edit {
             selectedContent = nil
-            guard let paragraph = content.paragraph(at: point, page: page) else { return }
-            beginParagraphEdit(paragraph, at: point)
-            return
-        }
-        if contentTool == .link || contentTool == .image {
             contentGesture = .create(page: page, start: point, current: point)
             return
         }
+        // The Edit tool: the selected item's grips, then text (a caret), then
+        // an image or link; ⌥-click reaches one under text.
         if let ref = selectedContent, ref.page == page, let item = content.item(ref), let handle = contentHandle(at: point, of: item.rect) {
             contentGesture = .resize(ref, handle, current: point)
+            return
+        }
+        if !event.modifierFlags.contains(.option), let paragraph = content.paragraph(at: point, page: page) {
+            selectedContent = nil
+            beginParagraphEdit(paragraph, at: point)
             return
         }
         if let item = content.hit(point, page: page, tolerance: tolerance) {
@@ -71,7 +73,11 @@ extension PagesView {
                 let rect = CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
                                   width: abs(current.x - start.x), height: abs(current.y - start.y))
                 let sized = rect.width * zoom >= 6 && rect.height * zoom >= 6
-                if contentTool == .image {
+                if contentTool == .addText {
+                    // A click makes a box of the usual width; a drag sets it.
+                    beginNewTextBox(page: page, at: CGPoint(x: rect.minX, y: rect.minY),
+                                    width: rect.width * zoom >= 12 ? rect.width : 240)
+                } else if contentTool == .image {
                     // A click places the image at its own proportions.
                     delegate?.pagesView(self, makeImageIn: sized ? rect : CGRect(origin: start, size: .zero), onPage: page)
                 } else if sized {
@@ -120,24 +126,15 @@ extension PagesView {
                                  transform: model.pageToView(page: page, rotation: rotation), dashed: true)
     }
 
-    /// The selected item's outline and grips (text runs aren't moved, so have none).
+    /// The selected item's outline and grips.
     func applyContentSelection(to view: PageView, page: Int) {
         guard let ref = selectedContent, ref.page == page, let item = content?.item(ref) else {
             view.setAnnotationSelection(outline: nil, handles: [], transform: .identity, zoom: zoom)
             return
         }
-        var handles = rectHandles(item.rect).map(\.1)
-        if case .text = ref { handles = [] }
+        let handles = rectHandles(item.rect).map(\.1)
         view.setAnnotationSelection(outline: CGPath(rect: item.rect.insetBy(dx: -1, dy: -1), transform: nil), handles: handles,
                                     transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
-    }
-
-    /// Edits the paragraph of the selected text run (the inspector's Edit
-    /// Text, Return).
-    func beginTextEdit() {
-        guard let ref = selectedContent, case .text = ref, let content, let item = content.item(ref),
-              let paragraph = content.paragraph(at: CGPoint(x: item.rect.midX, y: item.rect.midY), page: ref.page) else { return }
-        beginParagraphEdit(paragraph, at: nil)
     }
 
     /// Edits a paragraph in place, with the caret at the point (page space),
@@ -153,7 +150,36 @@ extension PagesView {
             delegate?.pagesView(self, contentProblem: "Turn the view back upright (View › Rotate) to edit text.")
             return
         }
-        let editor = content.editor(for: paragraph, toView: toView)
+        warnIfSigned()
+        start(content.editor(for: paragraph, toView: toView), caretAt: point)
+    }
+
+    /// A new text box, its top-left at `point` (page space), `width` wide.
+    func beginNewTextBox(page: Int, at point: CGPoint, width: CGFloat) {
+        textEditor?.finish()
+        guard let content, model.allows(.edit) else { return }
+        guard rotation == 0, let toView = transform(forPage: page) else {
+            delegate?.pagesView(self, contentProblem: "Turn the view back upright (View › Rotate) to add text.")
+            return
+        }
+        warnIfSigned()
+        let bounds = model.pageBounds[page]
+        let w = max(20, min(width, bounds.maxX - point.x - 4))
+        start(content.newTextBox(page: page, at: point, width: w, toView: toView), caretAt: nil)
+    }
+
+    /// Once per window: editing a signed document shows its signatures as changed.
+    private func warnIfSigned() {
+        guard !warnedSigned, (try? model.engine.formInfo().isSigned) == true, let window else { return }
+        warnedSigned = true
+        let alert = NSAlert()
+        alert.messageText = "This document is signed."
+        alert.informativeText = "Its signatures stay valid for what was signed, but will show that the document was changed after signing."
+        alert.beginSheetModal(for: window)
+    }
+
+    private func start(_ editor: ParagraphEditor, caretAt point: CGPoint?) {
+        guard let content else { return }
         editor.onEnd = { [weak self] editor, commit in
             guard let self else { return editor.remove() }
             if self.textEditor === editor { self.textEditor = nil }
@@ -181,11 +207,13 @@ extension PagesView {
         guard let content, let (page, point) = pageAndPoint(at: location), layout.frames[page]?.contains(location) == true else {
             return .arrow
         }
-        if contentTool == .text { return content.paragraph(at: point, page: page) != nil ? .iBeam : .arrow }
-        if contentTool != .select { return .crosshair }
+        if contentTool != .edit { return contentTool == .addText ? .iBeam : .crosshair }
         if let ref = selectedContent, ref.page == page, let item = content.item(ref), contentHandle(at: point, of: item.rect) != nil {
             return .crosshair
         }
-        return content.hit(point, page: page, tolerance: tolerance) != nil ? .openHand : .arrow
+        if content.hit(point, page: page, tolerance: tolerance) != nil, NSEvent.modifierFlags.contains(.option) || content.paragraph(at: point, page: page) == nil {
+            return .openHand
+        }
+        return content.paragraph(at: point, page: page) != nil ? .iBeam : .arrow
     }
 }

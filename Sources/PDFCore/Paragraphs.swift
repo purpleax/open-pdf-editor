@@ -89,9 +89,11 @@ public struct PageParagraphs: Equatable, Sendable {
     public let paragraphs: [Paragraph]
     public let fonts: [ParagraphFont]
 
-    /// The paragraph containing the point (page space), if any.
+    /// The paragraph at the point (page space), if any: on one of its lines,
+    /// or anywhere in its box (between its lines, beside a short one).
     public func paragraph(at point: CGPoint, tolerance: CGFloat = 2) -> Paragraph? {
         paragraphs.first { p in p.lines.contains { $0.rect.insetBy(dx: -tolerance, dy: -tolerance).contains(point) } }
+            ?? paragraphs.first { $0.rect.insetBy(dx: -tolerance, dy: -tolerance).contains(point) }
     }
 }
 

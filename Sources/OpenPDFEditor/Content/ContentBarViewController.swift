@@ -26,11 +26,9 @@ final class ContentBarViewController: NSViewController {
         done.target = self
         done.action = #selector(doneClicked(_:))
         done.controlSize = .small
-        let label = NSTextField(labelWithString: "Editing page content")
-        label.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [label, tools] + (formatControls.map { [$0] } ?? []) + [done])
+        let stack = NSStackView(views: [tools] + (formatControls.map { [$0] } ?? []) + [done])
         stack.orientation = .horizontal
-        stack.spacing = 12
+        stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let root = NSView()
@@ -44,7 +42,7 @@ final class ContentBarViewController: NSViewController {
         root.setAccessibilityRole(.toolbar)
         root.setAccessibilityLabel("Page content")
         view = root
-        setTool(.select)
+        setTool(.edit)
     }
 
     func setTool(_ tool: ContentTool) {

@@ -108,7 +108,7 @@ final class PagesView: NSView, NSMenuItemValidation {
             fieldEditor?.finish()
             textEditor?.finish()
             contentGesture = .none
-            contentTool = .select
+            contentTool = .edit
             selectedContent = nil
             if editingContent {
                 editingFields = false
@@ -122,7 +122,7 @@ final class PagesView: NSView, NSMenuItemValidation {
             window?.invalidateCursorRects(for: self)
         }
     }
-    var contentTool = ContentTool.select {
+    var contentTool = ContentTool.edit {
         didSet {
             guard contentTool != oldValue else { return }
             textEditor?.finish()
@@ -137,6 +137,10 @@ final class PagesView: NSView, NSMenuItemValidation {
     }
     /// For the formatting bar.
     var onTextEditorChange: ((ParagraphEditor?) -> Void)?
+    /// Edit Text from the right-click menu outside Edit Content: the window
+    /// turns editing on, then the paragraph is edited.
+    var onEditText: ((Paragraph, CGPoint) -> Void)?
+    var warnedSigned = false
     var selectedContent: ContentRef? {
         didSet {
             guard selectedContent != oldValue else { return }
@@ -346,10 +350,11 @@ final class PagesView: NSView, NSMenuItemValidation {
         let rects: [CGRect]
         if !editingContent {
             rects = []
-        } else if contentTool == .text {
-            rects = content?.paragraphs(page: page)?.paragraphs.filter(\.isEditable).map(\.rect) ?? []
+        } else if contentTool == .edit {
+            rects = (content?.paragraphs(page: page)?.paragraphs.filter(\.isEditable).map(\.rect) ?? [])
+                + (content?.items(page: page).map(\.rect) ?? [])
         } else {
-            rects = content?.items(page: page).map(\.rect) ?? []
+            rects = []
         }
         view.setContentOutlines(rects, transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
     }
@@ -591,9 +596,37 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let menu = NSMenu()
+        // Edit Text, on text that can be edited.
+        let location = convert(event.locationInWindow, from: nil)
+        if !editingFields, model.isEditable, model.allows(.edit), let (page, point) = pageAndPoint(at: location),
+           layout.frames[page]?.contains(location) == true, let paragraph = model.paragraphs(page: page)?.paragraph(at: point),
+           paragraph.isEditable {
+            let item = menu.addItem(withTitle: "Edit Text", action: #selector(editTextFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = EditTextRequest(paragraph: paragraph, point: point)
+            menu.addItem(.separator())
+        }
         menu.addItem(withTitle: "Copy", action: #selector(copy(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Select All", action: #selector(selectAll(_:)), keyEquivalent: "")
         return menu
+    }
+
+    private final class EditTextRequest: NSObject {
+        let paragraph: Paragraph
+        let point: CGPoint
+        init(paragraph: Paragraph, point: CGPoint) {
+            self.paragraph = paragraph
+            self.point = point
+        }
+    }
+
+    @objc private func editTextFromMenu(_ sender: NSMenuItem) {
+        guard let request = sender.representedObject as? EditTextRequest else { return }
+        if editingContent {
+            beginParagraphEdit(request.paragraph, at: request.point)
+        } else {
+            onEditText?(request.paragraph, request.point)
+        }
     }
 
     override func rectForSmartMagnification(at location: NSPoint, in visibleRect: NSRect) -> NSRect {
@@ -611,9 +644,6 @@ final class PagesView: NSView, NSMenuItemValidation {
         interpretKeyEvents([event])
     }
 
-    override func insertNewline(_ sender: Any?) {
-        if editingContent, case .text = selectedContent { beginTextEdit() }
-    }
 
     override func moveUp(_ sender: Any?) { delegate?.pagesView(self, scrollBy: -1) }
     override func moveDown(_ sender: Any?) { delegate?.pagesView(self, scrollBy: 1) }

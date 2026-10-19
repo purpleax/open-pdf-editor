@@ -10,6 +10,7 @@ private extension NSToolbarItem.Identifier {
     static let rotate = Self("Rotate")
     static let search = Self("Search")
     static let markup = Self("Markup")
+    static let editContent = Self("EditContent")
 }
 
 /// A document window: sidebar, pages and inspector in a split view, with a
@@ -192,7 +193,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.toggleSidebar, .sidebarTrackingSeparator, .pageNavigation, .pageNumber, .flexibleSpace,
-         .zoom, .zoomMode, .displayMode, .rotate, .markup, .search, .inspectorTrackingSeparator, .toggleInspector]
+         .zoom, .zoomMode, .displayMode, .rotate, .editContent, .markup, .search, .inspectorTrackingSeparator, .toggleInspector]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -278,6 +279,15 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             item.toolTip = "Show Markup Toolbar"
             item.image = NSImage(systemSymbolName: "pencil.tip.crop.circle", accessibilityDescription: "Markup")
             item.action = #selector(toggleMarkupBar(_:))
+            item.target = self
+            return item
+        case .editContent:
+            let item = NSToolbarItem(itemIdentifier: identifier)
+            item.label = "Edit"
+            item.paletteLabel = "Edit Text and Images"
+            item.toolTip = "Edit text and images (⌥⌘E)"
+            item.image = NSImage(systemSymbolName: "character.cursor.ibeam", accessibilityDescription: "Edit text and images")
+            item.action = #selector(toggleEditContent(_:))
             item.target = self
             return item
         case .print:

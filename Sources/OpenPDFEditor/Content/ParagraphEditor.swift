@@ -56,6 +56,19 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
     var onEnd: ((ParagraphEditor, Bool) -> Void)?
     /// The selection or its style changed (for the formatting bar).
     var onSelectionChange: (() -> Void)?
+    /// The other paragraphs on the page (page space), to say when the box
+    /// runs into one: text doesn't flow from paragraph to paragraph.
+    var others: [CGRect] = []
+    private let overlapLabel = NSTextField(labelWithString: "Overlaps other text")
+    private let widthHandle = WidthHandle()
+
+    /// What a new text box starts with.
+    static var newTextAttributes: [NSAttributedString.Key: Any] {
+        let style = NSMutableParagraphStyle()
+        style.alignment = .left
+        return [.font: NSFont(name: "Helvetica", size: 12) ?? .systemFont(ofSize: 12), .foregroundColor: NSColor.black,
+                .paragraphStyle: style, .ligature: 0]
+    }
 
     /// Editing a paragraph. `pageBounds` places a one-line paragraph's box.
     init(paragraph: Paragraph, fonts: [ParagraphFont], pageBounds: CGRect, toView: CGAffineTransform,
@@ -214,6 +227,11 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
         textView.frame.origin = frame.origin
         view.addSubview(backdrop)
         view.addSubview(textView)
+        overlapLabel.font = .systemFont(ofSize: 10)
+        overlapLabel.textColor = .systemOrange
+        view.addSubview(overlapLabel)
+        widthHandle.onDrag = { [weak self] dx in self?.setWidth((self?.container.size.width ?? 0) + dx) }
+        view.addSubview(widthHandle)
         placeBackdrop()
         view.window?.makeFirstResponder(textView)
         if let point {
@@ -227,12 +245,35 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
         }
     }
 
-    /// The page colour under the text and over the paragraph it replaces.
+    /// The page colour under the text and over the paragraph it replaces;
+    /// the width handle on its right; and a note when it runs into other text.
     private func placeBackdrop() {
         var area = textView.frame
         if let paragraph, let old = paragraph.rect.applying(toView) as CGRect? { area = area.union(old) }
         backdrop.frame = area.insetBy(dx: -2, dy: -2)
+        widthHandle.frame = CGRect(x: textView.frame.maxX + 1, y: textView.frame.midY - 8, width: 6, height: 16)
+        let box = CGRect(origin: origin, size: textView.frame.size).insetBy(dx: 1, dy: 1)
+        let overlaps = others.contains { $0.insetBy(dx: 1, dy: 1).intersects(box) }
+        overlapLabel.isHidden = !overlaps
+        overlapLabel.sizeToFit()
+        overlapLabel.frame.origin = CGPoint(x: textView.frame.minX, y: backdrop.frame.maxY + 1)
+        backdrop.layer?.borderColor = (overlaps ? NSColor.systemOrange : NSColor.controlAccentColor.withAlphaComponent(0.6)).cgColor
+        backdrop.layer?.borderWidth = overlaps ? 1 : 0.5
     }
+
+    /// Re-wraps the text at another width (page points).
+    func setWidth(_ width: CGFloat) {
+        let w = max(20, min(width, 2000))
+        container.size = CGSize(width: w, height: .greatestFiniteMagnitude)
+        textView.minSize = CGSize(width: w, height: 4)
+        textView.maxSize = CGSize(width: w, height: .greatestFiniteMagnitude)
+        textView.setFrameSize(CGSize(width: w, height: textView.frame.height))
+        textView.sizeToFit()
+        placeBackdrop()
+        // A changed width is a change, even with the same text.
+        widthChanged = true
+    }
+    private var widthChanged = false
 
     func finish() { end(commit: true) }
 
@@ -248,6 +289,8 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
     func remove() {
         textView.removeFromSuperview()
         backdrop.removeFromSuperview()
+        overlapLabel.removeFromSuperview()
+        widthHandle.removeFromSuperview()
     }
 
     // MARK: Kerning to the PDF's widths
@@ -432,7 +475,7 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
     }
 
     func change(fontData: (CTFont) throws -> Data) throws -> Change? {
-        let first = firstChange()
+        let first = widthChanged ? 0 : firstChange()
         if paragraph != nil && first == Int.max { return nil }
         if paragraph == nil && storage.length == 0 { return nil }
         storage.fixAttributes(in: NSRange(location: 0, length: storage.length))
@@ -528,5 +571,35 @@ extension ParagraphEditor {
     /// Types at the caret, as the keyboard would.
     func debugType(_ text: String) { textView.insertText(text, replacementRange: textView.selectedRange()) }
     var debugText: String { storage.string }
+    var debugOverlaps: Bool { !overlapLabel.isHidden }
 }
 #endif
+
+/// A grip on the right of a paragraph being edited: drag to change the width
+/// it wraps at.
+final class WidthHandle: NSView {
+    var onDrag: ((CGFloat) -> Void)?
+    private var last: CGFloat?
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.controlAccentColor.cgColor
+        layer?.cornerRadius = 2
+        setAccessibilityElement(true)
+        setAccessibilityRole(.handle)
+        setAccessibilityLabel("Width")
+        toolTip = "Drag to change the width the text wraps at"
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+    override func mouseDown(with event: NSEvent) { last = superview?.convert(event.locationInWindow, from: nil).x }
+    override func mouseDragged(with event: NSEvent) {
+        guard let x = superview?.convert(event.locationInWindow, from: nil).x, let last else { return }
+        self.last = x
+        onDrag?(x - last)
+    }
+    override func mouseUp(with event: NSEvent) { last = nil }
+}

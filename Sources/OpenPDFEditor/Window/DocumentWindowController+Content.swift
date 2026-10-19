@@ -18,13 +18,18 @@ extension DocumentWindowController {
         viewer.onMakeLink = { [weak self] rect, page in self?.makeLink(in: rect, onPage: page) }
         viewer.onMakeImage = { [weak self] rect, page in self?.makeImage(in: rect, onPage: page) }
         viewer.pagesView.onTextEditorChange = { [weak self] editor in self?.formatBar.editor = editor }
+        viewer.pagesView.onEditText = { [weak self] paragraph, point in
+            guard let self, let viewer = self.viewer else { return }
+            self.setEditingContent(true)
+            viewer.pagesView.beginParagraphEdit(paragraph, at: point)
+        }
     }
 
     func setEditingContent(_ editing: Bool) {
         guard let viewer else { return }
         if editing, viewer.pagesView.editingFields { setEditingFields(false) }
         viewer.pagesView.editingContent = editing
-        contentBar.setTool(.select)
+        contentBar.setTool(.edit)
         contentAccessory?.animator().isHidden = !editing
         if editing, inspectorItem?.isCollapsed == true { inspectorItem?.animator().isCollapsed = false }
     }
@@ -40,8 +45,8 @@ extension DocumentWindowController {
             guard let self, let target, let viewer = self.viewer else { return }
             do {
                 let ref = try viewer.content.createLink(page: page, rect: rect, to: target)
-                viewer.pagesView.contentTool = .select
-                self.contentBar.setTool(.select)
+                viewer.pagesView.contentTool = .edit
+                self.contentBar.setTool(.edit)
                 viewer.pagesView.selectedContent = ref
             } catch {
                 NSAlert(error: error).beginSheetModal(for: window)
@@ -61,8 +66,8 @@ extension DocumentWindowController {
             }
             do {
                 let ref = try viewer.content.addImage(image, page: page, rect: r)
-                viewer.pagesView.contentTool = .select
-                self.contentBar.setTool(.select)
+                viewer.pagesView.contentTool = .edit
+                self.contentBar.setTool(.edit)
                 viewer.pagesView.selectedContent = ref
             } catch {
                 NSAlert(error: error).beginSheetModal(for: window)

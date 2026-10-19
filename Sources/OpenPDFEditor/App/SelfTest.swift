@@ -402,7 +402,7 @@ enum SelfTest {
         say("link sheet: \(asked); links \(before) -> \(links.count); selected \(String(describing: viewer.pagesView.selectedContent))")
         if let made = links.first(where: { $0.id != 0 && abs($0.rect.minX - 300) < 1 }) {
             say("made link: \(made.uri) at \(made.rect.integral)")
-            viewer.pagesView.contentTool = .select
+            viewer.pagesView.contentTool = .edit
             drag(viewer, page: 0, from: CGPoint(x: made.rect.midX, y: made.rect.midY), to: CGPoint(x: made.rect.midX + 30, y: made.rect.midY + 40))
             let moved = viewer.model.links(page: 0).first { $0.id == made.id }
             say("moved link to \(moved?.rect.integral ?? .zero)")
@@ -442,7 +442,7 @@ enum SelfTest {
         // there; typing (with a character its font lacks) and clicking away
         // changes it. Then a paragraph grows by a line as it re-wraps, and
         // what follows it stays put.
-        viewer.pagesView.contentTool = .text
+        viewer.pagesView.contentTool = .edit
         let paragraphs = viewer.model.paragraphs(page: 0)?.paragraphs ?? []
         say("paragraphs on page 1: \(paragraphs.map { $0.text.prefix(20) })")
         if let heading = paragraphs.first(where: { $0.text == "Chapter One" }) {
@@ -490,6 +490,36 @@ enum SelfTest {
                 }
             }
         }
+        // A new text box with Add Text, and a paragraph made narrower with its
+        // width handle (it re-wraps; growing, it says it runs into what's below).
+        viewer.pagesView.contentTool = .addText
+        click(viewer, page: 0, at: CGPoint(x: 300, y: 650))
+        viewer.pagesView.textEditor?.debugType("A new text box, typed in place.")
+        viewer.pagesView.textEditor?.finish()
+        say("new text box: \(viewer.model.text(page: 0).string.contains("A new text box, typed in place."))")
+        viewer.pagesView.contentTool = .edit
+        if let body = viewer.model.paragraphs(page: 0)?.paragraphs.first(where: { $0.text.hasPrefix("The quick brown fox") }) {
+            click(viewer, page: 0, at: CGPoint(x: body.rect.minX + 2, y: body.lines[0].rect.midY))
+            if let editor = viewer.pagesView.textEditor {
+                editor.setWidth(body.rect.width * 0.6)
+                say("narrower box overlaps other text: \(editor.debugOverlaps)")
+                editor.finish()
+            }
+            let narrower = viewer.model.paragraphs(page: 0)?.paragraphs.first { $0.text.hasPrefix("The quick brown fox") }
+            say("narrower paragraph: \(body.lines.count) -> \(narrower?.lines.count ?? -1) lines, width \(Int(body.rect.width)) -> \(Int(narrower?.rect.width ?? 0))")
+        }
+        // Edit Text from the right-click menu, starting from plain viewing.
+        controller.setEditingContent(false)
+        if let next = viewer.model.paragraphs(page: 0)?.paragraphs.first(where: { $0.text.hasPrefix("Go to page") }),
+           let t = viewer.pagesView.transform(forPage: 0) {
+            let location = viewer.pagesView.convert(CGPoint(x: next.rect.midX, y: next.rect.midY).applying(t), to: nil)
+            let event = NSEvent.mouseEvent(with: .rightMouseDown, location: location, modifierFlags: [], timestamp: 0,
+                                           windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+            let item = viewer.pagesView.menu(for: event)?.items.first { $0.title == "Edit Text" }
+            if let item, let action = item.action { NSApp.sendAction(action, to: item.target, from: item) }
+            say("Edit Text in the menu: \(item != nil); editing content: \(viewer.pagesView.editingContent); caret in it: \(viewer.pagesView.textEditor?.paragraph?.text.hasPrefix("Go to page") == true)")
+            viewer.pagesView.textEditor?.finish()
+        }
         // Page numbers and a watermark, through the sheets.
         controller.addPageNumbers(nil)
         let numbered = pressSheetButton(window, "Add")
@@ -497,7 +527,20 @@ enum SelfTest {
         let marked = pressSheetButton(window, "Add")
         let texts = (0..<viewer.model.pageCount).map { viewer.model.text(page: $0).string }
         say("stamps: sheets \(numbered) \(marked); page 2 has \"Page 2 of 3\": \(texts[1].contains("Page 2 of 3")); DRAFT on every page: \(texts.allSatisfy { $0.contains("DRAFT") })")
+        // The window as people see it while editing: the bar, a box with a selection.
+        controller.setEditingContent(true)
+        if let heading = viewer.model.paragraphs(page: 0)?.paragraphs.first(where: { $0.text.hasPrefix("Chapter One") }) {
+            click(viewer, page: 0, at: CGPoint(x: heading.rect.minX + 4, y: heading.rect.midY))
+            viewer.pagesView.textEditor?.textView.setSelectedRange(NSRange(location: 8, length: 3))
+            say("bar font: \(controller.formatBar.debugFamily)")
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            let capture = Process()
+            capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            capture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", out.appendingPathComponent("content-2-screen.png").path]
+            try? capture.run()
+            capture.waitUntilExit()
+            viewer.pagesView.textEditor?.finish()
             snapshot(window, "content-1-links")
             controller.removeWatermarks(nil)
             say("after removing watermarks: \((0..<viewer.model.pageCount).contains { viewer.model.text(page: $0).string.contains("DRAFT") } ? "some left" : "none"); numbers kept: \(viewer.model.text(page: 0).string.contains("Page 1 of 3"))")

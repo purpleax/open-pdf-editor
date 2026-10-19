@@ -62,9 +62,6 @@ final class ContentInspectorViewController: NSViewController {
             titleLabel.stringValue = "Image"
             detailLabel.stringValue = item.image.map { "\($0.pixelWidth) × \($0.pixelHeight) pixels. Shift-drag a corner to keep its proportions." } ?? ""
             changeButton.title = "Replace…"
-        case .text:
-            view.isHidden = true
-            return
         }
         view.isHidden = false
         let editable = viewer.model.allows(.edit)
@@ -89,7 +86,6 @@ final class ContentInspectorViewController: NSViewController {
         switch ref {
         case .link: onChangeLink?(ref)
         case .image: onReplaceImage?(ref)
-        case .text: break
         }
     }
 

@@ -29,7 +29,7 @@ final class TextFormatBarViewController: NSViewController {
         family.action = #selector(familyChosen(_:))
         family.controlSize = .small
         family.toolTip = "Font"
-        family.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        family.widthAnchor.constraint(equalToConstant: 120).isActive = true
         size.addItems(withObjectValues: Self.sizes.map { "\(Int($0))" })
         size.target = self
         size.action = #selector(sizeChosen(_:))
@@ -42,7 +42,7 @@ final class TextFormatBarViewController: NSViewController {
         for (i, (symbol, tip)) in [("bold", "Bold"), ("italic", "Italic"), ("underline", "Underline")].enumerated() {
             styles.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: tip), forSegment: i)
             styles.setToolTip(tip, forSegment: i)
-            styles.setWidth(26, forSegment: i)
+            styles.setWidth(24, forSegment: i)
         }
         styles.target = self
         styles.action = #selector(styleClicked(_:))
@@ -56,14 +56,14 @@ final class TextFormatBarViewController: NSViewController {
                                    ("text.justify", "Justify")].enumerated() {
             alignment.setImage(NSImage(systemSymbolName: symbol, accessibilityDescription: tip), forSegment: i)
             alignment.setToolTip(tip, forSegment: i)
-            alignment.setWidth(26, forSegment: i)
+            alignment.setWidth(24, forSegment: i)
         }
         alignment.target = self
         alignment.action = #selector(alignmentClicked(_:))
         alignment.controlSize = .small
         let stack = NSStackView(views: [family, size, styles, colorWell, alignment])
         stack.orientation = .horizontal
-        stack.spacing = 8
+        stack.spacing = 6
         stack.setAccessibilityLabel("Text format")
         view = stack
         reload()
@@ -76,7 +76,14 @@ final class TextFormatBarViewController: NSViewController {
         guard let editor else { return }
         let attributes = editor.currentAttributes
         if let font = attributes[.font] as? NSFont {
-            family.selectItem(withTitle: font.familyName ?? "")
+            // A family the Mac doesn't list (Times, say) is shown on its own, at the top.
+            if let extra = family.item(at: 0), extra.tag == 1 { family.removeItem(at: 0) }
+            let name = font.familyName ?? font.fontName
+            if family.item(withTitle: name) == nil {
+                family.insertItem(withTitle: name, at: 0)
+                family.item(at: 0)?.tag = 1
+            }
+            family.selectItem(withTitle: name)
             size.stringValue = String(format: "%g", (font.pointSize * 10).rounded() / 10)
             let traits = NSFontManager.shared.traits(of: font)
             styles.setSelected(traits.contains(.boldFontMask), forSegment: 0)
@@ -139,5 +146,6 @@ extension TextFormatBarViewController {
         styleClicked(styles)
     }
     var debugBoldShown: Bool { styles.isSelected(forSegment: 0) }
+    var debugFamily: String { "\(family.titleOfSelectedItem ?? "none") / font \((editor?.currentAttributes[.font] as? NSFont)?.familyName ?? "nil")" }
 }
 #endif
