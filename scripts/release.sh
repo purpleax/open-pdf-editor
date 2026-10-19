@@ -116,7 +116,7 @@ NOTES="dist/notes-$VERSION.md"
     echo "2. Drag **$NAME** onto the **Applications** folder in the window that opens."
     echo "3. Open it from Applications. It is signed and notarised by Apple, so it opens straight away."
     echo
-    echo "Already installed? Choose **$NAME › Check for Updates…**, or wait for the automatic check."
+    echo "Already installed? Choose **$NAME › Check for Updates…**."
     echo
     echo "Requires macOS 14 or later on a Mac with Apple silicon. Intel Macs are not supported."
     echo
