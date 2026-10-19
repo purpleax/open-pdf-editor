@@ -5,6 +5,7 @@
 #include <mupdf/pdf.h>
 #include <mupdf/pdf/clean.h>
 #include <mupdf/pdf/image-rewriter.h>
+#include <float.h>
 #include <limits.h>
 #include <math.h>
 #include <pthread.h>
@@ -1719,7 +1720,32 @@ struct content_proc {
     // The state in effect at one text operation (recording).
     int probe_op;
     struct run_probe *probe;
+    // Paragraphs: every glyph drawn, and the fonts drawing them.
+    bool log_glyphs;
+    int glyph_index;              // the glyph within the current text operation
+    struct content_glyph *glyphs;
+    int glyph_count, glyph_capacity;
+    struct content_font *fonts;
+    int font_count, font_capacity;
 };
+
+// One glyph drawn by the page's content.
+typedef struct content_glyph {
+    int op, index;                // text operation, and the glyph's place in it
+    float x, y;                   // origin, page space
+    float dx, dy;                 // the baseline's direction
+    float advance, size;          // points
+    int ucs;                      // its first Unicode character
+    int font;                     // into content_proc.fonts
+    int render;
+    int fill_n;
+    float fill[4];
+} content_glyph;
+
+typedef struct content_font {
+    pdf_font_desc *desc;          // kept
+    char resource[128];
+} content_font;
 
 
 #define CHAIN(p) ((p)->out)
@@ -1924,14 +1950,8 @@ typedef struct {
     fz_rect bounds;
 } run_builder;
 
-// One glyph of the current string: its Unicode, and its box in page space.
-static void record_glyph(fz_context *ctx, content_proc *p, run_builder *b, int cid) {
-    pdf_font_desc *font = G(p)->text.font;
-    fz_matrix trm;
-    float adv;
-    pdf_tos_make_trm(ctx, &p->tos, &G(p)->text, font, cid, &trm, &adv);
-    if (!b->run) return;
-    int ucs[PDF_MRANGE_CAP];
+// The Unicode characters a glyph stands for (U+FFFD if none).
+static int glyph_unicode(pdf_font_desc *font, int cid, int ucs[PDF_MRANGE_CAP]) {
     int n = font->to_unicode ? pdf_lookup_cmap_full(font->to_unicode, cid, ucs) : 0;
     if (n == 0 && cid >= 0 && (size_t)cid < font->cid_to_ucs_len) {
         ucs[0] = font->cid_to_ucs[cid];
@@ -1941,6 +1961,67 @@ static void record_glyph(fz_context *ctx, content_proc *p, run_builder *b, int c
         ucs[0] = FZ_REPLACEMENT_CHARACTER;
         n = 1;
     }
+    return n;
+}
+
+// The font in effect, in the log of fonts (-1 past the limit).
+static int log_font(fz_context *ctx, content_proc *p) {
+    pdf_font_desc *font = G(p)->text.font;
+    for (int i = p->font_count - 1; i >= 0; i--)
+        if (p->fonts[i].desc == font && !strcmp(p->fonts[i].resource, G(p)->font_name)) return i;
+    if (p->font_count >= OPDF_MAX_PARA_FONTS) return -1;
+    if (p->font_count == p->font_capacity) {
+        int grown = p->font_capacity ? p->font_capacity * 2 : 8;
+        content_font *bigger = realloc(p->fonts, (size_t)grown * sizeof *bigger);
+        if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        p->fonts = bigger;
+        p->font_capacity = grown;
+    }
+    content_font *f = &p->fonts[p->font_count];
+    f->desc = pdf_keep_font(ctx, font);
+    fz_strlcpy(f->resource, G(p)->font_name, sizeof f->resource);
+    return p->font_count++;
+}
+
+static void log_glyph(fz_context *ctx, content_proc *p, int cid, fz_matrix trm, float adv, int index) {
+    if (p->glyph_count >= OPDF_MAX_PAGE_CHARS) return;
+    if (p->glyph_count == p->glyph_capacity) {
+        int grown = p->glyph_capacity ? p->glyph_capacity * 2 : 256;
+        content_glyph *bigger = realloc(p->glyphs, (size_t)grown * sizeof *bigger);
+        if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        p->glyphs = bigger;
+        p->glyph_capacity = grown;
+    }
+    int ucs[PDF_MRANGE_CAP];
+    glyph_unicode(G(p)->text.font, cid, ucs);
+    fz_matrix m = fz_concat(fz_concat(trm, G(p)->ctm), p->page_ctm);
+    float across = sqrtf(m.a * m.a + m.b * m.b);
+    content_glyph *g = &p->glyphs[p->glyph_count++];
+    g->op = p->text_ops;
+    g->index = index;
+    g->x = m.e;
+    g->y = m.f;
+    g->dx = across > 0 ? m.a / across : 1;
+    g->dy = across > 0 ? m.b / across : 0;
+    g->advance = adv * across;
+    g->size = sqrtf(m.c * m.c + m.d * m.d);
+    g->ucs = ucs[0];
+    g->font = log_font(ctx, p);
+    g->render = G(p)->text.render;
+    g->fill_n = G(p)->fill_n;
+    memcpy(g->fill, G(p)->fill, sizeof g->fill);
+}
+
+// One glyph of the current string: its Unicode, and its box in page space.
+static void record_glyph(fz_context *ctx, content_proc *p, run_builder *b, int cid, int index) {
+    pdf_font_desc *font = G(p)->text.font;
+    fz_matrix trm;
+    float adv;
+    pdf_tos_make_trm(ctx, &p->tos, &G(p)->text, font, cid, &trm, &adv);
+    if (p->log_glyphs) log_glyph(ctx, p, cid, trm, adv, index);
+    if (!b->run) return;
+    int ucs[PDF_MRANGE_CAP];
+    int n = glyph_unicode(font, cid, ucs);
     if (b->run->quad_count >= OPDF_MAX_RUN_CHARS || p->chars_left <= 0) {
         b->run->not_editable = OPDF_RUN_TOO_LONG;
         return;
@@ -1977,8 +2058,9 @@ static void show_string(fz_context *ctx, content_proc *p, run_builder *b, const 
         int inc = pdf_decode_cmap(font->encoding, (unsigned char *)s, (unsigned char *)end, &code);
         if (inc <= 0) break;
         s += inc;
+        int index = p->glyph_index++;
         int cid = pdf_lookup_cmap(font->encoding, code);
-        if (cid >= 0) record_glyph(ctx, p, b, cid);
+        if (cid >= 0) record_glyph(ctx, p, b, cid, index);
         else pdf_tos_make_trm(ctx, &p->tos, &G(p)->text, font, 0, &(fz_matrix){ 0 }, &(float){ 0 });
         pdf_tos_move_after_char(ctx, &p->tos);
         if (code == 32 && inc == 1) {
@@ -2034,6 +2116,7 @@ static bool text_op_is_target(content_proc *p) {
 static void show_text(fz_context *ctx, content_proc *p, pdf_obj *array, const unsigned char *s, size_t len) {
     run_builder b;
     pdf_font_desc *font = G(p)->text.font;
+    p->glyph_index = 0;
     if (!font) return;
     begin_run(ctx, p, &b);
     fz_try(ctx) {
@@ -2173,6 +2256,12 @@ static void cp_drop(fz_context *ctx, pdf_processor *proc) {
         pdf_drop_font(ctx, p->gs[i].text.font);
         p->gs[i].text.font = NULL;
     }
+    for (int i = 0; i < p->font_count; i++) pdf_drop_font(ctx, p->fonts[i].desc);
+    free(p->fonts);
+    free(p->glyphs);
+    p->fonts = NULL;
+    p->glyphs = NULL;
+    p->font_count = p->glyph_count = 0;
 }
 
 // A processor for the page; `out` is the buffer processor when rewriting.
@@ -2303,6 +2392,593 @@ void opdf_page_content_free(opdf_page_content *c) {
     free(c->runs);
     free(c->images);
     memset(c, 0, sizeof *c);
+}
+
+// --- Paragraphs
+
+// The page's glyphs by position (1-point cells), to find the one drawing a
+// character of MuPDF's text.
+typedef struct {
+    int *head, *next;
+    unsigned mask;
+    bool *used;
+} glyph_grid;
+
+static unsigned grid_key(int cx, int cy) {
+    return (unsigned)cx * 73856093u ^ (unsigned)cy * 19349663u;
+}
+
+static void grid_build(fz_context *ctx, glyph_grid *g, const content_glyph *glyphs, int count) {
+    unsigned size = 64;
+    while (size < (unsigned)count * 2) size <<= 1;
+    g->mask = size - 1;
+    g->head = malloc(size * sizeof *g->head);
+    g->next = malloc(((size_t)count + 1) * sizeof *g->next);
+    g->used = calloc((size_t)count + 1, sizeof *g->used);
+    if (!g->head || !g->next || !g->used) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+    for (unsigned i = 0; i < size; i++) g->head[i] = -1;
+    for (int i = 0; i < count; i++) {
+        unsigned h = grid_key((int)floorf(glyphs[i].x), (int)floorf(glyphs[i].y)) & g->mask;
+        g->next[i] = g->head[h];
+        g->head[h] = i;
+    }
+}
+
+static void grid_free(glyph_grid *g) {
+    free(g->head);
+    free(g->next);
+    free(g->used);
+    memset(g, 0, sizeof *g);
+}
+
+// The unused glyph drawn at the character's origin: the same character
+// (or, for a ligature, the same font) within half a point.
+static int grid_match(glyph_grid *g, const content_glyph *glyphs, const content_font *fonts, fz_stext_char *ch) {
+    int cx = (int)floorf(ch->origin.x), cy = (int)floorf(ch->origin.y);
+    int best = -1;
+    float best_d = 0.5f * 0.5f;
+    for (int dx = -1; dx <= 1; dx++)
+        for (int dy = -1; dy <= 1; dy++)
+            for (int i = g->head[grid_key(cx + dx, cy + dy) & g->mask]; i >= 0; i = g->next[i]) {
+                if (g->used[i]) continue;
+                const content_glyph *gl = &glyphs[i];
+                float ddx = gl->x - ch->origin.x, ddy = gl->y - ch->origin.y, d = ddx * ddx + ddy * ddy;
+                if (d > best_d) continue;
+                bool same_font = gl->font >= 0 && fonts[gl->font].desc && fonts[gl->font].desc->font == ch->font;
+                if (gl->ucs != ch->c && !same_font) continue;
+                best = i;
+                best_d = d;
+            }
+    if (best >= 0) g->used[best] = true;
+    return best;
+}
+
+typedef struct {
+    opdf_paragraphs *out;
+    int capacity;
+    const content_glyph *glyphs;
+    const content_font *fonts;
+    glyph_grid grid;
+} para_builder;
+
+static opdf_paragraph *new_paragraph(fz_context *ctx, para_builder *b) {
+    opdf_paragraphs *o = b->out;
+    if (o->count >= OPDF_MAX_PARAGRAPHS) return NULL;
+    if (o->count == b->capacity) {
+        int grown = b->capacity ? b->capacity * 2 : 32;
+        opdf_paragraph *bigger = realloc(o->items, (size_t)grown * sizeof *bigger);
+        if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        o->items = bigger;
+        b->capacity = grown;
+    }
+    opdf_paragraph *para = &o->items[o->count++];
+    memset(para, 0, sizeof *para);
+    return para;
+}
+
+// One stext line, or a piece of one between wide gaps.
+typedef struct {
+    fz_stext_line *line;
+    fz_stext_char *first, *end;   // [first, end)
+} line_piece;
+
+static float char_size(fz_stext_char *ch) { return ch->size > 0 ? ch->size : 1; }
+
+// Adds the pieces as one paragraph: characters matched to their glyphs,
+// lines, alignment, spacing and indent.
+static void add_paragraph(fz_context *ctx, para_builder *b, line_piece *pieces, int n) {
+    opdf_paragraph *para = new_paragraph(ctx, b);
+    if (!para) return;
+    int chars = 0;
+    for (int i = 0; i < n; i++)
+        for (fz_stext_char *ch = pieces[i].first; ch != pieces[i].end; ch = ch->next) chars++;
+    if (chars > OPDF_MAX_RUN_CHARS) {
+        para->not_editable = OPDF_PARA_TOO_LONG;
+        chars = OPDF_MAX_RUN_CHARS;
+    }
+    para->chars = calloc((size_t)chars + 1, sizeof *para->chars);
+    para->lines = calloc((size_t)n + 1, sizeof *para->lines);
+    if (!para->chars || !para->lines) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+    fz_rect all = fz_empty_rect;
+    int k = 0;
+    for (int i = 0; i < n && k < chars; i++) {
+        line_piece *pc = &pieces[i];
+        opdf_para_line *line = &para->lines[para->line_count++];
+        line->first = k;
+        fz_rect bounds = fz_empty_rect;
+        if (pc->line->wmode) para->not_editable = para->not_editable ? para->not_editable : OPDF_PARA_VERTICAL;
+        else if (fabsf(pc->line->dir.y) > 0.01f || pc->line->dir.x < 0) para->not_editable = para->not_editable ? para->not_editable : OPDF_PARA_ROTATED;
+        for (fz_stext_char *ch = pc->first; ch != pc->end && k < chars; ch = ch->next) {
+            opdf_para_char *c = &para->chars[k++];
+            fz_rect r = fz_rect_from_quad(ch->quad);
+            bounds = fz_union_rect(bounds, r);
+            c->c = ch->c;
+            c->x = ch->origin.x;
+            c->y = ch->origin.y;
+            c->size = ch->size;
+            c->rect = rect_to(r);
+            c->op = c->glyph = -1;
+            c->font = -1;
+            c->advance = r.x1 - r.x0;
+            // sRGB from MuPDF unless the glyph says how it was filled.
+            c->color_n = 3;
+            c->color[0] = ((ch->argb >> 16) & 0xff) / 255.0f;
+            c->color[1] = ((ch->argb >> 8) & 0xff) / 255.0f;
+            c->color[2] = (ch->argb & 0xff) / 255.0f;
+            if (ch->bidi & 1) para->not_editable = para->not_editable ? para->not_editable : OPDF_PARA_RIGHT_TO_LEFT;
+            int g = grid_match(&b->grid, b->glyphs, b->fonts, ch);
+            if (g < 0) {
+                // A space MuPDF added between words has no glyph.
+                if (ch->c != ' ' && !para->not_editable) para->not_editable = OPDF_PARA_UNMATCHED;
+                continue;
+            }
+            const content_glyph *gl = &b->glyphs[g];
+            c->op = gl->op;
+            c->glyph = gl->index;
+            c->font = gl->font;
+            c->advance = gl->advance;
+            c->size = gl->size;
+            c->color_n = gl->fill_n;
+            memcpy(c->color, gl->fill, sizeof c->color);
+            int reason = 0;
+            pdf_font_desc *desc = gl->font >= 0 ? b->fonts[gl->font].desc : NULL;
+            if (desc && desc->font && desc->font->t3procs) reason = OPDF_PARA_TYPE3;
+            else if (desc && desc->wmode) reason = OPDF_PARA_VERTICAL;
+            else if (gl->render == 3) reason = OPDF_PARA_INVISIBLE;
+            else if (gl->render >= 4) reason = OPDF_PARA_CLIPPING;
+            else if (fabsf(gl->dy) > 0.01f || gl->dx < 0) reason = OPDF_PARA_ROTATED;
+            if (reason && !para->not_editable) para->not_editable = reason;
+        }
+        line->count = k - line->first;
+        line->rect = rect_to(fz_is_empty_rect(bounds) ? fz_make_rect(0, 0, 0, 0) : bounds);
+        line->baseline = line->count ? para->chars[line->first].y : bounds.y1;
+        all = fz_union_rect(all, bounds);
+    }
+    para->char_count = k;
+    para->rect = rect_to(fz_is_empty_rect(all) ? fz_make_rect(0, 0, 0, 0) : all);
+
+    // Alignment, from where the lines start and end.
+    int lc = para->line_count;
+    if (lc >= 2) {
+        float size = 0;
+        for (int i = 0; i < k; i++) size = fmaxf(size, para->chars[i].size);
+        float tol = fmaxf(1.0f, size * 0.08f);
+        float min_x0 = para->lines[lc > 1 ? 1 : 0].rect.x0;
+        for (int i = 1; i < lc; i++) min_x0 = fminf(min_x0, para->lines[i].rect.x0);
+        bool left = true, right = true, centre = true, full = true;
+        float x1 = para->lines[0].rect.x1, mid = (para->lines[0].rect.x0 + para->lines[0].rect.x1) / 2;
+        for (int i = 0; i < lc; i++) {
+            opdf_rect r = para->lines[i].rect;
+            if (i > 0 && fabsf(r.x0 - min_x0) > tol) left = false;
+            if (fabsf(r.x1 - x1) > tol) right = false;
+            if (i < lc - 1 && fabsf(r.x1 - x1) > tol) full = false;
+            if (fabsf((r.x0 + r.x1) / 2 - mid) > tol) centre = false;
+        }
+        if (left && full && lc >= 2 && (lc > 2 || right)) para->align = OPDF_ALIGN_JUSTIFIED;
+        else if (left) para->align = OPDF_ALIGN_LEFT;
+        else if (right) para->align = OPDF_ALIGN_RIGHT;
+        else if (centre) para->align = OPDF_ALIGN_CENTER;
+        // A justified paragraph's last line ends short; one that fills
+        // every line is called justified only when it has three or more.
+        if (para->align == OPDF_ALIGN_JUSTIFIED && right && lc == 2) para->align = OPDF_ALIGN_LEFT;
+        if (para->align == OPDF_ALIGN_LEFT || para->align == OPDF_ALIGN_JUSTIFIED)
+            para->indent = para->lines[0].rect.x0 - min_x0;
+        // Spacing: the median gap between baselines.
+        float gaps[64];
+        int g = 0;
+        for (int i = 1; i < lc && g < 64; i++) gaps[g++] = para->lines[i].baseline - para->lines[i - 1].baseline;
+        for (int i = 1; i < g; i++)
+            for (int j = i; j > 0 && gaps[j - 1] > gaps[j]; j--) {
+                float t = gaps[j]; gaps[j] = gaps[j - 1]; gaps[j - 1] = t;
+            }
+        para->line_spacing = g ? gaps[g / 2] : 0;
+    }
+}
+
+// Splits a line at gaps wider than 3 em (table cells, a bullet and its text).
+static int split_line(fz_stext_line *line, line_piece *out, int max) {
+    int n = 0;
+    fz_stext_char *start = line->first_char;
+    for (fz_stext_char *ch = line->first_char; ch && ch->next && n < max - 1; ch = ch->next) {
+        fz_stext_char *next = ch->next;
+        // Spaces don't count as the end of what precedes the gap.
+        if (next->c == ' ') continue;
+        fz_stext_char *before = ch;
+        float gap = fz_rect_from_quad(next->quad).x0 - fz_rect_from_quad(before->quad).x1;
+        if (ch->c == ' ') {
+            // Measure from the last character that isn't a space.
+            fz_stext_char *last = start;
+            for (fz_stext_char *c = start; c != next; c = c->next) if (c->c != ' ') last = c;
+            gap = fz_rect_from_quad(next->quad).x0 - fz_rect_from_quad(last->quad).x1;
+        }
+        if (gap > 3 * char_size(next)) {
+            out[n++] = (line_piece){ line, start, next };
+            start = next;
+        }
+    }
+    if (start) out[n++] = (line_piece){ line, start, NULL };
+    return n;
+}
+
+// Whether the pieces stack as one paragraph: one per line, each below the
+// last at 0.8 to 3 times the text size, overlapping it across the page.
+static bool stacks(line_piece *pieces, int n) {
+    for (int i = 1; i < n; i++) {
+        fz_stext_char *a = pieces[i - 1].first, *c = pieces[i].first;
+        if (!a || !c) return false;
+        float size = fmaxf(char_size(a), char_size(c));
+        float gap = c->origin.y - a->origin.y;
+        if (gap < 0.8f * size || gap > 3 * size) return false;
+        fz_rect ra = pieces[i - 1].line->bbox, rc = pieces[i].line->bbox;
+        if (rc.x0 >= ra.x1 || rc.x1 <= ra.x0) return false;
+    }
+    return true;
+}
+
+#define OPDF_MAX_PARA_LINES 2000
+
+// The width of the first word of a line (to where its first space starts).
+static float first_word_width(const opdf_paragraph *para, const opdf_para_line *line) {
+    float w = 0;
+    for (int i = line->first; i < line->first + line->count && para->chars[i].c != ' '; i++) w += para->chars[i].advance;
+    return w;
+}
+
+static float para_size(const opdf_paragraph *para) {
+    float size = 0;
+    for (int i = 0; i < para->char_count; i++) size = fmaxf(size, para->chars[i].size);
+    return size > 0 ? size : 1;
+}
+
+// Whether the next line's first word would have fitted at the end of this
+// one: if so, the line was ended on purpose (a hard break), not wrapped.
+static void mark_hard_breaks(opdf_paragraph *para) {
+    float size = para_size(para);
+    for (int i = 0; i + 1 < para->line_count; i++) {
+        const opdf_para_line *line = &para->lines[i];
+        float room = para->rect.x1 - line->rect.x1;
+        float needed = 0.25f * size + first_word_width(para, &para->lines[i + 1]);
+        para->lines[i].hard_break = needed < room - 0.5f;
+    }
+}
+
+// A one-line paragraph's alignment, from where it sits on the page: centred
+// on it, or against the right margin the other text keeps.
+static void align_single_lines(opdf_paragraphs *o, fz_rect page) {
+    float left = FLT_MAX, right = -FLT_MAX;
+    for (int i = 0; i < o->count; i++) {
+        if (o->items[i].line_count < 2) continue;
+        left = fminf(left, o->items[i].rect.x0);
+        right = fmaxf(right, o->items[i].rect.x1);
+    }
+    // Margins are usually the same on both sides.
+    if (left != FLT_MAX) right = fmaxf(right, page.x1 - (left - page.x0));
+    for (int i = 0; i < o->count; i++) {
+        opdf_paragraph *p = &o->items[i];
+        if (p->line_count != 1 || p->not_editable) continue;
+        float mid = (p->rect.x0 + p->rect.x1) / 2, size = para_size(p);
+        bool at_left = left != FLT_MAX && fabsf(p->rect.x0 - left) < 1;
+        if (!at_left && fabsf(mid - (page.x0 + page.x1) / 2) < 2) p->align = OPDF_ALIGN_CENTER;
+        else if (!at_left && right != -FLT_MAX && fabsf(p->rect.x1 - right) < 1 && p->rect.x0 > left + 2 * size) p->align = OPDF_ALIGN_RIGHT;
+    }
+}
+
+// Joins a paragraph to the one before when it carries on from it: the same
+// left edge, size and spacing, and a first word that wouldn't have fitted
+// on the line before (MuPDF sometimes puts the lines of one paragraph in
+// separate blocks, such as a list item's after its bullet).
+static void merge_wrapped_paragraphs(fz_context *ctx, opdf_paragraphs *o) {
+    int w = 0;
+    for (int r = 0; r < o->count; r++) {
+        opdf_paragraph *b = &o->items[r];
+        opdf_paragraph *a = w > 0 ? &o->items[w - 1] : NULL;
+        bool join = false;
+        if (a && !a->not_editable && !b->not_editable && a->line_count && b->line_count
+            && a->line_count + b->line_count <= OPDF_MAX_PARA_LINES && a->char_count + b->char_count <= OPDF_MAX_RUN_CHARS) {
+            const opdf_para_line *last = &a->lines[a->line_count - 1], *next = &b->lines[0];
+            float size = para_size(a), size_b = para_size(b);
+            float gap = next->baseline - last->baseline;
+            float left = a->lines[a->line_count > 1 ? 1 : 0].rect.x0;
+            float right = fmaxf(a->rect.x1, b->rect.x1);
+            bool spacing = a->line_count > 1 ? fabsf(gap - a->line_spacing) < 0.5f : (gap > 0.8f * size && gap < 1.6f * size);
+            join = fabsf(size - size_b) < 0.5f && spacing && fabsf(next->rect.x0 - left) < 1
+                && last->rect.x1 + 0.25f * size + first_word_width(b, next) > right + 0.5f;
+        }
+        if (!join) {
+            if (w != r) o->items[w] = *b;
+            w++;
+            continue;
+        }
+        // b's lines and characters go on the end of a's.
+        opdf_para_char *chars = realloc(a->chars, (size_t)(a->char_count + b->char_count + 1) * sizeof *chars);
+        if (!chars) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        a->chars = chars;
+        opdf_para_line *lines = realloc(a->lines, (size_t)(a->line_count + b->line_count + 1) * sizeof *lines);
+        if (!lines) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        a->lines = lines;
+        memcpy(a->chars + a->char_count, b->chars, (size_t)b->char_count * sizeof *chars);
+        for (int i = 0; i < b->line_count; i++) {
+            a->lines[a->line_count + i] = b->lines[i];
+            a->lines[a->line_count + i].first += a->char_count;
+        }
+        a->char_count += b->char_count;
+        a->line_count += b->line_count;
+        a->rect = rect_to(fz_union_rect(rect_from(a->rect), rect_from(b->rect)));
+        if (a->line_spacing == 0) a->line_spacing = a->lines[1].baseline - a->lines[0].baseline;
+        free(b->chars);
+        free(b->lines);
+    }
+    o->count = w;
+}
+
+static void walk_paragraph_blocks(fz_context *ctx, para_builder *b, fz_stext_block *block, int depth) {
+    if (depth > 64) return;
+    line_piece *pieces = NULL;
+    fz_var(pieces);
+    fz_try(ctx) {
+        pieces = malloc(OPDF_MAX_PARA_LINES * sizeof *pieces);
+        if (!pieces) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+        for (; block; block = block->next) {
+            if (block->type == FZ_STEXT_BLOCK_STRUCT && block->u.s.down) {
+                walk_paragraph_blocks(ctx, b, block->u.s.down->first_block, depth + 1);
+                continue;
+            }
+            if (block->type != FZ_STEXT_BLOCK_TEXT) continue;
+            int n = 0;
+            bool split = false;
+            for (fz_stext_line *line = block->u.t.first_line; line && n < OPDF_MAX_PARA_LINES; line = line->next) {
+                if (!line->first_char) continue;
+                int got = split_line(line, pieces + n, OPDF_MAX_PARA_LINES - n);
+                if (got > 1) split = true;
+                n += got;
+            }
+            if (n == 0) continue;
+            if (!split && stacks(pieces, n)) {
+                // A block can hold several paragraphs: a new one starts after
+                // a wider gap, or with an indented line after a short one.
+                float gaps[64];
+                int g = 0;
+                for (int i = 1; i < n && g < 64; i++) gaps[g++] = pieces[i].first->origin.y - pieces[i - 1].first->origin.y;
+                for (int i = 1; i < g; i++)
+                    for (int j = i; j > 0 && gaps[j - 1] > gaps[j]; j--) {
+                        float t = gaps[j]; gaps[j] = gaps[j - 1]; gaps[j - 1] = t;
+                    }
+                float usual = g ? gaps[g / 2] : 0;
+                float x0 = pieces[0].line->bbox.x0, x1 = pieces[0].line->bbox.x1;
+                for (int i = 1; i < n; i++) {
+                    x0 = fminf(x0, pieces[i].line->bbox.x0);
+                    x1 = fmaxf(x1, pieces[i].line->bbox.x1);
+                }
+                int start = 0;
+                for (int i = 1; i < n; i++) {
+                    float size = char_size(pieces[i].first);
+                    float gap = pieces[i].first->origin.y - pieces[i - 1].first->origin.y;
+                    bool wider = usual > 0 && gap > usual * 1.3f;
+                    bool indented = pieces[i].line->bbox.x0 > x0 + 0.5f * size && pieces[i - 1].line->bbox.x1 < x1 - 2 * size
+                        && pieces[i].line->bbox.x0 > pieces[i - 1].line->bbox.x0 + 0.5f * size;
+                    if (wider || indented) {
+                        add_paragraph(ctx, b, pieces + start, i - start);
+                        start = i;
+                    }
+                }
+                add_paragraph(ctx, b, pieces + start, n - start);
+            } else {
+                // Not one paragraph after all: each piece on its own.
+                for (int i = 0; i < n; i++) add_paragraph(ctx, b, &pieces[i], 1);
+            }
+        }
+    }
+    fz_always(ctx)
+        free(pieces);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_paragraphs_load(opdf_doc *d, int page_number, opdf_paragraphs *out, opdf_error *err) {
+    clear_error(err);
+    memset(out, 0, sizeof *out);
+    fz_context *ctx = d->ctx;
+    pdf_page *page = NULL;
+    content_proc *p = NULL;
+    fz_stext_page *text = NULL;
+    para_builder b = { out };
+    fz_var(page);
+    fz_var(p);
+    fz_var(text);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        page = load_pdf_page(ctx, d->doc, page_number);
+        // Every glyph the page's own content draws...
+        p = new_content_proc(ctx, pdf, page, NULL);
+        p->log_glyphs = true;
+        process_page_content(ctx, pdf, page, p);
+        b.glyphs = p->glyphs;
+        b.fonts = p->fonts;
+        grid_build(ctx, &b.grid, p->glyphs, p->glyph_count);
+        // ...and MuPDF's paragraphs, each character tied to its glyph.
+        fz_stext_options options;
+        memset(&options, 0, sizeof options);
+        // MuPDF's lines and blocks (its paragraph breaking splits short
+        // paragraphs apart: blocks are split here instead), with fake bold
+        // (text drawn twice) folded into one.
+        options.flags = FZ_STEXT_CLIP | FZ_STEXT_SEGMENT | FZ_STEXT_PRESERVE_SPANS | FZ_STEXT_COLLECT_STYLES
+                      | FZ_STEXT_PRESERVE_LIGATURES | FZ_STEXT_IGNORE_ACTUALTEXT | FZ_STEXT_ACCURATE_BBOXES;
+        text = fz_new_stext_page_from_page(ctx, (fz_page *)page, &options);
+        walk_paragraph_blocks(ctx, &b, text->first_block, 0);
+        merge_wrapped_paragraphs(ctx, out);
+        for (int i = 0; i < out->count; i++) mark_hard_breaks(&out->items[i]);
+        align_single_lines(out, fz_bound_page(ctx, (fz_page *)page));
+        // The fonts.
+        if (p->font_count > 0) {
+            out->fonts = calloc((size_t)p->font_count, sizeof *out->fonts);
+            if (!out->fonts) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+            out->font_count = p->font_count;
+            for (int i = 0; i < p->font_count; i++) {
+                fz_font *f = p->fonts[i].desc ? p->fonts[i].desc->font : NULL;
+                opdf_para_font *o = &out->fonts[i];
+                o->resource = strdup(p->fonts[i].resource);
+                o->name = strdup(f && f->name[0] ? f->name : "");
+                if (!o->resource || !o->name) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+                o->serif = f && fz_font_is_serif(ctx, f);
+                o->bold = f && fz_font_is_bold(ctx, f);
+                o->italic = f && fz_font_is_italic(ctx, f);
+                o->monospaced = f && fz_font_is_monospaced(ctx, f);
+            }
+        }
+    }
+    fz_always(ctx) {
+        grid_free(&b.grid);
+        fz_drop_stext_page(ctx, text);
+        pdf_drop_processor(ctx, &p->super);
+        fz_drop_page(ctx, (fz_page *)page);
+    }
+    fz_catch(ctx) {
+        set_error(err, ctx);
+        opdf_paragraphs_free(out);
+    }
+    unlock_doc(d);
+    return !(err && err->code);
+}
+
+void opdf_paragraphs_free(opdf_paragraphs *o) {
+    if (!o) return;
+    for (int i = 0; i < o->count; i++) {
+        free(o->items[i].chars);
+        free(o->items[i].lines);
+    }
+    free(o->items);
+    for (int i = 0; i < o->font_count; i++) {
+        free(o->fonts[i].resource);
+        free(o->fonts[i].name);
+    }
+    free(o->fonts);
+    memset(o, 0, sizeof *o);
+}
+
+// Every character a font can draw, with its code: one pass over the
+// encoding (at most 70,000 codes), as encode_in_font does for one.
+typedef struct {
+    int unicode;
+    int len;
+    unsigned char code[4];
+    unsigned int value;           // the code as a number
+    int cid;
+} font_code_entry;
+
+static int compare_unicode(const void *a, const void *b) {
+    const font_code_entry *x = a, *y = b;
+    return x->unicode < y->unicode ? -1 : x->unicode > y->unicode;
+}
+
+// By character, then the shortest and lowest code (a space is 32, which
+// word spacing applies to, rather than a no-break space mapped to it).
+static int compare_code_entries(const void *a, const void *b) {
+    const font_code_entry *x = a, *y = b;
+    if (x->unicode != y->unicode) return x->unicode < y->unicode ? -1 : 1;
+    if (x->len != y->len) return x->len < y->len ? -1 : 1;
+    return x->value < y->value ? -1 : x->value > y->value;
+}
+
+bool opdf_font_encode(opdf_doc *d, int page_number, const char *resource, const int *chars, int count,
+                      opdf_font_code *out, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = d->ctx;
+    pdf_page *page = NULL;
+    pdf_font_desc *font = NULL;
+    font_code_entry *entries = NULL;
+    fz_var(page);
+    fz_var(font);
+    fz_var(entries);
+    memset(out, 0, (size_t)(count > 0 ? count : 0) * sizeof *out);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        if (count < 0 || count > OPDF_MAX_RUN_CHARS) fz_throw(ctx, FZ_ERROR_LIMIT, "Too much text");
+        page = load_pdf_page(ctx, d->doc, page_number);
+        pdf_obj *dict = pdf_dict_gets(ctx, pdf_dict_get(ctx, pdf_page_resources(ctx, page), PDF_NAME(Font)), resource ? resource : "");
+        if (!pdf_is_dict(ctx, dict) || pdf_name_eq(ctx, pdf_dict_get(ctx, dict, PDF_NAME(Subtype)), PDF_NAME(Type3))) break;
+        font = pdf_load_font(ctx, pdf, NULL, dict);
+        if (!font->font || font->wmode) break;
+        pdf_cmap *cmap = font->encoding;
+        int n = 0, cap = 0, budget = 70000;
+        for (int r = 0; cmap && r < cmap->codespace_len && budget > 0; r++) {
+            int bytes = cmap->codespace[r].n;
+            if (bytes < 1 || bytes > 4) continue;
+            unsigned int high = cmap->codespace[r].high;
+            for (unsigned int code = cmap->codespace[r].low; code <= high && budget-- > 0 && code != UINT_MAX; code++) {
+                int cid = pdf_lookup_cmap(cmap, code);
+                if (cid < 0) continue;
+                int ucs[PDF_MRANGE_CAP];
+                int len = font->to_unicode ? pdf_lookup_cmap_full(font->to_unicode, cid, ucs) : 0;
+                if (len == 0 && (size_t)cid < font->cid_to_ucs_len) {
+                    ucs[0] = font->cid_to_ucs[cid];
+                    len = 1;
+                }
+                if (len != 1 || ucs[0] <= 0) continue;
+                if (n == cap) {
+                    cap = cap ? cap * 2 : 256;
+                    font_code_entry *bigger = realloc(entries, (size_t)cap * sizeof *bigger);
+                    if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+                    entries = bigger;
+                }
+                font_code_entry *e = &entries[n++];
+                e->unicode = ucs[0];
+                e->len = bytes;
+                e->value = code;
+                e->cid = cid;
+                for (int i = 0; i < bytes; i++) e->code[i] = (unsigned char)(code >> (8 * (bytes - 1 - i)));
+            }
+        }
+        if (n > 1) qsort(entries, (size_t)n, sizeof *entries, compare_code_entries);
+        for (int i = 0; i < count; i++) {
+            font_code_entry key = { chars[i] };
+            font_code_entry *e = n ? bsearch(&key, entries, (size_t)n, sizeof *entries, compare_unicode) : NULL;
+            if (!e) continue;
+            // The first code for it whose glyph is really there (subsets
+            // keep codes for glyphs they dropped).
+            while (e > entries && e[-1].unicode == chars[i]) e--;
+            for (; e < entries + n && e->unicode == chars[i]; e++) {
+                int gid = pdf_font_cid_to_gid(ctx, font, e->cid);
+                if (chars[i] != ' ' && (gid <= 0 || fz_is_empty_rect(fz_bound_glyph(ctx, font->font, gid, fz_identity)))) continue;
+                out[i].len = e->len;
+                memcpy(out[i].code, e->code, sizeof out[i].code);
+                out[i].advance = pdf_lookup_hmtx(ctx, font, e->cid).w * 0.001f;
+                break;
+            }
+        }
+    }
+    fz_always(ctx) {
+        free(entries);
+        pdf_drop_font(ctx, font);
+        fz_drop_page(ctx, (fz_page *)page);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    unlock_doc(d);
+    return !(err && err->code);
 }
 
 // Rewrites the page's content through `p` (chained to a buffer processor),

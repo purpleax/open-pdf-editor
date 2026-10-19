@@ -376,6 +376,86 @@ typedef struct {
 
 bool opdf_page_content_load(opdf_doc *doc, int page, opdf_page_content *out, opdf_error *err);
 void opdf_page_content_free(opdf_page_content *content);
+
+// --- Paragraphs ---------------------------------------------------------------
+//
+// The page's text as MuPDF groups it into paragraphs, each character tied to
+// the glyph that draws it (its text operation, and its place in that
+// operation), so a paragraph can be taken out exactly and written again.
+
+enum {
+    OPDF_PARA_EDITABLE = 0,
+    OPDF_PARA_TYPE3,        // drawn with a Type3 font
+    OPDF_PARA_VERTICAL,     // vertical writing
+    OPDF_PARA_ROTATED,      // lines not level on the page
+    OPDF_PARA_INVISIBLE,    // render mode 3 (an OCR layer, for one)
+    OPDF_PARA_CLIPPING,     // render modes 4-7: the text also clips what follows
+    OPDF_PARA_UNMATCHED,    // some of it is drawn inside a reusable graphic (Form XObject) or pattern
+    OPDF_PARA_RIGHT_TO_LEFT,
+    OPDF_PARA_TOO_LONG,
+};
+
+enum { OPDF_ALIGN_LEFT = 0, OPDF_ALIGN_CENTER, OPDF_ALIGN_RIGHT, OPDF_ALIGN_JUSTIFIED };
+
+typedef struct {
+    int c;                  // Unicode
+    int font;               // into opdf_paragraphs.fonts; -1 for a space text extraction added
+    int op, glyph;          // the glyph that draws it: text operation and its glyph within it; -1 if none
+    float x, y;             // origin, page space (y down)
+    float advance;          // along the baseline, in points
+    float size;             // in points
+    int color_n;            // fill as drawn: 1 grey, 3 RGB, 4 CMYK; 0 for any other kind
+    float color[4];
+    opdf_rect rect;         // the character's box
+} opdf_para_char;
+
+typedef struct {
+    opdf_rect rect;
+    float baseline;         // y of its characters' origins
+    int first, count;       // its characters, in the paragraph's
+    bool hard_break;        // ended on purpose: the next line's first word would have fitted
+} opdf_para_line;
+
+typedef struct {
+    opdf_rect rect;
+    opdf_para_line *lines;
+    int line_count;
+    opdf_para_char *chars;
+    int char_count;
+    int align;              // OPDF_ALIGN_*
+    float line_spacing;     // baseline to baseline; 0 for one line
+    float indent;           // how far the first line starts beyond the others
+    int not_editable;       // OPDF_PARA_*
+} opdf_paragraph;
+
+typedef struct {
+    char *resource;         // its name in the page's /Font resources ("" if set another way)
+    char *name;             // the font's own name (no subset prefix)
+    bool serif, bold, italic, monospaced;
+} opdf_para_font;
+
+typedef struct {
+    opdf_paragraph *items;
+    int count;
+    opdf_para_font *fonts;
+    int font_count;
+} opdf_paragraphs;
+
+#define OPDF_MAX_PARAGRAPHS 10000
+#define OPDF_MAX_PARA_FONTS 256
+
+bool opdf_paragraphs_load(opdf_doc *doc, int page, opdf_paragraphs *out, opdf_error *err);
+void opdf_paragraphs_free(opdf_paragraphs *paragraphs);
+
+// How each character is drawn in the page's font `resource`: its code (len 0
+// if the font has no glyph for it) and advance (in em).
+typedef struct {
+    int len;
+    unsigned char code[4];
+    float advance;
+} opdf_font_code;
+bool opdf_font_encode(opdf_doc *doc, int page, const char *resource, const int *chars, int count,
+                      opdf_font_code *out, opdf_error *err);
 // Images. `data` is a JPEG or PNG file (other formats are converted
 // before they get here), at most OPDF_MAX_IMAGE_BYTES and
 // OPDF_MAX_IMAGE_PIXELS. Rectangles are in page space; an image is drawn

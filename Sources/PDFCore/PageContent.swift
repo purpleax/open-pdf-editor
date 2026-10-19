@@ -106,7 +106,7 @@ extension EngineDocument {
         guard opdf_page_content_rewrite(handle, Int32(page), &error) else { throw EngineError(error) }
     }
 
-    private static func color(_ n: Int32, _ c: (Float, Float, Float, Float)) -> PDFColor? {
+    static func color(_ n: Int32, _ c: (Float, Float, Float, Float)) -> PDFColor? {
         switch n {
         case 1: PDFColor(red: CGFloat(c.0), green: CGFloat(c.0), blue: CGFloat(c.0))
         case 3: PDFColor(red: CGFloat(c.0), green: CGFloat(c.1), blue: CGFloat(c.2))

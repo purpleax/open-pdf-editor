@@ -307,6 +307,109 @@ function makeRedactLeftovers() {
 	doc.save(out + "/redact.pdf", "")
 }
 
+// --- paragraphs.pdf: text as paragraphs, for paragraph editing --------------
+// Page 1: a centred heading, a right-aligned line, a 3-line paragraph with a
+// superscript, and a justified 4-line paragraph sharing one BT with the
+// 2-line paragraph after it. Page 2: two columns on shared baselines, a
+// bullet with a hanging indent, fake bold, a CID-font paragraph and an
+// underline drawn as a rule. Page 3: text that can't be edited. Page 4 is
+// rotated, page 5 cropped.
+function makeParagraphs() {
+	var doc = newDocument()
+	var times = new Font("Times-Roman")
+	function width(text, size) {
+		var w = 0
+		for (var i = 0; i < text.length; i++) w += times.advanceGlyph(times.encodeCharacter(text.charCodeAt(i)), 0)
+		return w * size
+	}
+	function line(x, y, size, text) {
+		return "BT /F1 " + size + " Tf " + x + " " + y + " Td (" + escapeText(text) + ") Tj ET\n"
+	}
+	var top = 792
+	var c = ""
+	var heading = "A Heading in the Middle"
+	c += line((612 - width(heading, 18)) / 2, top - 60, 18, heading)
+	var right = "Set against the right margin"
+	c += line(540 - width(right, 12), top - 84, 12, right)
+	var first = ["The first paragraph has three lines, each drawn with", "its own text object, as many programs write them, and", "it ends here on the third line."]
+	for (var i = 0; i < 3; i++) c += line(72, top - 120 - i * 14.4, 12, first[i])
+	c += "BT /F1 7 Tf " + (72 + width(first[0], 12) + 1) + " " + (top - 120 + 5) + " Td (2) Tj ET\n"
+	// Justified: each line but the last spread with Tw to a few points past
+	// the widest.
+	var just = ["Justified text fills the whole width of the column by", "spreading out the spaces between its words, so that",
+		"both edges line up neatly down the page from top to", "the bottom."]
+	var measure = 0
+	for (var i = 0; i < just.length - 1; i++) measure = Math.max(measure, width(just[i], 12))
+	measure += 6
+	var shared = ["A paragraph after it, in the same text", "object as the justified one above."]
+	c += "BT /F1 12 Tf 14.4 TL 72 " + (top - 190) + " Td\n"
+	for (var i = 0; i < just.length; i++) {
+		var spaces = just[i].split(" ").length - 1
+		var tw = i < just.length - 1 && spaces ? (measure - width(just[i], 12)) / spaces : 0
+		c += tw.toFixed(3) + " Tw (" + escapeText(just[i]) + ") Tj T*\n"
+	}
+	c += "0 Tw 0 -14.4 Td (" + escapeText(shared[0]) + ") Tj T* (" + escapeText(shared[1]) + ") Tj ET\n"
+	var page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, c)
+	doc.insertPage(-1, page)
+
+	// Page 2.
+	var cid = doc.addFont(new Font("Helvetica"))
+	var helv = new Font("Helvetica")
+	function hex(text) {
+		var out = "<"
+		for (var i = 0; i < text.length; i++) out += ("0000" + helv.encodeCharacter(text.charCodeAt(i)).toString(16)).slice(-4)
+		return out + ">"
+	}
+	c = ""
+	var left = ["The left column has", "three short lines of", "its own text here."]
+	var rightCol = ["The right column sits", "on the same baselines", "as the left one does."]
+	for (var i = 0; i < 3; i++) {
+		c += line(72, top - 80 - i * 14.4, 12, left[i])
+		c += line(320, top - 80 - i * 14.4, 12, rightCol[i])
+	}
+	c += line(72, top - 160, 12, String.fromCharCode(149))   // a bullet in WinAnsi
+	c += line(90, top - 160, 12, "A bulleted item whose text wraps")
+	c += line(90, top - 174.4, 12, "onto a second, indented line.")
+	c += line(72, top - 220, 12, "Fake bold drawn twice")
+	c += line(72.2, top - 220, 12, "Fake bold drawn twice")
+	c += "BT /F2 12 Tf 72 " + (top - 260) + " Td " + hex("Wide text in a CID font,") + " Tj 0 -14.4 Td " + hex("over two lines.") + " Tj ET\n"
+	c += line(72, top - 360, 12, "Ada Lovelace")
+	c += line(72, top - 374.4, 12, "12 St James's Square")
+	c += line(72, top - 388.8, 12, "London, the long way round")
+	c += line(72, top - 310, 12, "An underlined line")
+	c += "0.5 w 72 " + (top - 312) + " m " + (72 + width("An underlined line", 12)) + " " + (top - 312) + " l S\n"
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font, F2: cid } }, c)
+	doc.insertPage(-1, page)
+
+	// Page 3: text that can't be edited.
+	var form = doc.addStream("BT /F1 12 Tf 0 0 Td (Text inside a form) Tj ET",
+		{ Type: doc.newName("XObject"), Subtype: doc.newName("Form"), BBox: [0, 0, 300, 50], Resources: { Font: { F1: doc.font } } })
+	var charproc = doc.addStream("500 0 0 0 400 400 d1 0 0 400 400 re f", {})
+	var type3 = doc.addObject({ Type: doc.newName("Font"), Subtype: doc.newName("Type3"),
+		FontBBox: [0, 0, 400, 400], FontMatrix: [0.001, 0, 0, 0.001, 0, 0],
+		CharProcs: { a: charproc }, Encoding: { Type: doc.newName("Encoding"), Differences: [97, doc.newName("a")] },
+		FirstChar: 97, LastChar: 97, Widths: [500], Resources: {} })
+	c = "q 1 0 0 1 72 " + (top - 80) + " cm /Fm0 Do Q\n"
+	c += "BT /F3 12 Tf 72 " + (top - 140) + " Td (aaa) Tj ET\n"
+	c += "BT /F1 12 Tf 3 Tr 72 " + (top - 180) + " Td (Invisible text) Tj ET\n"
+	c += "q BT /F1 12 Tf 7 Tr 72 " + (top - 220) + " Td (Clipping text) Tj ET Q\n"
+	c += "BT /F1 12 Tf 0.866 0.5 -0.5 0.866 72 " + (top - 300) + " Tm (Turned text) Tj ET\n"
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font, F3: type3 }, XObject: { Fm0: form } }, c)
+	doc.insertPage(-1, page)
+
+	// Pages 4 and 5: rotated, and cropped.
+	// Drawn turned back a quarter, so it reads upright on the turned page.
+	c = "BT /F1 12 Tf 0 1 -1 0 100 72 Tm (" + escapeText("On a page turned a quarter,") + ") Tj 0 -14.4 Td ("
+		+ escapeText("this paragraph has two lines.") + ") Tj ET\n"
+	page = doc.addPage(LETTER, 90, { Font: { F1: doc.font } }, c)
+	doc.insertPage(-1, page)
+	c = line(172, top - 200, 12, "On a cropped page, this") + line(172, top - 214.4, 12, "paragraph has two lines.")
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, c)
+	doc.insertPage(-1, page)
+	doc.findPage(4).put("CropBox", [100, 100, 500, 700])
+	doc.save(out + "/paragraphs.pdf", "compress")
+}
+
 // --- formbomb.pdf: more fields and choices than the limits, a name over
 // MuPDF's 16 KB, and fields that are their own parents.
 function makeFormBomb() {
@@ -657,6 +760,7 @@ makeLayers()
 makeLong()
 makeForms()
 makeRedactLeftovers()
+makeParagraphs()
 makeFormBomb()
 makeXMP()
 makeContent()
