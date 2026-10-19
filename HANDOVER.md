@@ -18,7 +18,9 @@ The state of the work and how it is run, for picking it up in a new session or o
 
   3. Redaction: `redact_document` in the bridge (run on the rebase copy, so a failure leaves the open document as it was), `opdf_rebase_options.redact`, `EngineDocument.applyRedactions`, the Redact tool, Tools › Apply Redactions…, self-test run `redact`. Marked areas and annotation rects are compared in page space (`pdf_annot_rect`), not the raw /Rect.
 
-  Next: step 4, digital signatures.
+  4. Digital signatures: `CMS.c`/`cms.h` (Security.framework only: CMSEncoder/CMSDecoder/SecTrust; BER lengths, as CMSEncoder writes indefinite ones), `opdf_sign_field` (snapshot to a temp copy, sign, `disallow_new_increments` while adding /Reason and /Location so they stay in the signing revision, real incremental save, reopen from the bytes), `opdf_signatures` (checks the byte-range gap is this signature's /Contents), `Signatures.swift` in PDFCore, the Sign… sheet, the inspector's Signatures section, Settings › Check certificates online, `HAVE_LIBCRYPTO=no`, `signer.p12` in the corpus (imported in memory: macOS 15+), self-test run `sign`. Verified independently with `openssl smime -verify`.
+
+  Next: step 5, handwritten and image signatures.
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.

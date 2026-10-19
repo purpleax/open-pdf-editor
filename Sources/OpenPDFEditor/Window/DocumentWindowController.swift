@@ -140,6 +140,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         }
         viewer.pages.onSelectPages = { [weak self] pages in self?.sidebar?.thumbnails.select(pages) }
         viewer.onCropModeChange = { [weak self] in self?.viewerStateDidChange() }
+        viewer.onSignField = { [weak self] field in self?.signField(field) }
         setUpMarkupBar()
         setUpFieldBar()
         setUpContentBar()

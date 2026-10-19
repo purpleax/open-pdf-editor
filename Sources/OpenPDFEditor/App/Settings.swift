@@ -6,6 +6,7 @@ enum Settings {
     private static let openWebLinksKey = "OpenWebLinks"
     private static let convertDocumentsKey = "ConvertDocuments"
     private static let autosaveKey = "AutosaveDocuments"
+    private static let certificatesOnlineKey = "CheckCertificatesOnline"
 
     /// Documents save themselves as they change (macOS autosave, with
     /// Versions); off, they are saved with File › Save, and closing asks.
@@ -19,6 +20,13 @@ enum Settings {
     static var opensWebLinks: Bool {
         get { UserDefaults.standard.bool(forKey: openWebLinksKey) }
         set { UserDefaults.standard.set(newValue, forKey: openWebLinksKey) }
+    }
+
+    /// Checking a digital signature may fetch missing certificates and ask
+    /// whether certificates were revoked, over the network.
+    static var checksCertificatesOnline: Bool {
+        get { UserDefaults.standard.bool(forKey: certificatesOnlineKey) }
+        set { UserDefaults.standard.set(newValue, forKey: certificatesOnlineKey) }
     }
 
     /// Create PDF from Files and Insert Pages read HTML, SVG, EPUB, XPS, text
@@ -74,6 +82,7 @@ final class SettingsWindowController: NSWindowController {
     private let links = NSButton(checkboxWithTitle: "Open web and email links", target: nil, action: nil)
     private let documents = NSButton(checkboxWithTitle: "Convert other documents into PDFs", target: nil, action: nil)
     private let autosave = NSButton(checkboxWithTitle: "Save changes automatically", target: nil, action: nil)
+    private let certificates = NSButton(checkboxWithTitle: "Check certificates online", target: nil, action: nil)
 
     private init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 300),
@@ -88,6 +97,8 @@ final class SettingsWindowController: NSWindowController {
         documents.action = #selector(toggle(_:))
         autosave.target = self
         autosave.action = #selector(toggle(_:))
+        certificates.target = self
+        certificates.action = #selector(toggle(_:))
         let stack = NSStackView(views: [
             autosave,
             Self.note("Documents save themselves as you work, and File › Revert To shows earlier versions. Off, changes are kept only when you choose File › Save, and closing a changed document asks first."),
@@ -95,12 +106,15 @@ final class SettingsWindowController: NSWindowController {
             Self.note("Clicking a link in a page or bookmark opens the web page or email address its author chose."),
             documents,
             Self.note("Create PDF from Files and Insert Pages can read HTML, SVG, EPUB, XPS, text, Word, Excel and PowerPoint files. Reading these formats gives a harmful file more of the app to attack. PDFs and images always work."),
+            certificates,
+            Self.note("When checking a digital signature, fetch certificates its signer left out and ask whether the certificate was revoked. This contacts the addresses the certificates name, which tells them a signed document is being opened. Off, signatures are checked against this Mac's certificates only."),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 6
         stack.setCustomSpacing(16, after: stack.views[1])
         stack.setCustomSpacing(16, after: stack.views[3])
+        stack.setCustomSpacing(16, after: stack.views[5])
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         window.contentView = stack
         window.setContentSize(stack.fittingSize)
@@ -119,12 +133,14 @@ final class SettingsWindowController: NSWindowController {
         autosave.state = Settings.savesAutomatically ? .on : .off
         links.state = Settings.opensWebLinks ? .on : .off
         documents.state = Settings.convertsDocuments ? .on : .off
+        certificates.state = Settings.checksCertificatesOnline ? .on : .off
     }
 
     @objc private func toggle(_ sender: NSButton) {
         if sender === links { Settings.opensWebLinks = sender.state == .on }
         if sender === documents { Settings.convertsDocuments = sender.state == .on }
         if sender === autosave { Settings.savesAutomatically = sender.state == .on }
+        if sender === certificates { Settings.checksCertificatesOnline = sender.state == .on }
     }
 
     /// A line under a checkbox, in line with its title rather than its box.

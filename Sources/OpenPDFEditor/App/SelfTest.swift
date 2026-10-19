@@ -42,6 +42,8 @@ enum SelfTest {
                     manualSaveSteps(document)
                 } else if environment["OPDF_SELFTEST_FORMS"] != nil {
                     formSteps(document)
+                } else if environment["OPDF_SELFTEST_SIGN"] != nil {
+                    signSteps(document)
                 } else if environment["OPDF_SELFTEST_REDACT"] != nil {
                     redactSteps(document)
                 } else if environment["OPDF_SELFTEST_SECURITY"] != nil {
@@ -554,6 +556,52 @@ enum SelfTest {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Clicking a signature field offers to sign it; then signing with the
+    /// corpus's test identity (kept in memory), saving, and the inspector's
+    /// account of the signature.
+    static func signSteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let viewer = controller.viewer, let window = controller.window,
+              let field = viewer.model.fields(page: 0).first(where: { $0.kind == .signature }) else {
+            say("FAIL no signature field")
+            return finish()
+        }
+        window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 860), display: true)
+        click(viewer, page: 0, at: CGPoint(x: field.rect.midX, y: field.rect.midY))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            say("sheet after clicking the field: \(window.attachedSheet != nil)")
+            _ = pressSheetButton(window, "Cancel") || pressSheetButton(window, "OK")
+            guard #available(macOS 15, *), let p12 = ProcessInfo.processInfo.environment["OPDF_SELFTEST_P12"],
+                  let data = try? Data(contentsOf: URL(fileURLWithPath: p12)) else {
+                say("FAIL no test identity")
+                return finish()
+            }
+            let options: [String: Any] = [kSecImportExportPassphrase as String: "test", kSecImportToMemoryOnly as String: true]
+            var items: CFArray?
+            guard SecPKCS12Import(data as CFData, options as CFDictionary, &items) == errSecSuccess,
+                  let first = (items as? [[String: Any]])?.first, let identity = first[kSecImportItemIdentity as String] else {
+                say("FAIL test identity not imported")
+                return finish()
+            }
+            do {
+                try document.sign(field, identity: identity as! SecIdentity, reason: "Self test", location: "")
+                controller.updateRestrictionBanner()
+                controller.saveRewritten(document)
+            } catch {
+                say("FAIL signing: \(error)")
+                return finish()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                snapshot(window, "signed")
+                let shown = controller.inspector?.signatures.signatures.map { SignaturesViewController.describe($0) } ?? []
+                say("inspector: \(shown)")
+                let onDisk = (try? EngineDocument(url: document.fileURL!).signatures()) ?? []
+                say("on disk: \(onDisk.map { "\($0.integrity) \($0.trust) changedAfter \($0.changedAfter)" }); edited \(document.isDocumentEdited)")
+                finish()
             }
         }
     }

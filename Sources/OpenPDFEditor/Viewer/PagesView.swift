@@ -54,6 +54,8 @@ protocol PagesViewDelegate: AnyObject {
     func pagesView(_ view: PagesView, contentProblem message: String)
     /// A link's area was dragged out: ask where it goes, then make it.
     func pagesView(_ view: PagesView, makeLinkIn rect: CGRect, onPage page: Int)
+    /// A signature field was clicked: sign it, or show its signature.
+    func pagesView(_ view: PagesView, sign field: FormField)
     /// An image's area was dragged out (or a point clicked, with an empty
     /// rectangle): ask for the image, then add it.
     func pagesView(_ view: PagesView, makeImageIn rect: CGRect, onPage page: Int)

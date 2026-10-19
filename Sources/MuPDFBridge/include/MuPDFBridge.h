@@ -575,6 +575,55 @@ typedef struct {
 // form fields under them are deleted, and those fields' values cleared.
 bool opdf_rebase(opdf_doc *doc, const opdf_rebase_options *options, opdf_error *err);
 
+// --- Digital signatures -------------------------------------------------------
+
+// Signs an empty signature field (`widget` on `page`) with a Keychain identity
+// (a SecIdentityRef): a detached CMS signature (adbe.pkcs7.detached, SHA-256)
+// over the document with all its changes, appended as an incremental update.
+// The document then goes on from the signed bytes, so saving writes them
+// unchanged; undo history is cleared. Done on a copy: if anything fails, the
+// open document is as it was. Signing may ask, through the Keychain, to use
+// the private key.
+bool opdf_sign_field(opdf_doc *doc, int page, int widget, const void *identity,
+                     const char *reason, const char *location, const char *open_password, opdf_error *err);
+
+enum {
+    OPDF_SIG_INTEGRITY_VALID = 0,      // the signed bytes are as they were signed
+    OPDF_SIG_INTEGRITY_INVALID = 1,    // changed, or the signature doesn't match
+    OPDF_SIG_INTEGRITY_MALFORMED = 2,  // not a signature this app can check
+    OPDF_SIG_INTEGRITY_TOO_LARGE = 3,  // the signed part is too large to check
+};
+
+enum {
+    OPDF_SIG_TRUST_TRUSTED = 0,
+    OPDF_SIG_TRUST_SELF_SIGNED = 1,
+    OPDF_SIG_TRUST_UNTRUSTED = 2,
+    OPDF_SIG_TRUST_EXPIRED = 3,
+    OPDF_SIG_TRUST_REVOKED = 4,
+    OPDF_SIG_TRUST_UNKNOWN = 5,
+};
+
+typedef struct {
+    int page;
+    int id;                  // the widget's object number
+    char *name;              // the field's full name
+    bool is_signed;
+    int integrity;           // OPDF_SIG_INTEGRITY_* (signed fields only)
+    int trust;               // OPDF_SIG_TRUST_*
+    bool changed_after;      // the file has later revisions than the signed one
+    char *signer;            // from the certificate
+    char *email;
+    double signing_time;     // seconds since 1970, by the signer's clock; 0 if none
+    char *reason;
+    char *location;
+} opdf_signature;
+
+// Every signature field, signed or not, with each signature checked against
+// the bytes the document was opened from (unsaved changes aren't counted).
+// Certificates are checked online only when `network` is true.
+opdf_signature *opdf_signatures(opdf_doc *doc, bool network, int *count, opdf_error *err);
+void opdf_signatures_free(opdf_signature *items, int count);
+
 bool opdf_can_undo(opdf_doc *doc);
 bool opdf_can_redo(opdf_doc *doc);
 bool opdf_undo(opdf_doc *doc, opdf_error *err);

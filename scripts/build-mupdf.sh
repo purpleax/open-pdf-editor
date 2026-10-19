@@ -26,7 +26,9 @@ MIN_MACOS=14.0
 ARCH=arm64
 OUT=$ROOT/build/mupdf
 XCF=$ROOT/Frameworks/MuPDF.xcframework
-MAKE_OPTS=(build=release barcode=no tesseract=no HAVE_GLUT=no HAVE_X11=no HAVE_CURL=no)
+# No OpenSSL: signing and verifying go through Security.framework (the bridge's
+# CMS.c), whichever Mac builds it.
+MAKE_OPTS=(build=release barcode=no tesseract=no HAVE_GLUT=no HAVE_X11=no HAVE_CURL=no HAVE_LIBCRYPTO=no)
 
 # Rebuild when the MuPDF commit, its submodules or this script change.
 STAMP=$( { git -C "$MUPDF" rev-parse HEAD; git -C "$MUPDF" submodule status; shasum "$0"; } | shasum | cut -d' ' -f1)

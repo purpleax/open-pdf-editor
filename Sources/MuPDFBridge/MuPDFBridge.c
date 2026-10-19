@@ -1,4 +1,5 @@
 #include "MuPDFBridge.h"
+#include "cms.h"
 
 #include <mupdf/fitz.h>
 #include <mupdf/pdf.h>
@@ -3719,13 +3720,13 @@ bool opdf_redo(opdf_doc *d, opdf_error *err) { return journal_step(d, pdf_redo, 
 
 // Writes the document as it is now to `path`: the original bytes, then
 // every change as one snapshot (see opdf_save). The document is unchanged.
-static void write_snapshot(fz_context *ctx, pdf_document *pdf, const char *path) {
+// The bytes the document was opened from, to `path`.
+static void write_original(fz_context *ctx, pdf_document *pdf, const char *path) {
     fz_output *out = NULL;
     unsigned char *chunk = NULL;
     fz_var(out);
     fz_var(chunk);
     fz_try(ctx) {
-        // The original bytes...
         out = fz_new_output_with_path(ctx, path, 0);
         chunk = fz_malloc(ctx, 1 << 16);
         fz_seek(ctx, pdf->file, 0, SEEK_SET);
@@ -3733,8 +3734,19 @@ static void write_snapshot(fz_context *ctx, pdf_document *pdf, const char *path)
         while ((n = fz_read(ctx, pdf->file, chunk, 1 << 16)) > 0)
             fz_write_data(ctx, out, chunk, n);
         fz_close_output(ctx, out);
+    }
+    fz_always(ctx) {
         fz_drop_output(ctx, out);
-        out = NULL;
+        fz_free(ctx, chunk);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+static void write_snapshot(fz_context *ctx, pdf_document *pdf, const char *path) {
+    // The original bytes...
+    write_original(ctx, pdf, path);
+    {
         // ...then the changes, as a snapshot: an incremental update that
         // doesn't finalise the document. MuPDF then counts the changes as
         // saved, so the next snapshot would hold only newer ones and expect
@@ -3760,12 +3772,6 @@ static void write_snapshot(fz_context *ctx, pdf_document *pdf, const char *path)
                 fz_rethrow(ctx);
         }
     }
-    fz_always(ctx) {
-        fz_drop_output(ctx, out);
-        fz_free(ctx, chunk);
-    }
-    fz_catch(ctx)
-        fz_rethrow(ctx);
 }
 
 bool opdf_save(opdf_doc *d, const char *path, opdf_error *err) {
@@ -3789,6 +3795,9 @@ bool opdf_save(opdf_doc *d, const char *path, opdf_error *err) {
             fz_throw(ctx, FZ_ERROR_FORMAT, "The document is damaged, and MuPDF had to repair it after it was changed. To keep your work, the document wasn't saved.");
         if (!pdf_can_be_saved_incrementally(ctx, pdf))
             fz_throw(ctx, FZ_ERROR_ARGUMENT, "This document can't be saved.");
+        // Signatures are finished by opdf_sign_field's own save, never here.
+        if (pdf_has_unsaved_sigs(ctx, pdf))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "This document has an unfinished signature.");
         // The saved file starts with the bytes the document was opened from.
         // If another app rewrote the file in place since, they're different.
         fz_seek(ctx, pdf->file, 0, SEEK_END);
@@ -5326,4 +5335,367 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
     fz_drop_context(ctx);
     release_budget(&allocator);
     return ok;
+}
+
+// --- Digital signatures -------------------------------------------------------
+
+// MuPDF's signer, backed by cms.h. MuPDF keeps and drops it while signing.
+typedef struct {
+    pdf_pkcs7_signer base;
+    int refs;
+    cms_signer *cms;
+} opdf_signer;
+
+static pdf_pkcs7_signer *signer_keep(fz_context *ctx, pdf_pkcs7_signer *s) {
+    ((opdf_signer *)s)->refs++;
+    return s;
+}
+
+static void signer_drop(fz_context *ctx, pdf_pkcs7_signer *s) {
+    opdf_signer *o = (opdf_signer *)s;
+    if (!o || --o->refs > 0) return;
+    cms_signer_free(o->cms);
+    fz_free(ctx, o);
+}
+
+static pdf_pkcs7_distinguished_name *signer_name(fz_context *ctx, pdf_pkcs7_signer *s) {
+    opdf_signer *o = (opdf_signer *)s;
+    pdf_pkcs7_distinguished_name *dn = fz_malloc_struct(ctx, pdf_pkcs7_distinguished_name);
+    fz_try(ctx) {
+        dn->cn = fz_strdup(ctx, cms_signer_name(o->cms));
+        if (cms_signer_email(o->cms)[0]) dn->email = fz_strdup(ctx, cms_signer_email(o->cms));
+    }
+    fz_catch(ctx) {
+        pdf_signature_drop_distinguished_name(ctx, dn);
+        fz_rethrow(ctx);
+    }
+    return dn;
+}
+
+static size_t signer_max_size(fz_context *ctx, pdf_pkcs7_signer *s) {
+    return cms_signer_max_size(((opdf_signer *)s)->cms);
+}
+
+static int signer_create_digest(fz_context *ctx, pdf_pkcs7_signer *s, fz_stream *in, unsigned char *digest, size_t len) {
+    opdf_signer *o = (opdf_signer *)s;
+    char message[320] = "";
+    cms_session *session = cms_sign_begin(o->cms, message, sizeof message);
+    if (!session) fz_throw(ctx, FZ_ERROR_GENERIC, "%s", message);
+    unsigned char *chunk = NULL;
+    fz_var(session);
+    fz_var(chunk);
+    fz_try(ctx) {
+        chunk = fz_malloc(ctx, 1 << 16);
+        size_t n;
+        while ((n = fz_read(ctx, in, chunk, 1 << 16)) > 0)
+            if (!cms_sign_update(session, chunk, n)) fz_throw(ctx, FZ_ERROR_GENERIC, "The document couldn't be signed.");
+    }
+    fz_always(ctx)
+        fz_free(ctx, chunk);
+    fz_catch(ctx) {
+        cms_sign_abort(session);
+        fz_rethrow(ctx);
+    }
+    size_t made = cms_sign_finish(session, digest, len, message, sizeof message);
+    if (made == 0 || made > INT_MAX) fz_throw(ctx, FZ_ERROR_GENERIC, "%s", message[0] ? message : "The document couldn't be signed.");
+    return (int)made;
+}
+
+static void make_temp(fz_context *ctx, char *path, size_t size, const char *stem) {
+    const char *dir = getenv("TMPDIR");
+    fz_snprintf(path, size, "%s/%s-XXXXXX", dir && dir[0] ? dir : "/tmp", stem);
+    int fd = mkstemp(path);
+    if (fd < 0) {
+        path[0] = 0;
+        fz_throw(ctx, FZ_ERROR_SYSTEM, "Could not make a temporary file");
+    }
+    close(fd);
+}
+
+bool opdf_sign_field(opdf_doc *d, int page_number, int id, const void *identity,
+                     const char *reason, const char *location, const char *open_password, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = d->ctx;
+    char copied[1024] = "", signed_path[1024] = "";
+    pdf_document *copy = NULL, *fresh = NULL;
+    pdf_page *page = NULL;
+    opdf_signer *signer = NULL;
+    fz_buffer *buf = NULL;
+    fz_stream *stm = NULL;
+    bool ok = false;
+    fz_var(copy);
+    fz_var(fresh);
+    fz_var(page);
+    fz_var(signer);
+    fz_var(buf);
+    fz_var(stm);
+    fz_var(ok);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf || !pdf->file) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        if (!pdf_can_be_saved_incrementally(ctx, pdf))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "This document can't be signed.");
+        fz_seek(ctx, pdf->file, 0, SEEK_END);
+        if (fz_tell(ctx, pdf->file) != pdf->file_size)
+            fz_throw(ctx, FZ_ERROR_FORMAT, "The file was changed by another app while it was open. Close it and open it again.");
+
+        signer = fz_malloc_struct(ctx, opdf_signer);
+        signer->refs = 1;
+        signer->base.keep = signer_keep;
+        signer->base.drop = signer_drop;
+        signer->base.get_signing_name = signer_name;
+        signer->base.max_digest_size = signer_max_size;
+        signer->base.create_digest = signer_create_digest;
+        char message[320] = "";
+        signer->cms = cms_signer_new(identity, message, sizeof message);
+        if (!signer->cms) fz_throw(ctx, FZ_ERROR_ARGUMENT, "%s", message);
+
+        // A copy of the document as it is now, signed and saved as a real
+        // incremental update (which is what finishes a signature)...
+        make_temp(ctx, copied, sizeof copied, "opdf-sign");
+        write_snapshot(ctx, pdf, copied);
+        copy = pdf_open_document(ctx, copied);
+        if (pdf_needs_password(ctx, copy) && !(open_password && pdf_authenticate_password(ctx, copy, open_password)))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Could not unlock the document's copy");
+        // Unsaved changes come back as a snapshot's open section, which a
+        // signature mustn't join: they are saved as their own revision first.
+        page = pdf_load_page(ctx, copy, page_number);
+        pdf_annot *widget = find_widget(ctx, page, id);
+        if (pdf_widget_type(ctx, widget) != PDF_WIDGET_TYPE_SIGNATURE)
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "That isn't a signature field.");
+        if (pdf_widget_is_signed(ctx, widget))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "That field is already signed.");
+        if (pdf_field_flags(ctx, pdf_annot_obj(ctx, widget)) & PDF_FIELD_IS_READ_ONLY)
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "That signature field is locked.");
+        pdf_sign_signature(ctx, widget, &signer->base, PDF_SIGNATURE_DEFAULT_APPEARANCE & ~(PDF_SIGNATURE_SHOW_LOGO | PDF_SIGNATURE_SHOW_DN),
+                           NULL, reason && reason[0] ? reason : NULL, location && location[0] ? location : NULL);
+        // Reason and location are drawn, and kept in the signature too: in
+        // the signing revision (any change after a signature otherwise
+        // starts a new one, outside the signed bytes).
+        pdf_obj *v = pdf_dict_get(ctx, pdf_annot_obj(ctx, widget), PDF_NAME(V));
+        int disallow = copy->disallow_new_increments;
+        copy->disallow_new_increments = 1;
+        fz_try(ctx) {
+            if (reason && reason[0]) pdf_dict_put_text_string(ctx, v, PDF_NAME(Reason), reason);
+            if (location && location[0]) pdf_dict_put_text_string(ctx, v, PDF_NAME(Location), location);
+        }
+        fz_always(ctx)
+            copy->disallow_new_increments = disallow;
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+        fz_drop_page(ctx, (fz_page *)page);
+        page = NULL;
+        make_temp(ctx, signed_path, sizeof signed_path, "opdf-signed");
+        write_original(ctx, copy, signed_path);
+        pdf_write_options opts = pdf_default_write_options;
+        opts.do_incremental = 1;
+        pdf_save_document(ctx, copy, signed_path, &opts);
+
+        // ...then the document goes on from the signed bytes.
+        buf = fz_read_file(ctx, signed_path);
+        stm = fz_open_buffer(ctx, buf);
+        fresh = pdf_open_document_with_stream(ctx, stm);
+        if (pdf_needs_password(ctx, fresh) && !(open_password && pdf_authenticate_password(ctx, fresh, open_password)))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Could not unlock the signed document");
+        pdf_check_document(ctx, fresh);
+        if (pdf_was_repaired(ctx, fresh)) fz_throw(ctx, FZ_ERROR_FORMAT, "The signed document is damaged");
+        pdf_enable_journal(ctx, fresh);
+        d->access = fresh->crypt ? pdf_authenticate_password(ctx, fresh, open_password ? open_password : "") : 4;
+        fz_drop_document(ctx, d->doc);
+        d->doc = (fz_document *)fresh;
+        fresh = NULL;
+        d->repaired_before_edits = false;
+        d->edits_prepared = true;
+        ok = true;
+    }
+    fz_always(ctx) {
+        fz_drop_page(ctx, (fz_page *)page);
+        pdf_drop_document(ctx, copy);
+        pdf_drop_document(ctx, fresh);
+        fz_drop_stream(ctx, stm);
+        fz_drop_buffer(ctx, buf);
+        if (signer) signer_drop(ctx, &signer->base);
+        if (copied[0]) unlink(copied);
+        if (signed_path[0]) unlink(signed_path);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    unlock_doc(d);
+    return ok;
+}
+
+// The most signature fields listed, and checked, per document.
+#define OPDF_MAX_SIGNATURES 200
+#define OPDF_MAX_CHECKED_SIGNATURES 50
+// The most bytes a signature may cover to be checked (all read into memory).
+#define OPDF_MAX_SIGNED_BYTES ((size_t)1 << 30)
+// The most bytes of the gap where the signature goes.
+#define OPDF_MAX_SIGNATURE_HOLE ((int64_t)4 << 20)
+
+static int hex_value(int c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+// Whether the signed ranges are two, from the start of the file, around a
+// gap that holds exactly this signature's /Contents (as hex): otherwise the
+// bytes checked needn't be this signature's.
+static bool signature_hole_matches(fz_context *ctx, pdf_document *pdf, pdf_obj *field,
+                                   const unsigned char *contents, size_t contents_len, int64_t *end) {
+    fz_range ranges[2];
+    if (pdf_signature_byte_range(ctx, pdf, field, NULL) != 2) return false;
+    pdf_signature_byte_range(ctx, pdf, field, ranges);
+    if (ranges[0].offset != 0 || ranges[1].offset < ranges[0].length) return false;
+    int64_t hole_start = ranges[0].length, hole_len = ranges[1].offset - ranges[0].length;
+    *end = ranges[1].offset + ranges[1].length;
+    if (hole_len < 2 || hole_len > OPDF_MAX_SIGNATURE_HOLE) return false;
+    unsigned char *hole = fz_malloc(ctx, (size_t)hole_len);
+    bool same = false;
+    fz_try(ctx) {
+        fz_seek(ctx, pdf->file, hole_start, SEEK_SET);
+        if (fz_read(ctx, pdf->file, hole, (size_t)hole_len) == (size_t)hole_len && hole[0] == '<' && hole[hole_len - 1] == '>') {
+            size_t k = 0;
+            int high = -1;
+            same = true;
+            for (int64_t i = 1; i < hole_len - 1 && same; i++) {
+                int c = hole[i];
+                if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == '\f' || c == 0) continue;
+                int v = hex_value(c);
+                if (v < 0) same = false;
+                else if (high < 0) high = v;
+                else {
+                    if (k >= contents_len || contents[k] != (unsigned char)(high << 4 | v)) same = false;
+                    k++;
+                    high = -1;
+                }
+            }
+            // An odd last digit counts as followed by 0.
+            if (same && high >= 0) {
+                if (k >= contents_len || contents[k] != (unsigned char)(high << 4)) same = false;
+                k++;
+            }
+            if (k != contents_len) same = false;
+        }
+    }
+    fz_always(ctx)
+        fz_free(ctx, hole);
+    fz_catch(ctx)
+        same = false;
+    return same;
+}
+
+static void check_signature(fz_context *ctx, pdf_document *pdf, pdf_obj *field, bool network, opdf_signature *s) {
+    char *contents = NULL;
+    fz_stream *bytes = NULL;
+    fz_buffer *buf = NULL;
+    fz_var(contents);
+    fz_var(bytes);
+    fz_var(buf);
+    s->integrity = OPDF_SIG_INTEGRITY_MALFORMED;
+    s->trust = OPDF_SIG_TRUST_UNKNOWN;
+    fz_try(ctx) {
+        pdf_obj *v = pdf_dict_get(ctx, field, PDF_NAME(V));
+        s->reason = dup_string(pdf_dict_get_text_string(ctx, v, PDF_NAME(Reason)));
+        s->location = dup_string(pdf_dict_get_text_string(ctx, v, PDF_NAME(Location)));
+        size_t contents_len = pdf_signature_contents(ctx, pdf, field, &contents);
+        int64_t end = 0;
+        if (!contents || !signature_hole_matches(ctx, pdf, field, (unsigned char *)contents, contents_len, &end)) break;
+        s->changed_after = pdf->file_size > end;
+        size_t der = cms_der_length((unsigned char *)contents, contents_len);
+        if (der == 0) break;
+        if ((size_t)end > OPDF_MAX_SIGNED_BYTES) {
+            s->integrity = OPDF_SIG_INTEGRITY_TOO_LARGE;
+            break;
+        }
+        bytes = pdf_signature_hash_bytes(ctx, pdf, field);
+        buf = fz_read_all(ctx, bytes, (size_t)end);
+        unsigned char *data = NULL;
+        size_t len = fz_buffer_storage(ctx, buf, &data);
+        cms_result r;
+        cms_verify((unsigned char *)contents, der, data, len, network, &r);
+        s->integrity = r.integrity;
+        s->trust = r.integrity == CMS_INTEGRITY_MALFORMED ? OPDF_SIG_TRUST_UNKNOWN : r.trust;
+        s->signer = dup_string(r.signer);
+        s->email = dup_string(r.email);
+        s->signing_time = r.signing_time;
+    }
+    fz_always(ctx) {
+        fz_free(ctx, contents);
+        fz_drop_stream(ctx, bytes);
+        fz_drop_buffer(ctx, buf);
+    }
+    fz_catch(ctx) {
+        s->integrity = OPDF_SIG_INTEGRITY_MALFORMED;
+        s->trust = OPDF_SIG_TRUST_UNKNOWN;
+    }
+}
+
+opdf_signature *opdf_signatures(opdf_doc *d, bool network, int *count, opdf_error *err) {
+    clear_error(err);
+    *count = 0;
+    fz_context *ctx = d->ctx;
+    opdf_signature *items = NULL;
+    pdf_page *page = NULL;
+    int n = 0;
+    fz_var(items);
+    fz_var(page);
+    fz_var(n);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        items = checked_calloc(ctx, OPDF_MAX_SIGNATURES, sizeof *items);
+        int pages = pdf_count_pages(ctx, pdf), checked = 0;
+        for (int p = 0; p < pages && n < OPDF_MAX_SIGNATURES; p++) {
+            page = pdf_load_page(ctx, pdf, p);
+            int seen = 0;
+            for (pdf_annot *w = pdf_first_widget(ctx, page); w && n < OPDF_MAX_SIGNATURES && seen < OPDF_MAX_FIELDS_PER_PAGE;
+                 w = pdf_next_widget(ctx, w), seen++) {
+                if (pdf_widget_type(ctx, w) != PDF_WIDGET_TYPE_SIGNATURE) continue;
+                opdf_signature *s = &items[n++];
+                pdf_obj *field = pdf_annot_obj(ctx, w);
+                s->page = p;
+                s->id = annot_id(ctx, w);
+                char *name = pdf_load_field_name(ctx, field);
+                s->name = dup_string(name);
+                fz_free(ctx, name);
+                s->is_signed = pdf_signature_is_signed(ctx, pdf, field) != 0;
+                s->trust = OPDF_SIG_TRUST_UNKNOWN;
+                if (!s->is_signed) continue;
+                if (checked++ >= OPDF_MAX_CHECKED_SIGNATURES) {
+                    s->integrity = OPDF_SIG_INTEGRITY_TOO_LARGE;
+                    continue;
+                }
+                check_signature(ctx, pdf, field, network, s);
+            }
+            fz_drop_page(ctx, (fz_page *)page);
+            page = NULL;
+        }
+    }
+    fz_always(ctx)
+        fz_drop_page(ctx, (fz_page *)page);
+    fz_catch(ctx) {
+        set_error(err, ctx);
+        opdf_signatures_free(items, n);
+        items = NULL;
+        n = 0;
+    }
+    unlock_doc(d);
+    *count = n;
+    return items;
+}
+
+void opdf_signatures_free(opdf_signature *items, int count) {
+    if (!items) return;
+    for (int i = 0; i < count; i++) {
+        free(items[i].name);
+        free(items[i].signer);
+        free(items[i].email);
+        free(items[i].reason);
+        free(items[i].location);
+    }
+    free(items);
 }

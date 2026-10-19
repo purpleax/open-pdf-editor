@@ -52,3 +52,16 @@ for o in offsets:
 out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
 open(sys.argv[1], "wb").write(out)
 PY
+
+# signer.p12: a self-signed signing identity (password "test") for the
+# signature tests, made once with the system's LibreSSL (whose PKCS#12 the
+# Keychain reads).
+if [ ! -f build/corpus/signer.p12 ]; then
+    tmp=$(mktemp -d)
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=Open PDF Editor Test/emailAddress=test@example.com" \
+        -keyout "$tmp/key.pem" -out "$tmp/cert.pem" 2>/dev/null
+    /usr/bin/openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+        -passout pass:test -out build/corpus/signer.p12
+    rm -rf "$tmp"
+fi

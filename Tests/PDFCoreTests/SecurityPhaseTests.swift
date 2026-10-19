@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import PDFCore
+import Security
 import Testing
 
 @Suite struct RebaseTests {
@@ -224,5 +225,87 @@ import Testing
         let before = try doc.text(page: 0).string
         try doc.applyRedactions()
         #expect(try doc.text(page: 0).string == before)
+    }
+}
+
+@Suite struct SignatureTests {
+    private func temporaryURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
+    }
+
+    /// The corpus's self-signed test identity, kept in memory only.
+    private func identity() throws -> SecIdentity {
+        guard #available(macOS 15, *) else { throw EngineError(code: -1, message: "needs macOS 15") }
+        let data = try Data(contentsOf: Corpus.root.appendingPathComponent("signer.p12"))
+        let options: [String: Any] = [kSecImportExportPassphrase as String: "test", kSecImportToMemoryOnly as String: true]
+        var items: CFArray?
+        let status = SecPKCS12Import(data as CFData, options as CFDictionary, &items)
+        guard status == errSecSuccess, let first = (items as? [[String: Any]])?.first,
+              let identity = first[kSecImportItemIdentity as String] else {
+            throw EngineError(code: Int(status), message: "the test identity couldn't be imported")
+        }
+        return identity as! SecIdentity
+    }
+
+    private func signatureField(_ doc: EngineDocument) throws -> FormField {
+        try #require(try doc.fields(page: 0).first { $0.kind == .signature })
+    }
+
+    @Test func signsAndVerifies() throws {
+        let doc = try Corpus.open("forms.pdf")
+        #expect(try doc.signatures().map(\.isSigned) == [false])
+        let name = try #require(try doc.fields(page: 0).first { $0.name == "name" })
+        try doc.setText("Grace", page: 0, field: name.id)   // an unsaved change, signed with the rest
+        let field = try signatureField(doc)
+        try doc.sign(page: 0, field: field.id, identity: identity(), reason: "Approved", location: "London")
+        #expect(!doc.canUndo)
+        let signature = try #require(try doc.signatures().first)
+        #expect(signature.isSigned && signature.integrity == .valid && signature.trust == .selfSigned)
+        #expect(signature.signer == "Open PDF Editor Test" && signature.email == "test@example.com")
+        #expect(signature.reason == "Approved" && signature.location == "London" && !signature.changedAfter)
+        #expect(abs((signature.signingTime ?? .distantPast).timeIntervalSinceNow) < 120)
+        #expect(throws: EngineError.self) { try doc.sign(page: 0, field: field.id, identity: try identity()) }
+
+        // Saving without changes writes the signed bytes as they are.
+        let out = temporaryURL("signed.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let reopened = try EngineDocument(url: out)
+        let again = try #require(try reopened.signatures().first)
+        #expect(again.integrity == .valid && !again.changedAfter)
+        #expect(try reopened.fields(page: 0).first { $0.name == "name" }?.value == "Grace")
+    }
+
+    @Test func changesAfterSigningAndTampering() throws {
+        let doc = try Corpus.open("forms.pdf")
+        try doc.sign(page: 0, field: try signatureField(doc).id, identity: identity())
+        let name = try #require(try doc.fields(page: 0).first { $0.name == "name" })
+        try doc.setText("Changed", page: 0, field: name.id)
+        let out = temporaryURL("changed.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let changed = try #require(try EngineDocument(url: out).signatures().first)
+        #expect(changed.integrity == .valid && changed.changedAfter)
+
+        // One byte changed inside the signed part.
+        var bytes = try Data(contentsOf: out)
+        let at = try #require(bytes.range(of: Data("Your name".utf8)))
+        bytes[at.lowerBound + 5] = UInt8(ascii: "N")
+        try bytes.write(to: out)
+        let tampered = try #require(try EngineDocument(url: out).signatures().first)
+        #expect(tampered.integrity == .invalid)
+    }
+
+    @Test func encryptedDocumentsSign() throws {
+        let doc = try Corpus.open("forms.pdf")
+        try doc.rebase(encryption: .aes256(user: "", owner: "owner", permissions: .all))
+        try doc.sign(page: 0, field: try signatureField(doc).id, identity: identity(), openPassword: "owner")
+        let out = temporaryURL("signed-encrypted.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let reopened = try EngineDocument(url: out)
+        #expect(reopened.isEncrypted)
+        let signature = try #require(try reopened.signatures().first)
+        #expect(signature.integrity == .valid && signature.trust == .selfSigned)
     }
 }

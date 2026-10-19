@@ -63,6 +63,11 @@ final class FormController {
         return fields.last { Self.isFillable($0) && $0.rect.contains(point) }
     }
 
+    /// The signature field (signed or not) at the point, if any.
+    func signatureField(at point: CGPoint, page: Int) -> FormField? {
+        model.fields(page: page).last { $0.kind == .signature && $0.id != 0 && $0.rect.contains(point) }
+    }
+
     /// The field typed into after (or before) this one, in page order and
     /// then the order of each page's fields; wraps around. Looks at most 20
     /// pages on (fields load on the main thread).

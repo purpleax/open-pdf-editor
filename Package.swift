@@ -18,7 +18,7 @@ let package = Package(
             dependencies: ["MuPDF"],
             path: "Sources/MuPDFBridge",
             cSettings: [.unsafeFlags(["-Wall", "-Wno-unused-function"])],
-            linkerSettings: [.linkedLibrary("c++")]
+            linkerSettings: [.linkedLibrary("c++"), .linkedFramework("Security")]
         ),
         // Swift wrappers over the bridge, shared by the app and pdfsmoke.
         .target(

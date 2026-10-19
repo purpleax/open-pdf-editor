@@ -57,6 +57,11 @@ extension PagesView {
                 fill(field)
                 return
             }
+            if onPage, let field = forms?.signatureField(at: point, page: page) {
+                selection = nil
+                delegate?.pagesView(self, sign: field)
+                return
+            }
             textMouseDown(with: event)
         case .highlight, .underline, .strikeOut:
             selectedAnnotation = nil

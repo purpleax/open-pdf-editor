@@ -37,10 +37,12 @@ extension DocumentWindowController {
         updateRestrictionBanner()
     }
 
-    /// Shows what the owner doesn't allow, or hides the notice (and brings
-    /// the inspector up to date with the document's security).
+    /// Shows what the owner doesn't allow, or hides the notice; and brings
+    /// the inspector up to date with the document's security and signatures
+    /// (after opening, or writing the document whole).
     func updateRestrictionBanner() {
         guard let viewer, let accessory = restrictionAccessory else { return }
+        inspector?.signatures.recheck()
         inspector?.refresh()
         let allowed = viewer.model.allowed
         let missing: [(Allowed, String)] = [(.print, "printing"), (.copy, "copying"), (.edit, "editing"),
@@ -229,13 +231,13 @@ extension DocumentWindowController {
                 NSAlert(error: error).beginSheetModal(for: window)
                 return
             }
-            self.saveAfterRedacting(document, deleteVersions: deleteVersions)
+            self.saveRewritten(document, deleteVersions: deleteVersions)
         }
     }
 
-    /// Saves the redacted document (asking where, if it has never been
-    /// saved), then deletes the file's other versions if asked.
-    private func saveAfterRedacting(_ document: EditorDocument, deleteVersions: Bool) {
+    /// Saves a document just written whole (asking where, if it has never
+    /// been saved), then deletes the file's other versions if asked.
+    func saveRewritten(_ document: EditorDocument, deleteVersions: Bool = false) {
         guard let url = document.fileURL, let type = document.fileType else {
             document.save(nil)
             return
@@ -251,7 +253,7 @@ extension DocumentWindowController {
                 try NSFileVersion.removeOtherVersionsOfItem(at: url)
             } catch {
                 let alert = NSAlert()
-                alert.messageText = "The redacted document is saved, but its earlier versions couldn’t be deleted."
+                alert.messageText = "The document is saved, but its earlier versions couldn’t be deleted."
                 alert.informativeText = error.localizedDescription
                 alert.beginSheetModal(for: window)
             }

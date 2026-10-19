@@ -38,6 +38,8 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Signature fields | Made empty in 0.4.0; signing them is Phase 6. | 2026-10-19 |
 | Full rewrite ("rebase") | Redaction and security changes write the whole document again (garbage collected; scrubbed for redaction), reopen it from the new bytes and carry on from there. Undo history is cleared, and the alert says so first. Later saves are incremental on top of the clean bytes. | 2026-10-19 |
 | Redaction | Tools › Redact marks text (drag across it) or an area (drag anywhere else). Tools › Apply Redactions… removes, for good, whatever is under the marks: text (any character touching a mark), image pixels, line art touching a mark, links, annotations with their replies, and form fields with their values. It draws black boxes, scrubs hidden leftovers (thumbnails, PieceInfo, document JavaScript; XMP rebuilt), writes the document whole and saves it, and offers to delete the file's earlier versions (checked). Flatten Annotations refuses while marks remain. | 2026-10-19 |
+| Online certificate checks | A Settings switch, Check certificates online, off by default (Risky features): fetching missing intermediate certificates and checking revocation tells the certificates' servers that a signed document is being opened. Off, signatures are checked against this Mac's trust store only. | 2026-10-19 |
+| Signing | Clicking an empty signature field opens Sign…: a Keychain identity, reason and location. The document with its unsaved changes is signed on a copy (a real incremental save, the only kind that finishes a signature), the open document goes on from the signed bytes, and it is saved at once. Signatures are checked when the file's bytes change, not on every edit; a gap in the signed ranges must hold exactly that signature's /Contents. | 2026-10-19 |
 | Encryption | File › Security… sets, changes or removes the passwords and permissions, with AES-256 only. It needs owner access: a file opened with the user password asks for the owner password first. | 2026-10-19 |
 | Permissions | Enforced when a file is opened without owner access. Printing, copying text, editing (content, fields, metadata), comments, filling in forms and page changes are each disabled per the owner's settings, and a notice under the toolbar says what isn't allowed, with Enter Owner Password…. | 2026-10-19 |
 
@@ -166,7 +168,10 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] Passwords, encryption and permissions
   - File › Security…: a password to open the document, and an owner password that limits printing, copying, editing, comments and filling in forms. Applying writes the document whole, encrypted with AES-256 (or with no encryption when both are off); undo history is cleared. A signed document is warned that its signatures will no longer be valid.
   - Opened without the owner password, a restricted document disables what its owner doesn't allow (menus, tools, inspector, printing, copying), with a notice under the toolbar and Enter Owner Password….
-- [ ] Digital signatures with Keychain identities, and verification
+- [x] Digital signatures with Keychain identities, and verification
+  - Click an empty signature field to sign it with a certificate from your keychain (the Keychain may ask to allow the key's use), with an optional reason and location. The signature is a detached CMS (adbe.pkcs7.detached, SHA-256) made by Security.framework; MuPDF is built without OpenSSL on every Mac.
+  - The inspector's Signatures section says, for each signature field: who signed and when (by the signer's clock), whether the document has changed since, and whether the certificate is trusted, self-signed, untrusted, expired or revoked. Settings › Check certificates online (off by default) allows fetching certificates and revocation checks.
+  - Left for later (Low): PAdES (ETSI.CAdES.detached) and timestamps; verification at the signing time rather than now; whether later changes are ones the signature allows (MDP).
 - [ ] Handwritten and image signatures
 
 ## Phase 7: OCR and export (0.7.0)

@@ -1,6 +1,7 @@
 import AppKit
 import PDFCore
 import PDFKit
+import Security
 
 /// One open PDF.
 ///
@@ -143,6 +144,13 @@ final class EditorDocument: NSDocument, EditRecorder {
     /// whole (see EngineDocument.applyRedactions). Can't be undone.
     func applyRedactions() throws {
         try rewrite { try $0.applyRedactions(openPassword: password) }
+    }
+
+    /// Signs a signature field with a Keychain identity (see
+    /// EngineDocument.sign). Can't be undone.
+    func sign(_ field: FormField, identity: SecIdentity, reason: String, location: String) throws {
+        try rewrite { try $0.sign(page: field.page, field: field.id, identity: identity, reason: reason,
+                                  location: location, openPassword: password) }
     }
 
     /// A change that writes the document whole: undo history goes.
