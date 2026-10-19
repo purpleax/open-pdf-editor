@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 0.7.0</title>
-      <pubDate>Mon, 19 Oct 2026 12:31:16 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.0</link>
-      <sparkle:version>8</sparkle:version>
-      <sparkle:shortVersionString>0.7.0</sparkle:shortVersionString>
+      <title>Open PDF Editor 0.7.1</title>
+      <pubDate>Mon, 19 Oct 2026 13:07:22 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.1</link>
+      <sparkle:version>9</sparkle:version>
+      <sparkle:shortVersionString>0.7.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Editing like a word processor. Click anywhere in a page's text and a cursor appears: type, delete, select across lines and press Return, and the paragraph re-wraps in its box, keeping its font where the PDF has the letters. The new formatting bar and Format menu change the font, size, bold, italic, underline (⌘B, ⌘I, ⌘U), colour and alignment, and Add Text puts a new text box anywhere. Start with the Edit button in the toolbar, Edit › Edit Content (⌥⌘E), or Edit Text when you right-click text. Lines you don't change stay exactly as they were; drag the grip on a box's right to change the width it wraps at; and a box that runs into the text below says so, since text doesn't flow from one paragraph to the next.</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.7.0/Open-PDF-Editor-0.7.0.zip" sparkle:edSignature="GOt/TyDDRsnuj/erGvjHYVdNitPnl34lqDvqHnB1EtbKmC7aQFPFskt1jOmJCpLgua2lPB7a1UaFYlUsyUsTBQ==" length="32360874" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.1</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Select and type. Select some text and start typing, and it changes, just as in a word processor: no need to switch to editing first. Click anywhere in a paragraph and a cursor appears there for typing; Delete, Backspace and Return work the same way, and Space types a space when there's a cursor or selection (it still scrolls otherwise). Paragraphs whose lines happen to end together are no longer mistaken for justified text, so their spacing stays as it was after an edit.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.7.1/Open-PDF-Editor-0.7.1.zip" sparkle:edSignature="LTRKU1E6MOmv8L8VPVvgjji9SwZs3a77EafCAFssTk2Wd2p8YlIh/ErfaQ3Rkm/mlP4rupdHPBmd44kAEuJnAw==" length="32366714" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
