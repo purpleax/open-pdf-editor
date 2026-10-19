@@ -158,6 +158,17 @@ enum MainMenu {
         tools.addItem(.separator())
         tools.addItem(withTitle: "Flatten Annotations…", action: #selector(DocumentWindowController.flattenAnnotations(_:)), keyEquivalent: "")
 
+        let forms = submenu(in: main, title: "Forms")
+        forms.addItem(withTitle: "Edit Fields", action: #selector(DocumentWindowController.toggleEditFields(_:)), keyEquivalent: "f")
+            .keyEquivalentModifierMask = [.command, .option]
+        forms.addItem(.separator())
+        for (index, tool) in FieldTool.allCases.enumerated() {
+            let item = forms.addItem(withTitle: tool.title, action: #selector(DocumentWindowController.chooseFieldTool(_:)), keyEquivalent: "")
+            item.tag = index
+            item.image = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil)
+            if tool == .select { forms.addItem(.separator()) }
+        }
+
         let window = submenu(in: main, title: "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")

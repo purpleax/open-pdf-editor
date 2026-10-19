@@ -5,13 +5,17 @@ import PDFCore
 /// the Select tool, and drawing new ones with the other tools. Text
 /// selection (and the text markup tools) use the text handlers.
 extension PagesView {
-    private var zoom: CGFloat { max(enclosingScrollView?.magnification ?? 1, 0.05) }
+    var zoom: CGFloat { max(enclosingScrollView?.magnification ?? 1, 0.05) }
     /// Six screen points, in page points.
-    private var tolerance: CGFloat { 6 / zoom }
+    var tolerance: CGFloat { 6 / zoom }
 
     override func mouseDown(with event: NSEvent) {
         fieldEditor?.finish()
         window?.makeFirstResponder(self)
+        if editingFields {
+            fieldMouseDown(with: event)
+            return
+        }
         let location = convert(event.locationInWindow, from: nil)
         guard let (page, point) = pageAndPoint(at: location), let annotations else {
             textMouseDown(with: event)
@@ -61,6 +65,10 @@ extension PagesView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        if editingFields {
+            fieldMouseDragged(with: event)
+            return
+        }
         let location = convert(event.locationInWindow, from: nil)
         switch gesture {
         case .none:
@@ -93,6 +101,10 @@ extension PagesView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if editingFields {
+            fieldMouseUp(with: event)
+            return
+        }
         let finished = gesture
         gesture = .none
         clearDrafts()
@@ -145,7 +157,7 @@ extension PagesView {
     }
 
     /// A point on the page, kept inside it.
-    private func clampedPoint(_ location: NSPoint, page: Int) -> CGPoint? {
+    func clampedPoint(_ location: NSPoint, page: Int) -> CGPoint? {
         guard let point = convert(location, toPage: page), page < model.pageCount else { return nil }
         let bounds = model.pageBounds[page]
         return CGPoint(x: min(max(point.x, bounds.minX), bounds.maxX), y: min(max(point.y, bounds.minY), bounds.maxY))
@@ -153,7 +165,7 @@ extension PagesView {
 
     // MARK: Drafts (shapes being drawn, moved or resized)
 
-    private func pageView(_ page: Int) -> PageView? {
+    func pageView(_ page: Int) -> PageView? {
         subviews.lazy.compactMap { $0 as? PageView }.first { $0.page == page }
     }
 
@@ -253,6 +265,10 @@ extension PagesView {
     }
 
     func refreshAnnotationSelection() {
+        if let ref = selectedField, forms?.field(ref) == nil {
+            selectedField = nil   // it was deleted or undone
+            return
+        }
         if let ref = selectedAnnotation, annotations?.annotation(ref) == nil {
             selectedAnnotation = nil   // it was deleted or undone
             return
@@ -263,6 +279,10 @@ extension PagesView {
     }
 
     func applyAnnotationSelection(to view: PageView, page: Int) {
+        if editingFields {
+            applyFieldSelection(to: view, page: page)
+            return
+        }
         guard let ref = selectedAnnotation, ref.page == page, let annotations, let a = annotations.annotation(ref) else {
             view.setAnnotationSelection(outline: nil, handles: [], transform: .identity, zoom: zoom)
             return
@@ -288,6 +308,15 @@ extension PagesView {
     }
 
     func deleteSelectedAnnotation() {
+        if let field = selectedField, let forms {
+            do {
+                try forms.delete(field)
+                selectedField = nil
+            } catch {
+                NSSound.beep()
+            }
+            return
+        }
         guard let ref = selectedAnnotation, let annotations else {
             NSSound.beep()
             return

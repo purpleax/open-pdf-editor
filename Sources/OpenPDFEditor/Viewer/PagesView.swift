@@ -48,6 +48,10 @@ protocol PagesViewDelegate: AnyObject {
     func pagesView(_ view: PagesView, crop rect: CGRect, onPage page: Int)
     /// Crop mode was turned on or off.
     func pagesViewCropModeDidChange(_ view: PagesView)
+    /// The selected form field changed (while editing fields).
+    func pagesView(_ view: PagesView, didSelectField field: FieldRef?)
+    /// A field tool has been used (it goes back to Select).
+    func pagesViewDidUseFieldTool(_ view: PagesView)
 }
 
 /// The scroll view's document view: lays out page views for the visible
@@ -85,6 +89,43 @@ final class PagesView: NSView, NSMenuItemValidation {
     var forms: FormController?
     /// The text field being typed into, if any.
     var fieldEditor: FieldEditor?
+    /// Editing the form's fields (Forms › Edit Fields) rather than filling
+    /// them in: fields are selected, moved, resized and made with the field
+    /// tools.
+    var editingFields = false {
+        didSet {
+            guard editingFields != oldValue else { return }
+            fieldEditor?.finish()
+            fieldGesture = .none
+            fieldTool = .select
+            selectedField = nil
+            if editingFields {
+                selectedAnnotation = nil
+                selection = nil
+                tool = .select
+            }
+            clearDrafts()
+            refreshFieldHighlights()
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    var fieldTool = FieldTool.select {
+        didSet { window?.invalidateCursorRects(for: self) }
+    }
+    var selectedField: FieldRef? {
+        didSet {
+            guard selectedField != oldValue else { return }
+            refreshAnnotationSelection()
+            delegate?.pagesView(self, didSelectField: selectedField)
+        }
+    }
+    enum FieldGesture {
+        case none
+        case create(page: Int, start: CGPoint, current: CGPoint)
+        case move(FieldRef, start: CGPoint, current: CGPoint)
+        case resize(FieldRef, AnnotationHandle, current: CGPoint)
+    }
+    var fieldGesture = FieldGesture.none
     /// Tints the form fields that can be filled in.
     var highlightsFields = true {
         didSet { if highlightsFields != oldValue { refreshFieldHighlights() } }
@@ -237,7 +278,7 @@ final class PagesView: NSView, NSMenuItemValidation {
     /// first time.
     private func applyFieldHighlights(to view: PageView, page: Int) {
         let transform = model.pageToView(page: page, rotation: rotation)
-        guard highlightsFields else {
+        guard highlightsFields || editingFields else {
             view.setFieldHighlights([], transform: transform)
             return
         }
@@ -255,7 +296,8 @@ final class PagesView: NSView, NSMenuItemValidation {
             }
             return
         }
-        view.setFieldHighlights(fields.filter(FormController.isFillable).map(\.rect), transform: transform)
+        let shown = editingFields ? fields : fields.filter(FormController.isFillable)
+        view.setFieldHighlights(shown.map(\.rect), transform: transform)
     }
 
     func refreshHighlights() {
@@ -320,7 +362,7 @@ final class PagesView: NSView, NSMenuItemValidation {
         switch item.action {
         case #selector(copy(_:)): return selection.map { !$0.isEmpty } ?? false
         case #selector(selectAll(_:)): return model.pageCount > 0
-        case #selector(delete(_:)): return selectedAnnotation != nil
+        case #selector(delete(_:)): return selectedAnnotation != nil || selectedField != nil
         default: return true
         }
     }
@@ -422,6 +464,10 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     private func updateCursor(_ event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
+        if editingFields {
+            fieldCursor(at: location).set()
+            return
+        }
         if isCropping || (tool != .select && !tool.marksText) {
             NSCursor.crosshair.set()
             return
@@ -495,8 +541,17 @@ final class PagesView: NSView, NSMenuItemValidation {
             clearDrafts()
             return
         }
+        if case .none = fieldGesture {} else {
+            fieldGesture = .none
+            clearDrafts()
+            return
+        }
         if isCropping {
             isCropping = false
+            return
+        }
+        if selectedField != nil {
+            selectedField = nil
             return
         }
         if selectedAnnotation != nil { selectedAnnotation = nil } else { selection = nil }

@@ -6,11 +6,13 @@ import PDFCore
 @MainActor
 final class InspectorViewController: NSViewController {
     let annotation: AnnotationInspectorViewController
+    let field: FieldInspectorViewController
     let document: DocumentInfoViewController
     private let separator = NSBox()
 
     init(viewer: ViewerController, fileURL: URL?) {
         annotation = AnnotationInspectorViewController(viewer: viewer)
+        field = FieldInspectorViewController(viewer: viewer)
         document = DocumentInfoViewController(viewer: viewer, fileURL: fileURL)
         super.init(nibName: nil, bundle: nil)
     }
@@ -20,19 +22,21 @@ final class InspectorViewController: NSViewController {
 
     override func loadView() {
         addChild(annotation)
+        addChild(field)
         addChild(document)
         separator.boxType = .separator
         // A stack collapses the annotation section when it is hidden.
-        let stack = NSStackView(views: [annotation.view, separator, document.view])
+        let stack = NSStackView(views: [annotation.view, field.view, separator, document.view])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.distribution = .fill
         stack.spacing = 0
-        for v in [annotation.view, separator, document.view] {
+        for v in [annotation.view, field.view, separator, document.view] {
             v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         document.view.setContentHuggingPriority(.defaultLow, for: .vertical)
         annotation.view.setContentHuggingPriority(.required, for: .vertical)
+        field.view.setContentHuggingPriority(.required, for: .vertical)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let root = NSView()
         root.addSubview(stack)
@@ -51,14 +55,20 @@ final class InspectorViewController: NSViewController {
         update()
     }
 
+    func show(field ref: FieldRef?) {
+        field.ref = ref
+        update()
+    }
+
     func refresh() {
         annotation.reload()
+        field.reload()
         update()
     }
 
     private func update() {
         guard isViewLoaded else { return }
-        separator.isHidden = annotation.view.isHidden
+        separator.isHidden = annotation.view.isHidden && field.view.isHidden
     }
 
     func pageDidChange() { document.pageDidChange() }

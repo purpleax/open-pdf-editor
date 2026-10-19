@@ -45,6 +45,8 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     var onSelectionChange: (() -> Void)?
     /// Called when the selected annotation changes.
     var onAnnotationSelectionChange: ((AnnotationRef?) -> Void)?
+    var onFieldSelectionChange: ((FieldRef?) -> Void)?
+    var onFieldToolChange: ((FieldTool) -> Void)?
     /// Called when the tool changes (a one-off tool going back to Select).
     var onToolChange: ((AnnotationTool) -> Void)?
     /// Called when crop mode is turned on or off.
@@ -547,6 +549,14 @@ final class ViewerController: NSViewController, PagesViewDelegate {
 
     func pagesView(_ view: PagesView, didSelect annotation: AnnotationRef?) {
         onAnnotationSelectionChange?(annotation)
+    }
+
+    func pagesView(_ view: PagesView, didSelectField field: FieldRef?) {
+        onFieldSelectionChange?(field)
+    }
+
+    func pagesViewDidUseFieldTool(_ view: PagesView) {
+        onFieldToolChange?(.select)
     }
 
     func pagesView(_ view: PagesView, edit annotation: AnnotationRef) {

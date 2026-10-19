@@ -110,7 +110,8 @@ From the first release-time security review (all findings above Low fixed, plus 
   - With the Select tool: click a text field to type in place (Return, Tab or clicking away fills it in, Escape doesn't; Tab and Shift-Tab move between the fields you type into), click checkboxes and radio buttons, choose from a menu for dropdowns and list boxes (a list box that takes several choices adds or removes the one chosen). View › Highlight Form Fields tints the fields that can be filled in. Each change is one undoable step and saves incrementally.
   - Form JavaScript doesn't run: values are kept as typed, and calculated fields don't recalculate. Filling in a form removes its XFA data.
   - Left for later (Low): MuPDF draws a dropdown's stored value rather than its label, and doesn't mark a list box's choices; filling one in sets NeedAppearances, so other apps draw them properly.
-- [ ] Create and edit text fields, checkboxes, radio buttons, dropdowns and signature fields
+- [x] Create and edit text fields, checkboxes, radio buttons, dropdowns and signature fields
+  - Forms › Edit Fields (⌥⌘F) shows the field bar: Select, Text Field, Checkbox, Radio Button, Dropdown, List Box and Signature Field. Drag out a field, or click for the usual size; a new radio button joins the selected radio button's group. Fields are moved, resized and deleted like annotations, and set up in the inspector: name (unique, no full stops), tooltip, required, read-only, a text field's lines, hidden typing, length and boxes, and a dropdown's or list's choices ("value | label" per line). Signature fields are made empty; signing is Phase 6.
 - [ ] Flatten forms
 - [x] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)
   - Open web and email links (pages and bookmarks): a PDF can send you to any address its author chose

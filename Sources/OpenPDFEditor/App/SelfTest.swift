@@ -287,9 +287,63 @@ enum SelfTest {
                 let named = { (n: String) in fields.first { $0.name == n } }
                 say("saved: name=\(named("name")?.value ?? "?") notes=\(named("notes")?.value.replacingOccurrences(of: "\n", with: "|") ?? "?") agree=\(named("agree")?.value ?? "?") size=\(named("size")?.value ?? "?") colour=\(named("colour")?.value ?? "?") fruits=\(named("fruits")?.selected.joined(separator: "+") ?? "?") xfa=\((try? saved.formInfo().hasXFA) ?? true)")
             }
-            finish()
+            editSteps(document, controller, viewer, window)
         }
         }
+        }
+    }
+
+    /// Edits the form's fields: makes one of each kind with the field tools,
+    /// moves one, renames it, gives a dropdown choices, deletes one, saves.
+    static func editSteps(_ document: EditorDocument, _ controller: DocumentWindowController, _ viewer: ViewerController, _ window: NSWindow) {
+        controller.setEditingFields(true)
+        let forms = viewer.forms
+        let before = viewer.model.fields(page: 0).count
+        let places: [(FieldTool, CGPoint)] = [
+            (.text, CGPoint(x: 330, y: 330)), (.checkbox, CGPoint(x: 330, y: 380)), (.radio, CGPoint(x: 360, y: 380)),
+            (.radio, CGPoint(x: 390, y: 380)), (.dropdown, CGPoint(x: 330, y: 420)), (.listBox, CGPoint(x: 330, y: 460)),
+            (.signature, CGPoint(x: 330, y: 540)),
+        ]
+        for (tool, point) in places {
+            viewer.pagesView.fieldTool = tool
+            click(viewer, page: 0, at: point)
+        }
+        let fields = viewer.model.fields(page: 0)
+        let made = fields.dropFirst(before)
+        say("made: \(made.map { "\($0.name):\($0.kind)" }); tool after: \(viewer.pagesView.fieldTool)")
+        say("radio group: \(made.filter { $0.kind == .radio }.map(\.name))")
+        if let text = made.first(where: { $0.kind == .text }) {
+            viewer.pagesView.fieldTool = .select
+            drag(viewer, page: 0, from: CGPoint(x: text.rect.midX, y: text.rect.midY), to: CGPoint(x: text.rect.midX + 40, y: text.rect.midY + 10))
+            let moved = forms.field(FieldRef(page: 0, id: text.id))?.rect.origin ?? .zero
+            say("moved text field from \(text.rect.origin) to \(moved); selected \(viewer.pagesView.selectedField?.id == text.id)")
+            var change = FieldChange()
+            change.name = "email"
+            change.tooltip = "Email address"
+            do { try forms.update(FieldRef(page: 0, id: text.id), actionName: "Rename Field", change) } catch { say("FAIL rename: \(error)") }
+            say("inspector shows: \(controller.inspector?.field.view.isHidden == false ? "field" : "nothing")")
+        }
+        if let dropdown = made.first(where: { $0.kind == .dropdown }) {
+            var change = FieldChange()
+            change.options = [.init(value: "yes", label: "Yes"), .init(value: "no", label: "No")]
+            do { try forms.update(FieldRef(page: 0, id: dropdown.id), actionName: "Change Choices", change) } catch { say("FAIL choices: \(error)") }
+        }
+        if let signature = made.first(where: { $0.kind == .signature }) {
+            viewer.pagesView.selectedField = FieldRef(page: 0, id: signature.id)
+            viewer.pagesView.deleteSelectedAnnotation()
+        }
+        say("after editing: \(viewer.model.fields(page: 0).dropFirst(before).map { "\($0.name):\($0.kind)\($0.options.isEmpty ? "" : "\($0.options.map(\.label))")" })")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            snapshot(window, "forms-3-editing")
+            controller.setEditingFields(false)
+            document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                if let url = document.fileURL, let saved = try? EngineDocument(url: url) {
+                    let fields = (try? saved.fields(page: 0)) ?? []
+                    say("saved fields: \(fields.count); email: \(fields.first { $0.name == "email" }?.tooltip ?? "missing")")
+                }
+                finish()
+            }
         }
     }
 

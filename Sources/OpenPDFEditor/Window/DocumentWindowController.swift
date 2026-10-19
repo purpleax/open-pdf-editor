@@ -22,6 +22,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private(set) var inspector: InspectorViewController?
     private let markupBar = MarkupBarViewController()
     private var markupAccessory: NSTitlebarAccessoryViewController?
+    let fieldBar = FieldBarViewController()
+    var fieldAccessory: NSTitlebarAccessoryViewController?
     private var split: NSSplitViewController?
     private var sidebarItem: NSSplitViewItem?
     private(set) var inspectorItem: NSSplitViewItem?
@@ -135,6 +137,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         viewer.pages.onSelectPages = { [weak self] pages in self?.sidebar?.thumbnails.select(pages) }
         viewer.onCropModeChange = { [weak self] in self?.viewerStateDidChange() }
         setUpMarkupBar()
+        setUpFieldBar()
         NotificationCenter.default.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] note in
             let pages = note.userInfo?["pages"] as? Set<Int>
             MainActor.assumeIsolated {
@@ -632,6 +635,13 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             setState(AnnotationTool.allCases.indices.contains(tagOfValidatedItem) && viewer.tool == AnnotationTool.allCases[tagOfValidatedItem])
             return viewer.model.isEditable
         case #selector(flattenAnnotations(_:)):
+            return viewer.model.isEditable
+        case #selector(toggleEditFields(_:)):
+            setState(viewer.pagesView.editingFields)
+            return viewer.model.isEditable
+        case #selector(chooseFieldTool(_:)):
+            setState(viewer.pagesView.editingFields && FieldTool.allCases.indices.contains(tagOfValidatedItem)
+                && viewer.pagesView.fieldTool == FieldTool.allCases[tagOfValidatedItem])
             return viewer.model.isEditable
         case #selector(showAttachments(_:)): setState(sidebar?.tab == .attachments && sidebarItem?.isCollapsed == false)
         case #selector(showLayers(_:)): setState(sidebar?.tab == .layers && sidebarItem?.isCollapsed == false)

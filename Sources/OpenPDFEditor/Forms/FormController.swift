@@ -88,6 +88,50 @@ final class FormController {
 
     private var allPages: Set<Int> { Set(0..<model.pageCount) }
 
+    // MARK: Editing fields
+
+    /// The topmost field of any kind at a point, for editing the form.
+    func hitAny(_ point: CGPoint, page: Int, tolerance: CGFloat, cachedOnly: Bool = false) -> FormField? {
+        let fields = cachedOnly ? model.cachedFields(page: page) ?? [] : model.fields(page: page)
+        return fields.last { $0.id != 0 && $0.rect.insetBy(dx: -tolerance / 2, dy: -tolerance / 2).contains(point) }
+    }
+
+    /// Makes a field; a radio button joins the group of `group` (a radio
+    /// button) if given.
+    func create(_ tool: FieldTool, page: Int, rect: CGRect, joining group: FieldRef? = nil) throws -> FieldRef {
+        let bounds = model.pageBounds[page]
+        var r = rect
+        r.size.width = min(r.width, bounds.width)
+        r.size.height = min(r.height, bounds.height)
+        r.origin.x = min(max(r.minX, bounds.minX), bounds.maxX - r.width)
+        r.origin.y = min(max(r.minY, bounds.minY), bounds.maxY - r.height)
+        let joined = group.flatMap { $0.page == page ? $0.id : nil }
+        let id = try model.edit("New \(tool.title)", pages: allPages) { try $0.createField(tool.kind, page: page, rect: r, joining: joined) }
+        return FieldRef(page: page, id: id)
+    }
+
+    func update(_ ref: FieldRef, actionName: String, _ change: FieldChange) throws {
+        try model.edit(actionName, pages: allPages) { try $0.updateField(page: ref.page, id: ref.id, change) }
+    }
+
+    func move(_ ref: FieldRef, by offset: CGVector) throws {
+        try model.edit("Move Field", pages: [ref.page]) {
+            try $0.transformField(page: ref.page, id: ref.id, by: CGAffineTransform(translationX: offset.dx, y: offset.dy))
+        }
+    }
+
+    /// Resizes a field's widget from `old` to `new` (page space).
+    func resize(_ ref: FieldRef, from old: CGRect, to new: CGRect) throws {
+        guard old.width > 0, old.height > 0 else { return }
+        let sx = new.width / old.width, sy = new.height / old.height
+        let t = CGAffineTransform(a: sx, b: 0, c: 0, d: sy, tx: new.minX - old.minX * sx, ty: new.minY - old.minY * sy)
+        try model.edit("Resize Field", pages: [ref.page]) { try $0.transformField(page: ref.page, id: ref.id, by: t) }
+    }
+
+    func delete(_ ref: FieldRef) throws {
+        try model.edit("Delete Field", pages: allPages) { try $0.deleteField(page: ref.page, id: ref.id) }
+    }
+
     func setText(_ ref: FieldRef, _ text: String) throws {
         try model.edit("Fill In Field", pages: allPages) { try $0.setText(text, page: ref.page, field: ref.id) }
     }
