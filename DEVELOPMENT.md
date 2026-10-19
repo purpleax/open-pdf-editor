@@ -81,6 +81,14 @@ gh auth status
 
 The two public keys must be identical (`ogR5u+Tx9ayLBr7r0ZH4sXoCra+h7h/JpSRl0z1ePaU=`). If the Sparkle key is wrong, installed copies refuse the update, and there is no way to reach them except a manual download. A full rehearsal is `make release VERSION=x.y.z DRY_RUN=1` once the next version's release notes are in ROADMAP.md: it builds, signs, notarises and packages, then puts back the version and appcast without committing or pushing.
 
+### Working from two Macs
+
+Both Macs can build and release once each is set up as above, with the same Sparkle key copied rather than generated anew.
+
+- **Keep the clone out of `~/Documents` and `~/Desktop`** when iCloud's "Desktop & Documents" syncing is on (for example `~/open-pdf-editor`). SwiftPM's build database fails there with `disk I/O error`.
+- **Pull before you start, and before releasing.** `make release` refuses to run when `origin/main` has commits you don't have.
+- **Move unreleased work on a branch.** The pre-push hook only stops pushes to `main`, so `git push -u origin wip` on one Mac and `git fetch && git switch wip` (then `git pull`) on the other carries work between them. Merge it into `main` and release from either Mac, then delete the branch.
+
 ## How the code fits together
 
 | Layer | Path | What it does |
