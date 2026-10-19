@@ -24,7 +24,7 @@ The state of the work and how it is run, for picking it up in a new session or o
 
   6. Finish: docs (ROADMAP 0.6.0 notes, README, DEVELOPMENT), security review and re-review, all fixes in (see ROADMAP Phase 6). 135 tests and every self-test run pass.
 
-  Next: release 0.6.0 once the user agrees (dry run first), then ask about installing.
+  Released as **0.6.0** (2026-10-19, `v0.6.0`, commit `d499e63`): on GitHub and in the appcast. Phase 6 is done; wait for the user before starting Phase 7.
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.
