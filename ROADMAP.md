@@ -194,6 +194,11 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] Getting into editing: one Edit tool, a toolbar Edit button, Edit Text in the right-click menu; Add Text for new boxes; a width grip; a note when a box runs into other text
 - Not editable, with a reason given: Type3 or vertical text, text at an angle, invisible or clipping text, text inside reusable graphics (Form XObjects), right-to-left text, paragraphs over the limits. Editing is off while the view is rotated.
 - Left for later: text flowing between paragraphs, columns or pages; moving a paragraph's links, highlights and underline rules with it; using the PDF's own font program in the editor; text inside Form XObjects; right-to-left and vertical text.
+- [x] Security review before release: the Mediums fixed, then re-reviewed with proofs run.
+  - Font resource names longer than the bridge kept were cut short, so edited text could be drawn in another font of the shortened name (a hostile file could supply one); names are now kept whole or not at all, and longer ones refused.
+  - Slow paths a hostile page could take when editing starts: MuPDF's style collection (its fake-bold check compares each character with every earlier one: 19 s for 150,000 characters) is no longer used, and fake bold is folded by position after sorting; fonts are looked up once per font, not per character, and at most 16 codes per character are tried; splitting lines at wide gaps is linear; matching characters to glyphs looks at most 256 glyphs per spot.
+  - Glyphs at impossible positions (not finite, or millions of points away) are ignored; laid-out runs that overlapped could overflow a buffer when given an embedded font (the app never sends such runs; now refused).
+  - Left for later (Low): text drawn by a reusable graphic (Form XObject) or an annotation exactly over a paragraph's own glyphs stays when the paragraph is edited; a copy drawn on top of more than 256 glyphs at one spot, or after the first 200,000 glyphs, isn't taken out with them; a glyph a font can't decode moves the text position as glyph 0 would, which can leave its paragraph not editable.
 
 ## Phase 8: OCR and export (0.8.0)
 

@@ -2790,6 +2790,68 @@ static void mark_hard_breaks(opdf_paragraph *para) {
     }
 }
 
+// Fake bold: the same text drawn twice, a fraction of a point apart, comes
+// out as two paragraphs. The second goes (editing the first takes out both,
+// as copies drawn on a glyph go with it). Sorted by where they start, so
+// it's linear in the paragraphs, not quadratic.
+typedef struct { float x, y; int index; } para_start;
+
+static int compare_para_starts(const void *a, const void *b) {
+    const para_start *p = a, *q = b;
+    if (p->y != q->y) return p->y < q->y ? -1 : 1;
+    if (p->x != q->x) return p->x < q->x ? -1 : 1;
+    return p->index - q->index;
+}
+
+static bool doubles(const opdf_paragraph *a, const opdf_paragraph *b) {
+    if (a->char_count != b->char_count || a->line_count != b->line_count || a->char_count == 0) return false;
+    for (int i = 0; i < a->char_count; i++) {
+        const opdf_para_char *x = &a->chars[i], *y = &b->chars[i];
+        if (x->c != y->c || fabsf(x->x - y->x) > 0.5f || fabsf(x->y - y->y) > 0.5f) return false;
+    }
+    return true;
+}
+
+static void drop_doubled_paragraphs(opdf_paragraphs *o) {
+    if (o->count < 2) return;
+    para_start *starts = calloc((size_t)o->count, sizeof *starts);
+    bool *gone = calloc((size_t)o->count, sizeof *gone);
+    if (!starts || !gone) {
+        free(starts);
+        free(gone);
+        return;   // nothing folded: a paragraph shown twice
+    }
+    for (int i = 0; i < o->count; i++) {
+        const opdf_paragraph *p = &o->items[i];
+        starts[i] = (para_start){ p->char_count ? p->chars[0].x : p->rect.x0, p->char_count ? p->chars[0].y : p->rect.y0, i };
+    }
+    qsort(starts, (size_t)o->count, sizeof *starts, compare_para_starts);
+    // Doubles start within half a point: look a few neighbours on.
+    for (int i = 0; i < o->count; i++) {
+        int a = starts[i].index;
+        if (gone[a]) continue;
+        for (int j = i + 1; j < o->count && j <= i + 8 && starts[j].y - starts[i].y <= 0.5f; j++) {
+            int b = starts[j].index;
+            if (gone[b] || fabsf(starts[j].x - starts[i].x) > 0.5f) continue;
+            // The one drawn first stays.
+            int keep = a < b ? a : b, drop = a < b ? b : a;
+            if (doubles(&o->items[keep], &o->items[drop])) gone[drop] = true;
+        }
+    }
+    int w = 0;
+    for (int r = 0; r < o->count; r++) {
+        if (gone[r]) {
+            free(o->items[r].chars);
+            free(o->items[r].lines);
+        } else {
+            o->items[w++] = o->items[r];
+        }
+    }
+    o->count = w;
+    free(starts);
+    free(gone);
+}
+
 // A one-line paragraph's alignment, from where it sits on the page: centred
 // on it, or against the right margin the other text keeps.
 static void align_single_lines(opdf_paragraphs *o, fz_rect page) {
@@ -2972,12 +3034,15 @@ bool opdf_paragraphs_load(opdf_doc *d, int page_number, opdf_paragraphs *out, op
         fz_stext_options options;
         memset(&options, 0, sizeof options);
         // MuPDF's lines and blocks (its paragraph breaking splits short
-        // paragraphs apart: blocks are split here instead), with fake bold
-        // (text drawn twice) folded into one.
-        options.flags = FZ_STEXT_CLIP | FZ_STEXT_SEGMENT | FZ_STEXT_COLLECT_STYLES
+        // paragraphs apart: blocks are split here instead). Not its style
+        // collection: its fake-bold check compares each character with every
+        // one before it, which takes minutes on a page of a few hundred
+        // thousand characters. Fake bold is folded below instead.
+        options.flags = FZ_STEXT_CLIP | FZ_STEXT_SEGMENT
                       | FZ_STEXT_PRESERVE_LIGATURES | FZ_STEXT_IGNORE_ACTUALTEXT | FZ_STEXT_ACCURATE_BBOXES;
         text = fz_new_stext_page_from_page(ctx, (fz_page *)page, &options);
         walk_paragraph_blocks(ctx, &b, text->first_block, 0);
+        drop_doubled_paragraphs(out);
         merge_wrapped_paragraphs(ctx, out);
         for (int i = 0; i < out->count; i++) mark_hard_breaks(&out->items[i]);
         align_single_lines(out, fz_bound_page(ctx, (fz_page *)page));

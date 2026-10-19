@@ -433,6 +433,11 @@ function makeParaBomb() {
 		"BT /" + huge + " 12 Tf 72 600 Td (An even longer one) Tj ET\n" +
 		"BT /" + forty + " 12 Tf 1 0 0 1 1e30 1e30 Tm (Far away) Tj ET\n")
 	doc.insertPage(-1, page)
+	// A page full of tiny text: 150,000 characters on 650 lines.
+	var text = "", row = new Array(231).join("x")
+	for (var i = 0; i < 650; i++) text += "BT /F1 1 Tf 20 " + (780 - i * 1.2).toFixed(1) + " Td (" + row + ") Tj ET\n"
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, text)
+	doc.insertPage(-1, page)
 	doc.save(out + "/parabomb.pdf", "compress")
 }
 

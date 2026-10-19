@@ -92,7 +92,7 @@ import Testing
 
     @Test func hostilePagesStayQuickAndNamesStayWhole() throws {
         let doc = try Corpus.open("parabomb.pdf")
-        for page in 0..<2 {
+        for page in [0, 1, 3] {
             let start = Date()
             _ = try doc.paragraphs(page: page)
             #expect(Date().timeIntervalSince(start) < 5, "page \(page) took too long")
