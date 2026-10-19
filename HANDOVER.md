@@ -153,3 +153,113 @@ The state of the work and how it is run, for picking it up in a new session or o
   - PAdES (ETSI.CAdES.detached) would need a hand-built SignerInfo (signingCertificateV2); start with adbe.pkcs7.detached.
   - Keep the callbacks in C (they run inside MuPDF's fz_try), link Security.framework in the MuPDFBridge target, and add `HAVE_LIBCRYPTO=no` to `scripts/build-mupdf.sh`.
 - **Test fixtures:** `signed.pdf` is fake. Verification needs a really signed fixture (a self-signed P12 made in a test, and signed with the new code).
+
+
+## Phase 6 plan (approved 2026-10-19)
+
+The user's choices: saved signatures in the Keychain; Apply Redactions rewrites now with no undo; offer to delete earlier Versions (checked by default). Work through the steps in order, one local commit each.
+
+
+| Decision | Choice |
+| --- | --- |
+| Full rewrite ("rebase") | Redaction and security changes write the whole document again (garbage collection, scrubbed), reopen it from the new bytes, and continue from there. Undo history is cleared; the alert says so first. Later saves are incremental on top of the clean bytes. |
+| Redaction | Mark with Tools › Redact (text like Highlight, or a dragged area); Tools › Apply Redactions… removes text, images (pixels), line art, annotations, links and field values under the marks. It draws black boxes, scrubs hidden leftovers (thumbnails, PieceInfo, document JavaScript, XMP rebuilt), saves, and optionally deletes earlier Versions. Signatures are invalidated, with a warning. |
+| Encryption | File › Security… sets, changes or removes passwords and permissions, using AES-256 only. It needs owner access: you are asked for the owner password if the file was opened with the user password. |
+| Permissions | Enforced when a file was opened without owner access. Print, copy text, edit (content, pages, forms creation), annotate and fill in are each disabled per its bit, and the window says why. |
+| Digital signatures | CMS detached signatures (adbe.pkcs7.detached, SHA-256) made by CMSEncoder from a Keychain identity. Signing is a real incremental save to the file, then a reopen. Verification uses CMSDecoder and SecTrust against the system trust store. |
+| Online certificate checks | A Settings switch, off by default (Risky features): revocation and missing intermediates fetched over the network. |
+| Saved signatures | Drawn or imported images stored as items in your login Keychain, placed as stamp annotations with that image, and usable as the picture in a digital signature. |
+
+### Steps (one local commit each)
+
+### 1. Rebase: writing the document whole
+- **Bridge:** `opdf_rebase(doc, const opdf_rebase_options *, err)`.
+  - Writes with `do_garbage=3`, compression, and encryption settings (KEEP, NONE or AES_256 with passwords and permission bits) into a buffer.
+  - Reopens from the buffer, authenticates with the new password, re-enables the journal, and swaps `d->doc` (the pattern of `opdf_prepare_for_editing`).
+  - A scrub option removes `/Thumb`, `/PieceInfo`, document JavaScript (Names/JavaScript, an OpenAction JavaScript action, catalog `/AA`), and rebuilds XMP from Info (`rewrite_xmp`).
+- **PDFCore:** `EngineDocument.rebase(...)`.
+- **App:** `EditorDocument` calls `undoManager.removeAllActions()`, updates the model (`structureChanged`), and marks the document edited.
+- **Tests:** a rebased document keeps its pages, text, annotations and forms; old objects are gone from the bytes; a signed document is detected.
+
+### 2. Passwords, encryption, permissions
+- **Bridge:** `opdf_access(doc)` (none, user or owner, from `pdf_authenticate_password`'s bits), `opdf_permissions(doc)`, and an owner re-authentication call.
+- **App: File › Security…** sheet:
+  - user and owner passwords, permission checkboxes (print, copy, edit, annotate, fill in forms, assemble pages), and Remove Security;
+  - a signed-document warning;
+  - applied with `rebase`.
+- **Enforcement:** `DocumentModel` gains `permissions`. Each command checks the matching bit (print, copy, edit modes, page commands, markup tools, form filling), plus a banner in the window.
+- **Tests:**
+  - set a password, save and reopen (it asks for the password);
+  - change it, then remove it;
+  - user versus owner access;
+  - permission bits are written and read back;
+  - non-Latin passwords (R6).
+
+### 3. Redaction
+- **App:**
+  - `AnnotationTool.redact`: text marking reuses `markText`; areas reuse `createShape`.
+  - **Tools › Apply Redactions…** alert, with an "Also delete earlier versions of this file" checkbox, checked by default.
+  - The signature warning.
+- **Bridge:** `opdf_apply_redactions(doc, err)`.
+  1. For every page: `pdf_redact_page` with every option set (black boxes; text REMOVE; images PIXELS; line art REMOVE_IF_TOUCHED).
+  2. Delete annotations under the marks (any kind except the Redact marks, which MuPDF removes), and clear widget values (or delete those widgets).
+  3. Then `opdf_rebase` with scrub.
+- **App, afterwards:** save at once (untitled documents ask where). If chosen, `NSFileVersion.removeOtherVersionsOfItem`.
+- **Tests:**
+  - the text is gone from the extracted text and from the file's bytes;
+  - image pixels are blanked; annotations and field values are gone;
+  - thumbnails, PieceInfo and JavaScript are scrubbed;
+  - text outside the marks is kept.
+
+### 4. Digital signatures
+- **Bridge (C, Security.framework linked to MuPDFBridge):**
+  - **Signer** (`pdf_pkcs7_signer`): wraps a SecIdentity. Its size estimate is the certificate chain plus 8 KB. `create_digest` streams the ranges into CMSEncoder (detached, SHA-256, signing time, chain without root).
+  - **Verifier** (`pdf_pkcs7_verifier`): CMSDecoder with the ranges as detached content; the `/Contents` padding is trimmed. Trust is a SecTrust with network fetch only if the setting allows it. The bridge keeps richer results (expired, untrusted, self-signed).
+  - `opdf_sign_field(doc, page, id, identity, image, reason, location, path, err)`:
+    1. `pdf_sign_signature`;
+    2. copy the original bytes, then `pdf_save_document(path, incremental, no snapshot)`;
+    3. reopen.
+  - `opdf_save` refuses while signatures are unsaved.
+  - `opdf_signatures(doc)` lists each signature with signer, time, status (`pdf_validate_signature` and verifier) and whether it was changed after signing.
+  - `scripts/build-mupdf.sh`: `HAVE_LIBCRYPTO=no`.
+- **App:**
+  - Clicking an unsigned signature field (Select tool) opens **Sign…**: a Keychain identity popup, an optional saved signature picture, reason and location. It saves first if needed.
+  - A **Signatures** section in the inspector shows each signature's status in plain words.
+  - **Settings:** "Check certificates online", off by default.
+- **Tests:**
+  - a test identity: a P12 generated at corpus time with `/usr/bin/openssl`, imported in memory (`SecPKCS12Import`; if that needs a keychain, a temporary keychain in the test);
+  - sign, reopen and verify as valid;
+  - edit, save, and report "changed after signing";
+  - tamper with the bytes and report invalid;
+  - a self-signed certificate reports not trusted;
+  - an encrypted document signs and verifies, or signing is refused with a message.
+
+### 5. Handwritten and image signatures
+- **App:**
+  - **Tools › Signatures…**: draw (a pen pad) or import (`ImageImport`) a signature, and name, delete or choose one. Stored as Keychain items (generic password data, PNG, labelled), read only by this app.
+  - A **Signature** tool places the chosen one as a stamp annotation with its image, moved and resized like stamps.
+- **Bridge:** `opdf_annot_set_stamp_image(doc, page, id, png, len)` (`pdf_set_annot_stamp_image`).
+- **Tests:** a stamp image round-trips through save and reopen, and draws.
+
+### 6. Finish
+- Extend the self-test:
+  - Security… sets a password and permissions, and the document reopens;
+  - apply a redaction, and the text is gone;
+  - place a signature stamp;
+  - sign with the test identity, and the inspector shows the status.
+- Docs:
+  - ROADMAP: ticks, decisions, and 0.6.0 release notes, folding in the autosave draft.
+  - SPEC, README, DEVELOPMENT (the new save rules: rebase, and signing as a real save), HANDOVER.
+- A security review (subagent, proof-of-concept inputs: hostile CMS blobs, ByteRanges, encryption dictionaries, redaction leftovers). Fix everything above Low, then re-review.
+- Release after your go-ahead: dry run, then the real release. Ask about installing.
+
+### Left for later
+- PAdES (ETSI.CAdES.detached) and timestamps.
+- Certificate-based (public-key) encryption.
+- Redaction inside patterns and soft masks (MuPDF doesn't recurse there).
+- Signing with smart cards may prompt during save (it works through the Keychain).
+
+### Verification
+- `make test`: new suites for rebase, security, permissions, redaction, signatures, stamp images, and all 116 existing tests.
+- `make selftest`, with the new run's log and snapshots.
+- By hand: a password-protected save opens in Preview with the password; a redacted file has no recoverable text (`strings` and `mutool show`); a signature made here is reported by `mutool sign -v` and shown in Preview.
