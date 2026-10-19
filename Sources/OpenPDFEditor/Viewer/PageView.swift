@@ -20,6 +20,7 @@ final class PageView: NSView {
 
     private let previewLayer = CALayer()
     private let tileContainer = CALayer()
+    private let fieldLayer = CAShapeLayer()
     private let searchLayer = CAShapeLayer()
     private let currentMatchLayer = CAShapeLayer()
     private let selectionLayer = CAShapeLayer()
@@ -50,6 +51,7 @@ final class PageView: NSView {
             layer.addSublayer(sub)
         }
         for (shape, color, multiply) in [
+            (fieldLayer, NSColor.systemBlue.withAlphaComponent(0.12), true),
             (searchLayer, NSColor.systemYellow.withAlphaComponent(0.55), true),
             (currentMatchLayer, NSColor.systemOrange.withAlphaComponent(0.75), true),
             (selectionLayer, NSColor.selectedTextBackgroundColor.withAlphaComponent(0.6), true),
@@ -84,7 +86,7 @@ final class PageView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for sub in [previewLayer, tileContainer, searchLayer, currentMatchLayer, selectionLayer, draftLayer, outlineLayer, handleLayer] {
+        for sub in [previewLayer, tileContainer, fieldLayer, searchLayer, currentMatchLayer, selectionLayer, draftLayer, outlineLayer, handleLayer] {
             sub.frame = bounds
         }
         CATransaction.commit()
@@ -131,6 +133,7 @@ final class PageView: NSView {
         for layer in tileContainer.sublayers ?? [] { layer.removeFromSuperlayer() }
         tileLayers.removeAll()
         previewLayer.contents = nil
+        fieldLayer.path = nil
         searchLayer.path = nil
         currentMatchLayer.path = nil
         selectionLayer.path = nil
@@ -247,6 +250,11 @@ final class PageView: NSView {
     func setSearchHighlights(_ rects: [CGRect], current: [CGRect], transform: CGAffineTransform) {
         searchLayer.path = path(rects, transform)
         currentMatchLayer.path = path(current, transform)
+    }
+
+    /// Form fields that can be filled in, tinted (page space).
+    func setFieldHighlights(_ rects: [CGRect], transform: CGAffineTransform) {
+        fieldLayer.path = path(rects, transform)
     }
 
     /// The text selection, in page space.

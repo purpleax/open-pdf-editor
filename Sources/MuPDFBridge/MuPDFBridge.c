@@ -1729,6 +1729,15 @@ static void remove_xfa(fz_context *ctx, pdf_document *pdf) {
     if (pdf_dict_get(ctx, form, PDF_NAME(XFA))) pdf_dict_del(ctx, form, PDF_NAME(XFA));
 }
 
+// MuPDF draws a dropdown's stored value rather than its label, and doesn't
+// mark a list box's choices: once one is filled in, other apps are asked to
+// draw the form's fields themselves.
+static void ask_for_appearances(fz_context *ctx, pdf_document *pdf) {
+    pdf_obj *form = pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/AcroForm");
+    if (pdf_is_dict(ctx, form) && !pdf_dict_get_bool(ctx, form, PDF_NAME(NeedAppearances)))
+        pdf_dict_put_bool(ctx, form, PDF_NAME(NeedAppearances), 1);
+}
+
 // The field to fill in, checked against the kinds given.
 static pdf_annot *fillable_widget(fz_context *ctx, pdf_page *page, int id, int type_a, int type_b) {
     pdf_annot *w = find_widget(ctx, page, id);
@@ -1759,6 +1768,7 @@ bool opdf_field_set_text(opdf_doc *d, int page_number, int id, const char *text,
             fz_throw(ctx, FZ_ERROR_ARGUMENT, "That isn't one of this field's choices");
         }
         if (!pdf_set_annot_field_value(ctx, pdf, w, text, 1)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The field didn't take the text");
+        if (pdf_widget_type(ctx, w) == PDF_WIDGET_TYPE_COMBOBOX) ask_for_appearances(ctx, pdf);
         remove_xfa(ctx, pdf);
     });
     return !(err && err->code);
@@ -1782,6 +1792,7 @@ bool opdf_field_set_choices(opdf_doc *d, int page_number, int id, const char *co
         } else {
             pdf_choice_widget_set_value(ctx, w, count, (const char **)values);
         }
+        ask_for_appearances(ctx, pdf);
         remove_xfa(ctx, pdf);
     });
     return !(err && err->code);

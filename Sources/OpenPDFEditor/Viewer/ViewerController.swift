@@ -22,6 +22,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     let scrollView = NSScrollView()
     let pagesView: PagesView
     let annotations: AnnotationController
+    let forms: FormController
     private(set) lazy var pages = PageEditor(viewer: self)
     private var editor: AnnotationEditor?
 
@@ -71,6 +72,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
         find = FindController(model: model)
         pagesView = PagesView(model: model, renderer: renderer)
         annotations = AnnotationController(model: model)
+        forms = FormController(model: model)
         displayMode = Self.savedDisplayMode
         super.init(nibName: nil, bundle: nil)
     }
@@ -95,6 +97,8 @@ final class ViewerController: NSViewController, PagesViewDelegate {
         view = scrollView
         pagesView.delegate = self
         pagesView.annotations = annotations
+        pagesView.forms = forms
+        pagesView.highlightsFields = UserDefaults.standard.object(forKey: "HighlightFields") as? Bool ?? true
         pagesView.accessibilityPages.focusHandler = { [weak self] page in
             guard let self, !self.isVisible(page: page) else { return }
             self.go(to: ViewLocation(page: page), record: false)

@@ -82,6 +82,7 @@ enum MainMenu {
         view.addItem(withTitle: "Two Pages", action: #selector(DocumentWindowController.displayTwoPages(_:)), keyEquivalent: "")
         view.addItem(withTitle: "Two Pages Continuous", action: #selector(DocumentWindowController.displayTwoPagesContinuous(_:)), keyEquivalent: "")
         view.addItem(withTitle: "Show Cover Page Separately", action: #selector(DocumentWindowController.toggleCoverSeparately(_:)), keyEquivalent: "")
+        view.addItem(withTitle: "Highlight Form Fields", action: #selector(DocumentWindowController.toggleFieldHighlights(_:)), keyEquivalent: "")
         view.addItem(.separator())
         view.addItem(withTitle: "Actual Size", action: #selector(DocumentWindowController.zoomToActualSize(_:)), keyEquivalent: "0")
         view.addItem(withTitle: "Fit Width", action: #selector(DocumentWindowController.zoomToFitWidth(_:)), keyEquivalent: "8")

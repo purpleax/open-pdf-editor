@@ -32,6 +32,7 @@ final class DocumentModel: @unchecked Sendable {
     private var textOrder: [Int] = []
     private var linkCache: [Int: [PageLink]] = [:]
     private var annotationCache: [Int: [Annotation]] = [:]
+    private var fieldCache: [Int: [FormField]] = [:]
     private var _revision = 0
     private var pageRevisions: [Int: Int] = [:]
 
@@ -145,6 +146,20 @@ final class DocumentModel: @unchecked Sendable {
         annotations(page: page).first { $0.id == id }
     }
 
+    /// The page's form fields, cached.
+    func fields(page: Int) -> [FormField] {
+        if let cached = lock.withLock({ fieldCache[page] }) { return cached }
+        let before = revision(page: page)
+        let fields = (try? engine.fields(page: page)) ?? []
+        lock.withLock { if unchanged(page, since: before) { fieldCache[page] = fields } }
+        return fields
+    }
+
+    /// The page's form fields if already loaded (for the cursor, which mustn't load).
+    func cachedFields(page: Int) -> [FormField]? {
+        lock.withLock { fieldCache[page] }
+    }
+
     /// Makes one change through the engine, as one undoable step: afterwards
     /// the pages are redrawn and the change is recorded for undo.
     @MainActor
@@ -196,6 +211,7 @@ final class DocumentModel: @unchecked Sendable {
             textOrder.removeAll()
             linkCache.removeAll()
             annotationCache.removeAll()
+            fieldCache.removeAll()
             pageRevisions.removeAll()
             _revision += 1
         }
@@ -213,6 +229,7 @@ final class DocumentModel: @unchecked Sendable {
                 texts[page] = nil
                 linkCache[page] = nil
                 annotationCache[page] = nil
+                fieldCache[page] = nil
                 pageRevisions[page, default: 0] += 1
             }
             listOrder.removeAll { all.contains($0) }
@@ -233,6 +250,7 @@ final class DocumentModel: @unchecked Sendable {
             textOrder.removeAll()
             linkCache.removeAll()
             annotationCache.removeAll()
+            fieldCache.removeAll()
             _revision += 1
         }
         DispatchQueue.main.async {

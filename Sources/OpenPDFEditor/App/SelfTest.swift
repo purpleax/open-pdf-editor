@@ -30,7 +30,9 @@ enum SelfTest {
                 finish()
                 return
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { steps(document) }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                if ProcessInfo.processInfo.environment["OPDF_SELFTEST_FORMS"] != nil { formSteps(document) } else { steps(document) }
+            }
         }
     }
 
@@ -221,6 +223,86 @@ enum SelfTest {
                     }
                 }
             }
+        }
+    }
+
+    /// Fills in forms.pdf through the pages view: typing, Tab, clicking
+    /// checkboxes and radio buttons, choosing, undo, save.
+    static func formSteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let viewer = controller.viewer, let window = controller.window else {
+            say("FAIL no viewer")
+            return finish()
+        }
+        window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 860), display: true)
+        let forms = viewer.forms
+        func field(_ name: String) -> FormField? { viewer.model.fields(page: 0).first { $0.name == name } }
+        func values() -> String {
+            ["name", "notes", "zip", "agree", "size", "colour", "fruits"].map { name in
+                guard let f = field(name) else { return "\(name)=?" }
+                return "\(name)=\(f.kind == .listBox ? f.selected.joined(separator: "+") : f.value)"
+            }.joined(separator: " ")
+        }
+        say("fields: \(viewer.model.fields(page: 0).map { "\($0.name):\($0.kind)\($0.isReadOnly ? "(ro)" : "")" })")
+        guard let name = field("name"), let agree = field("agree"),
+              let medium = viewer.model.fields(page: 0).first(where: { $0.name == "size" && $0.onState == "M" }) else {
+            say("FAIL fields missing")
+            return finish()
+        }
+        click(viewer, page: 0, at: CGPoint(x: name.rect.midX, y: name.rect.midY))
+        guard let editor = viewer.pagesView.fieldEditor else {
+            say("FAIL no editor after clicking a text field")
+            return finish()
+        }
+        editor.debugType("Grace Hopper")
+        editor.debugEnd(.next)
+        say("after Tab: editing \(viewer.pagesView.fieldEditor.flatMap { forms.field($0.ref)?.name } ?? "nothing")")
+        viewer.pagesView.fieldEditor?.debugType("Line one\nLine two")
+        // Pages redraw in the background: snapshots wait for them.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        snapshot(window, "forms-1-typing")
+        viewer.pagesView.fieldEditor?.finish()
+        click(viewer, page: 0, at: CGPoint(x: agree.rect.midX, y: agree.rect.midY))
+        click(viewer, page: 0, at: CGPoint(x: medium.rect.midX, y: medium.rect.midY))
+        do {
+            if let colour = field("colour") { try forms.setText(FieldRef(page: 0, id: colour.id), "b") }
+            if let fruits = field("fruits") { try forms.setChoices(FieldRef(page: 0, id: fruits.id), ["Apple", "Cherry"]) }
+        } catch { say("FAIL choosing: \(error)") }
+        if let locked = field("locked") {
+            click(viewer, page: 0, at: CGPoint(x: locked.rect.midX, y: locked.rect.midY))
+            say("clicking the read-only field: editor \(viewer.pagesView.fieldEditor == nil ? "none" : "OPEN")")
+        }
+        say("filled: \(values().replacingOccurrences(of: "\n", with: "|"))")
+        say("undo name: \(document.undoManager?.undoActionName ?? "")")
+        document.undoManager?.undo()
+        say("after undo: \(values())")
+        document.undoManager?.redo()
+        say("after redo: \(values().replacingOccurrences(of: "\n", with: "|"))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        snapshot(window, "forms-2-filled")
+        document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            if let url = document.fileURL, let saved = try? EngineDocument(url: url) {
+                let fields = (try? saved.fields(page: 0)) ?? []
+                let named = { (n: String) in fields.first { $0.name == n } }
+                say("saved: name=\(named("name")?.value ?? "?") notes=\(named("notes")?.value.replacingOccurrences(of: "\n", with: "|") ?? "?") agree=\(named("agree")?.value ?? "?") size=\(named("size")?.value ?? "?") colour=\(named("colour")?.value ?? "?") fruits=\(named("fruits")?.selected.joined(separator: "+") ?? "?") xfa=\((try? saved.formInfo().hasXFA) ?? true)")
+            }
+            finish()
+        }
+        }
+        }
+    }
+
+    /// A click through the pages view, as the mouse would.
+    static func click(_ viewer: ViewerController, page: Int, at point: CGPoint) {
+        let view = viewer.pagesView
+        guard let window = view.window, let t = view.transform(forPage: page) else { return }
+        let location = view.convert(point.applying(t), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [], timestamp: 0,
+                                           windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                                           clickCount: 1, pressure: 1)!
+            if type == .leftMouseDown { view.mouseDown(with: event) } else { view.mouseUp(with: event) }
         }
     }
 

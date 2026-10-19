@@ -81,6 +81,14 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     /// Finds and changes annotations (set by the viewer).
     var annotations: AnnotationController?
+    /// Finds and fills in form fields (set by the viewer).
+    var forms: FormController?
+    /// The text field being typed into, if any.
+    var fieldEditor: FieldEditor?
+    /// Tints the form fields that can be filled in.
+    var highlightsFields = true {
+        didSet { if highlightsFields != oldValue { refreshFieldHighlights() } }
+    }
     /// The markup tool in use.
     var tool: AnnotationTool = .select {
         didSet {
@@ -139,6 +147,8 @@ final class PagesView: NSView, NSMenuItemValidation {
     // MARK: Layout
 
     func apply(layout: PageLayout, rotation: Int) {
+        // The field being typed into would be left where the page was.
+        fieldEditor?.finish()
         self.layout = layout
         self.rotation = rotation
         setFrameSize(layout.size)
@@ -167,6 +177,7 @@ final class PagesView: NSView, NSMenuItemValidation {
             let changed = view.configure(page: page, rotation: rotation, revision: model.revision(page: page))
             if pageViews[page] == nil || changed {
                 pageViews[page] = view
+                applyFieldHighlights(to: view, page: page)
                 applyHighlights(to: view, page: page)
                 applySelection(to: view, page: page)
                 applyAnnotationSelection(to: view, page: page)
@@ -217,6 +228,35 @@ final class PagesView: NSView, NSMenuItemValidation {
     }
 
     // MARK: Highlights
+
+    func refreshFieldHighlights() {
+        for (page, view) in pageViews { applyFieldHighlights(to: view, page: page) }
+    }
+
+    /// Tints the page's fillable fields, loading them in the background the
+    /// first time.
+    private func applyFieldHighlights(to view: PageView, page: Int) {
+        let transform = model.pageToView(page: page, rotation: rotation)
+        guard highlightsFields else {
+            view.setFieldHighlights([], transform: transform)
+            return
+        }
+        guard let fields = model.cachedFields(page: page) else {
+            view.setFieldHighlights([], transform: transform)
+            let model = self.model
+            EngineExecutor.background.async(.low) { [weak self] in
+                _ = model.fields(page: page)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        guard let self, let view = self.pageViews[page], model.cachedFields(page: page) != nil else { return }
+                        self.applyFieldHighlights(to: view, page: page)
+                    }
+                }
+            }
+            return
+        }
+        view.setFieldHighlights(fields.filter(FormController.isFillable).map(\.rect), transform: transform)
+    }
 
     func refreshHighlights() {
         for (page, view) in pageViews { applyHighlights(to: view, page: page) }
@@ -397,8 +437,12 @@ final class PagesView: NSView, NSMenuItemValidation {
         }
         let link = link(at: point, page: page)
         let address = link.flatMap { $0.isExternal ? WebLinks.url($0.uri)?.absoluteString : nil }
-        if toolTip != address { toolTip = address }
-        if link != nil {
+        let field = tool == .select && model.isEditable ? forms?.hit(point, page: page, cachedOnly: true) : nil
+        let tip = address ?? field.flatMap { $0.tooltip.isEmpty ? nil : $0.tooltip }
+        if toolTip != tip { toolTip = tip }
+        if let field {
+            (FormController.isTyped(field) ? NSCursor.iBeam : NSCursor.pointingHand).set()
+        } else if link != nil {
             NSCursor.pointingHand.set()
         } else if let text = model.cachedText(page: page), text.lines.contains(where: { $0.bounds.insetBy(dx: -2, dy: -2).contains(point) }) {
             NSCursor.iBeam.set()

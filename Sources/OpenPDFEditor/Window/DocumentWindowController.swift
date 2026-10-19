@@ -444,6 +444,12 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     @objc func displaySinglePageContinuous(_ sender: Any?) { setMode(twoPages: false, continuous: true) }
     @objc func displayTwoPages(_ sender: Any?) { setMode(twoPages: true, continuous: false) }
     @objc func displayTwoPagesContinuous(_ sender: Any?) { setMode(twoPages: true, continuous: true) }
+    @objc func toggleFieldHighlights(_ sender: Any?) {
+        guard let viewer else { return }
+        viewer.pagesView.highlightsFields.toggle()
+        UserDefaults.standard.set(viewer.pagesView.highlightsFields, forKey: "HighlightFields")
+    }
+
     @objc func toggleCoverSeparately(_ sender: Any?) {
         guard let viewer else { return }
         var mode = viewer.displayMode
@@ -609,6 +615,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(displaySinglePageContinuous(_:)): setState(!mode.twoPages && mode.continuous)
         case #selector(displayTwoPages(_:)): setState(mode.twoPages && !mode.continuous)
         case #selector(displayTwoPagesContinuous(_:)): setState(mode.twoPages && mode.continuous)
+        case #selector(toggleFieldHighlights(_:)): setState(viewer.pagesView.highlightsFields)
         case #selector(toggleCoverSeparately(_:)):
             setState(mode.coverSeparately)
             return mode.twoPages

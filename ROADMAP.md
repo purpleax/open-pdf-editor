@@ -106,7 +106,10 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 ## Phase 4: Forms (0.4.0)
 
-- [ ] Fill in and save forms
+- [x] Fill in and save forms
+  - With the Select tool: click a text field to type in place (Return, Tab or clicking away fills it in, Escape doesn't; Tab and Shift-Tab move between the fields you type into), click checkboxes and radio buttons, choose from a menu for dropdowns and list boxes (a list box that takes several choices adds or removes the one chosen). View › Highlight Form Fields tints the fields that can be filled in. Each change is one undoable step and saves incrementally.
+  - Form JavaScript doesn't run: values are kept as typed, and calculated fields don't recalculate. Filling in a form removes its XFA data.
+  - Left for later (Low): MuPDF draws a dropdown's stored value rather than its label, and doesn't mark a list box's choices; filling one in sets NeedAppearances, so other apps draw them properly.
 - [ ] Create and edit text fields, checkboxes, radio buttons, dropdowns and signature fields
 - [ ] Flatten forms
 - [x] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)

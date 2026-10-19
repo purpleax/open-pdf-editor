@@ -10,6 +10,7 @@ extension PagesView {
     private var tolerance: CGFloat { 6 / zoom }
 
     override func mouseDown(with event: NSEvent) {
+        fieldEditor?.finish()
         window?.makeFirstResponder(self)
         let location = convert(event.locationInWindow, from: nil)
         guard let (page, point) = pageAndPoint(at: location), let annotations else {
@@ -42,6 +43,11 @@ extension PagesView {
                 return
             }
             selectedAnnotation = nil
+            if onPage, model.isEditable, let field = forms?.hit(point, page: page) {
+                selection = nil
+                fill(field)
+                return
+            }
             textMouseDown(with: event)
         case .highlight, .underline, .strikeOut:
             selectedAnnotation = nil
