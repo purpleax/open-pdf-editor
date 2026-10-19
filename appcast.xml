@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 0.3.0</title>
-      <pubDate>Sun, 18 Oct 2026 22:26:18 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.3.0</link>
-      <sparkle:version>4</sparkle:version>
-      <sparkle:shortVersionString>0.3.0</sparkle:shortVersionString>
+      <title>Open PDF Editor 0.4.0</title>
+      <pubDate>Mon, 19 Oct 2026 05:24:26 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.4.0</link>
+      <sparkle:version>5</sparkle:version>
+      <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.3.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Page management. Rotate, delete, insert blank pages, crop and extract pages from the new Pages menu or by right-clicking thumbnails. Select several thumbnails to change them together, and drag them to put pages in a new order. Insert the pages of another PDF, or drop PDFs, images and other documents between the thumbnails to add them. Split a document every few pages or at its bookmarks, make one PDF from a set of files (PDFs, images, EPUB, Word, Excel, PowerPoint and more) with File › Create PDF from Files, and save a smaller copy with File › Reduce File Size. Every change can be undone. ⌘L and ⌘R now turn pages; turning just the view is ⌥⌘L and ⌥⌘R.</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.3.0/Open-PDF-Editor-0.3.0.zip" sparkle:edSignature="bPQ9sEhx9M3U39UOWnW3oquCK5qT5dSfLIkiU4Fv7KM6ZKl8sQcCM7g2GaqBQ8J4AlaGXobYKNk08vrGTC89DQ==" length="31533106" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.4.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Forms. Click a form field to fill it in: type into text fields in place (Tab moves to the next one), tick checkboxes and radio buttons, and choose from dropdowns and lists. View › Highlight Form Fields tints the fields you can fill in. Forms › Edit Fields lets you add text fields, checkboxes, radio buttons, dropdowns, list boxes and signature fields, move and resize them, and set their name, tooltip, choices and options in the inspector. Forms › Flatten Form makes what you filled in part of the pages. Every change can be undone. Scripts in forms never run. The new Settings window (⌘,) has switches for opening web and email links and for converting documents other than PDFs and images; both are off until you turn them on, and pointing at a link shows where it goes. The app no longer checks for updates by itself: use Check for Updates… when you want to.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.4.0/Open-PDF-Editor-0.4.0.zip" sparkle:edSignature="g1oQA8uRlzawmDCgOohj1XvGCWtN3qc8FPzvtUONhvaXTX+UvK38GvPTecmWu+jURumvnySnraBN3EiqFTgBAw==" length="32009150" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
