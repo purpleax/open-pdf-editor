@@ -131,3 +131,25 @@ The state of the work and how it is run, for picking it up in a new session or o
   - `pdf_authenticate_password` returns 0 (wrong), 2 (user), 4 (owner) or 6 (both); `opdf_authenticate` collapses it to a bool.
   - `pdf_needs_password` re-runs with "" and resets access.
   - **The app enforces no permissions today.** Changing or removing security must require owner access.
+
+## Phase 6 exploration notes (signing and verification)
+- **Signer and verifier structs:**
+  - `pdf_pkcs7_signer` (`form.h:214-236`): keep, drop, get_signing_name (fz-allocated DN), max_digest_size (must return the same value twice; estimate it rather than trial-sign, to avoid two Keychain prompts), create_digest(fz_stream of the ByteRange spans → DER detached CMS; returns its length).
+  - SubFilter is `adbe.pkcs7.detached`.
+- **`pdf_sign_signature(ctx, widget, signer, flags, graphic fz_image, reason, location)`** only queues the signature. It is finished at save time, and only by a real (non-snapshot) incremental save to a file (`complete_signatures`, `pdf-write.c:1730`). The bridge's `opdf_save` uses `do_snapshot=1`, which never signs.
+  - Needed: a dedicated sign-and-save call. Copy the original bytes, then `pdf_save_document(path, do_incremental=1, do_snapshot=0)` with the journal detached, then reopen from the saved file (as in `prepare_for_editing`); undo resets.
+  - `opdf_save` must refuse while `pdf_has_unsaved_sigs` is true.
+  - Undo doesn't remove a queued signature (only `pdf_clear_signature`).
+  - Encrypted PDFs with signatures: untested and risky; test them.
+- **Verification:**
+  - `pdf_pkcs7_verifier`: check_certificate (DER only), check_digest (spans + DER), get_signatory. `/Contents` includes zero padding; trim it to the DER length.
+  - Verification reads the file on disk, so reopen after signing.
+  - `pdf_validate_signature` returns -1 (unsaved changes break the lock), 0 (valid), or n (invalidated n saves ago).
+  - Errors (`form.h:201-212`) have no expired or revoked codes; keep richer results in the bridge's verifier.
+- **Security.framework:**
+  - Signing: CMSEncoder (AddSigners with SecIdentity, detached content, SHA-256 via CMSEncoderSetSignerAlgorithm, signing time, chain mode, UpdateContent streaming).
+  - Verifying: CMSDecoder (detached content as CFData), CMSDecoderCopySignerStatus, then SecTrust (`SecTrustEvaluateWithError`; `SecTrustSetNetworkFetchAllowed` false unless the user turns it on).
+  - Identities: `SecItemCopyMatching` with kSecClassIdentity.
+  - PAdES (ETSI.CAdES.detached) would need a hand-built SignerInfo (signingCertificateV2); start with adbe.pkcs7.detached.
+  - Keep the callbacks in C (they run inside MuPDF's fz_try), link Security.framework in the MuPDFBridge target, and add `HAVE_LIBCRYPTO=no` to `scripts/build-mupdf.sh`.
+- **Test fixtures:** `signed.pdf` is fake. Verification needs a really signed fixture (a self-signed P12 made in a test, and signed with the new code).
