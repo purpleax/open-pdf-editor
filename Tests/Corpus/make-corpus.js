@@ -709,6 +709,17 @@ function makeReviewFiles() {
 	ops.push("ET")
 	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, ops.join("\n"))
 	doc.insertPage(-1, page)
+	// Page 2: characters over a grid of 1,000 thin rules each way.
+	ops = []
+	for (var r = 0; r < 1000; r++) {
+		ops.push("10 " + (10 + r * 0.77).toFixed(2) + " 590 0.02 re f")
+		ops.push((10 + r * 0.59).toFixed(2) + " 10 0.02 770 re f")
+	}
+	ops.push("BT /F1 4 Tf")
+	for (var c = 0; c < 20000; c++) ops.push("1 0 0 1 " + (10 + (c * 37) % 590) + " " + (10 + (c * 53) % 770) + " Tm (a) Tj")
+	ops.push("ET")
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, ops.join("\n"))
+	doc.insertPage(-1, page)
 	doc.save(out + "/exportbomb.pdf", "compress")
 
 	doc = newDocument()

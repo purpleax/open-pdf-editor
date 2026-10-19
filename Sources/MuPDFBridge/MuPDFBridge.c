@@ -7133,6 +7133,9 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
 // Word's layout (extract) takes time growing with the square of a page's
 // characters, and can't be cancelled inside a page: 20,000 take ~3 s.
 #define OPDF_MAX_DOCX_CHARS_PER_PAGE 20000
+// Its table finding grows with characters times lines and boxes drawn: past
+// this many a page, Word gets the text without the rest of the drawing.
+#define OPDF_MAX_DOCX_PATHS_PER_PAGE 200
 #define OPDF_MAX_EXPORT_IMAGE_PIXELS (40 * 1024 * 1024)
 
 struct opdf_export {
@@ -7149,6 +7152,8 @@ typedef struct {
     bool drop_page_images;
     fz_rect page;
     int chars;
+    int paths;
+    bool failed;       // the writer failed partway through the page
 } export_filter;
 
 #define TARGET(dev) (((export_filter *)(dev))->target)
@@ -7180,14 +7185,20 @@ static bool take_chars(export_filter *f, const fz_text *text) {
     return true;
 }
 
+static bool take_path(export_filter *f) {
+    if (f->docx && f->paths >= OPDF_MAX_DOCX_PATHS_PER_PAGE) return false;
+    f->paths++;
+    return true;
+}
+
 static void ef_fill_path(fz_context *ctx, fz_device *dev, const fz_path *path, int even_odd, fz_matrix ctm,
                          fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
-    if (sane_matrix(ctm)) fz_fill_path(ctx, TARGET(dev), path, even_odd, ctm, cs, color, alpha, params);
+    if (sane_matrix(ctm) && take_path((export_filter *)dev)) fz_fill_path(ctx, TARGET(dev), path, even_odd, ctm, cs, color, alpha, params);
 }
 
 static void ef_stroke_path(fz_context *ctx, fz_device *dev, const fz_path *path, const fz_stroke_state *stroke,
                            fz_matrix ctm, fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
-    if (sane_matrix(ctm)) fz_stroke_path(ctx, TARGET(dev), path, stroke, ctm, cs, color, alpha, params);
+    if (sane_matrix(ctm) && take_path((export_filter *)dev)) fz_stroke_path(ctx, TARGET(dev), path, stroke, ctm, cs, color, alpha, params);
 }
 
 static void ef_clip_path(fz_context *ctx, fz_device *dev, const fz_path *path, int even_odd, fz_matrix ctm, fz_rect scissor) {
@@ -7280,9 +7291,14 @@ static void ef_fill_image(fz_context *ctx, fz_device *dev, fz_image *image, fz_m
         fz_drop_buffer(ctx, png);
     fz_catch(ctx) {
         // An image that can't be decoded is left out; running out of memory
-        // or being cancelled stops the export.
+        // or being cancelled stops the export (MuPDF's list runner would
+        // swallow anything but a system error, so it's flagged too).
         fz_drop_image(ctx, copy);
-        if (fz_caught(ctx) == FZ_ERROR_SYSTEM || fz_caught(ctx) == FZ_ERROR_LIMIT) fz_rethrow(ctx);
+        int code = fz_caught(ctx);
+        if (code == FZ_ERROR_SYSTEM || code == FZ_ERROR_LIMIT) {
+            f->failed = true;
+            fz_rethrow(ctx);
+        }
         fz_ignore_error(ctx);
         return;
     }
@@ -7290,8 +7306,11 @@ static void ef_fill_image(fz_context *ctx, fz_device *dev, fz_image *image, fz_m
         fz_fill_image(ctx, f->target, copy, ctm, alpha, params);
     fz_always(ctx)
         fz_drop_image(ctx, copy);
-    fz_catch(ctx)
+    fz_catch(ctx) {
+        // The writer failed: the export stops after this page.
+        f->failed = true;
         fz_rethrow(ctx);
+    }
 }
 
 static void ef_fill_image_mask(fz_context *ctx, fz_device *dev, fz_image *image, fz_matrix ctm, fz_colorspace *cs,
@@ -7481,6 +7500,9 @@ bool opdf_export_document(opdf_export *e, const char *format, int first, int las
             dev = fz_begin_page(ctx, writer, bounds);
             filter = new_export_filter(ctx, dev, docx, bounds, (docx || html) && ti.invisible > 0);
             fz_run_display_list(ctx, list, &filter->super, fz_identity, fz_infinite_rect, NULL);
+            // An error inside the page (which the list runner swallows) fails
+            // the export rather than leaving the rest of the page out.
+            if (filter->failed) fz_throw(ctx, FZ_ERROR_GENERIC, "Page %d couldn’t be exported", i + 1);
             fz_close_device(ctx, &filter->super);
             fz_drop_device(ctx, &filter->super);
             filter = NULL;
