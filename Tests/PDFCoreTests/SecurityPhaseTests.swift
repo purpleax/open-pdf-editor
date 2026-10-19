@@ -234,10 +234,12 @@ import Testing
         FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
     }
 
+    private func identity() throws -> SecIdentity { try Self.testIdentity() }
+
     /// The corpus's self-signed test identity, kept in memory only.
-    private func identity() throws -> SecIdentity {
+    static func testIdentity(_ name: String = "signer.p12") throws -> SecIdentity {
         guard #available(macOS 15, *) else { throw EngineError(code: -1, message: "needs macOS 15") }
-        let data = try Data(contentsOf: Corpus.root.appendingPathComponent("signer.p12"))
+        let data = try Data(contentsOf: Corpus.root.appendingPathComponent(name))
         let options: [String: Any] = [kSecImportExportPassphrase as String: "test", kSecImportToMemoryOnly as String: true]
         var items: CFArray?
         let status = SecPKCS12Import(data as CFData, options as CFDictionary, &items)
@@ -295,6 +297,20 @@ import Testing
         try bytes.write(to: out)
         let tampered = try #require(try EngineDocument(url: out).signatures().first)
         #expect(tampered.integrity == .invalid)
+    }
+
+    @Test func certificatesForOtherUsesArentForSigning() throws {
+        let doc = try Corpus.open("forms.pdf")
+        try doc.sign(page: 0, field: try signatureField(doc).id, identity: Self.testIdentity("website.p12"))
+        let signature = try #require(try doc.signatures().first)
+        #expect(signature.integrity == .valid && signature.trust == .notForSigning)
+    }
+
+    @Test func emailCertificatesMaySign() throws {
+        let doc = try Corpus.open("forms.pdf")
+        try doc.sign(page: 0, field: try signatureField(doc).id, identity: Self.testIdentity("email.p12"))
+        let signature = try #require(try doc.signatures().first)
+        #expect(signature.integrity == .valid && signature.trust == .selfSigned && signature.signer == "Ada Lovelace")
     }
 
     @Test func encryptedDocumentsSign() throws {
@@ -357,5 +373,54 @@ import Testing
             try doc.createImageStamp(page: 0, rect: CGRect(x: 10, y: 10, width: 50, height: 50), image: Data("not an image".utf8),
                                      author: nil, actionName: "Signature")
         }
+    }
+}
+
+@Suite struct SignatureForgeryTests {
+    /// A signature over `content` by the test identity, detached or carrying
+    /// the content inside it.
+    private func cms(_ content: Data, detached: Bool, identity: SecIdentity) throws -> Data {
+        var encoder: CMSEncoder?
+        #expect(CMSEncoderCreate(&encoder) == errSecSuccess)
+        let e = try #require(encoder)
+        #expect(CMSEncoderAddSigners(e, identity) == errSecSuccess)
+        #expect(CMSEncoderSetHasDetachedContent(e, detached) == errSecSuccess)
+        _ = content.withUnsafeBytes { CMSEncoderUpdateContent(e, $0.baseAddress!, content.count) }
+        var out: CFData?
+        #expect(CMSEncoderCopyEncodedContent(e, &out) == errSecSuccess)
+        return try #require(out) as Data
+    }
+
+    /// The signed file with its signature swapped for another (padded with zeros).
+    private func swapped(_ signed: Data, for signature: Data) throws -> Data {
+        var bytes = signed
+        let start = try #require(bytes.range(of: Data("/Contents<".utf8))).upperBound
+        let end = try #require(bytes[start...].firstIndex(of: UInt8(ascii: ">")))
+        var hex = Array(signature.map { String(format: "%02x", $0) }.joined().utf8)
+        #expect(hex.count <= end - start)
+        hex += Array(repeating: UInt8(ascii: "0"), count: end - start - hex.count)
+        bytes.replaceSubrange(start..<end, with: hex)
+        return bytes
+    }
+
+    @Test func signaturesCarryingTheirOwnContentAreRejected() throws {
+        let identity = try SignatureTests.testIdentity()
+        let doc = try Corpus.open("forms.pdf")
+        try doc.sign(page: 0, field: try #require(try doc.fields(page: 0).first { $0.kind == .signature }).id, identity: identity)
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-forged.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let signed = try Data(contentsOf: out)
+
+        // Signed content inside the signature: checked against that, it would pass.
+        try swapped(signed, for: cms(Data("something else entirely".utf8), detached: false, identity: identity)).write(to: out)
+        let attached = try #require(try EngineDocument(url: out).signatures().first)
+        #expect(attached.integrity == .malformed)
+        // Even with nothing inside.
+        try swapped(signed, for: cms(Data(), detached: false, identity: identity)).write(to: out)
+        #expect(try EngineDocument(url: out).signatures().first?.integrity == .malformed)
+        // A detached signature over other bytes doesn't match.
+        try swapped(signed, for: cms(Data("other bytes".utf8), detached: true, identity: identity)).write(to: out)
+        #expect(try EngineDocument(url: out).signatures().first?.integrity == .invalid)
     }
 }

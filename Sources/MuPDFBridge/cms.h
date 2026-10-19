@@ -42,6 +42,7 @@ enum {
     CMS_TRUST_EXPIRED = 3,       // or not valid yet
     CMS_TRUST_REVOKED = 4,
     CMS_TRUST_UNKNOWN = 5,
+    CMS_TRUST_NOT_FOR_SIGNING = 6, // a certificate for something else (a website, code, ...)
 };
 
 typedef struct {

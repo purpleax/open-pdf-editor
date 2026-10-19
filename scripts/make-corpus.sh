@@ -65,3 +65,27 @@ if [ ! -f build/corpus/signer.p12 ]; then
         -passout pass:test -out build/corpus/signer.p12
     rm -rf "$tmp"
 fi
+
+# website.p12: a certificate for a website (serverAuth), not for signing.
+if [ ! -f build/corpus/website.p12 ]; then
+    tmp=$(mktemp -d)
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=bank-secure-docs.example" -addext "extendedKeyUsage=serverAuth" \
+        -addext "keyUsage=digitalSignature,keyEncipherment" \
+        -keyout "$tmp/key.pem" -out "$tmp/cert.pem" 2>/dev/null
+    /usr/bin/openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+        -passout pass:test -out build/corpus/website.p12
+    rm -rf "$tmp"
+fi
+
+# email.p12: a certificate for email protection, which may sign documents.
+if [ ! -f build/corpus/email.p12 ]; then
+    tmp=$(mktemp -d)
+    /usr/bin/openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+        -subj "/CN=Ada Lovelace/emailAddress=ada@example.com" -addext "extendedKeyUsage=emailProtection" \
+        -addext "keyUsage=digitalSignature,nonRepudiation" \
+        -keyout "$tmp/key.pem" -out "$tmp/cert.pem" 2>/dev/null
+    /usr/bin/openssl pkcs12 -export -inkey "$tmp/key.pem" -in "$tmp/cert.pem" \
+        -passout pass:test -out build/corpus/email.p12
+    rm -rf "$tmp"
+fi

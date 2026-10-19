@@ -17,6 +17,8 @@ public struct Signature: Equatable, Sendable {
 
     public enum Trust: Int, Sendable {
         case trusted = 0, selfSigned, untrusted, expired, revoked, unknown
+        /// A certificate for something else (a website, code, ...).
+        case notForSigning
     }
 
     public let page: Int

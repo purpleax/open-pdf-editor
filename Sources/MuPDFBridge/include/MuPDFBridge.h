@@ -607,6 +607,7 @@ enum {
     OPDF_SIG_TRUST_EXPIRED = 3,
     OPDF_SIG_TRUST_REVOKED = 4,
     OPDF_SIG_TRUST_UNKNOWN = 5,
+    OPDF_SIG_TRUST_NOT_FOR_SIGNING = 6,  // the certificate is for something else
 };
 
 typedef struct {

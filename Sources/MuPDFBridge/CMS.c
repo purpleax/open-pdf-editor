@@ -203,9 +203,129 @@ static size_t ber_length(const unsigned char *p, size_t len, int depth) {
     return i + body;
 }
 
+// The element at `p`: its first tag byte, the length of its header, of its
+// contents (before 00 00 if indefinite) and of all of it.
+static bool ber_element(const unsigned char *p, size_t len, unsigned char *tag, size_t *header, size_t *content, size_t *total) {
+    size_t all = ber_length(p, len, 0);
+    if (all == 0) return false;
+    size_t i = 1;
+    if ((p[0] & 0x1f) == 0x1f) {
+        while (i < len && (p[i] & 0x80)) i++;
+        i++;
+    }
+    unsigned char first = p[i++];
+    if (first & 0x80) i += first & 0x7f;
+    if (i > all) return false;
+    *tag = p[0];
+    *header = i;
+    *content = all - i - (first == 0x80 ? 2 : 0);
+    *total = all;
+    return true;
+}
+
+static const unsigned char OID_SIGNED_DATA[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02 };
+static const unsigned char OID_DATA[] = { 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01 };
+
+// Whether the signature is a detached SignedData over id-data: a signature
+// that carries its own content would be checked against that, not the PDF.
+static bool is_detached_signature(const unsigned char *der, size_t len) {
+    unsigned char tag;
+    size_t header, content, total;
+    // ContentInfo: contentType signedData, [0] content.
+    if (!ber_element(der, len, &tag, &header, &content, &total) || tag != 0x30) return false;
+    const unsigned char *p = der + header;
+    size_t n = content;
+    if (!ber_element(p, n, &tag, &header, &content, &total) || tag != 0x06 || content != sizeof OID_SIGNED_DATA
+        || memcmp(p + header, OID_SIGNED_DATA, sizeof OID_SIGNED_DATA)) return false;
+    p += total; n -= total;
+    if (!ber_element(p, n, &tag, &header, &content, &total) || tag != 0xa0) return false;
+    p += header; n = content;
+    // SignedData: version, digestAlgorithms, encapContentInfo, ...
+    if (!ber_element(p, n, &tag, &header, &content, &total) || tag != 0x30) return false;
+    p += header; n = content;
+    if (!ber_element(p, n, &tag, &header, &content, &total) || tag != 0x02) return false;
+    p += total; n -= total;
+    if (!ber_element(p, n, &tag, &header, &content, &total) || tag != 0x31) return false;
+    p += total; n -= total;
+    if (!ber_element(p, n, &tag, &header, &content, &total) || tag != 0x30) return false;
+    // encapContentInfo: id-data, and no eContent.
+    const unsigned char *e = p + header;
+    size_t en = content;
+    if (!ber_element(e, en, &tag, &header, &content, &total) || tag != 0x06 || content != sizeof OID_DATA
+        || memcmp(e + header, OID_DATA, sizeof OID_DATA)) return false;
+    return total == en;
+}
+
 size_t cms_der_length(const unsigned char *der, size_t len) {
     if (len < 2 || der[0] != 0x30) return 0;
     return ber_length(der, len, 0);
+}
+
+// Extended key usages that allow signing documents: email protection,
+// document signing (IETF, Adobe, Microsoft) and any purpose.
+static const char *const SIGNING_USAGES[] = {
+    "1.3.6.1.5.5.7.3.4", "1.3.6.1.5.5.7.3.36", "1.2.840.113583.1.1.5", "1.3.6.1.4.1.311.10.3.12", "2.5.29.37.0",
+};
+
+// An OID's content bytes in dotted form.
+static void oid_string(const unsigned char *p, size_t len, char *out, size_t size) {
+    out[0] = 0;
+    if (len == 0 || size < 16) return;
+    unsigned long value = 0;
+    size_t used = (size_t)snprintf(out, size, "%u.%u", p[0] / 40 > 2 ? 2 : p[0] / 40, p[0] / 40 > 2 ? p[0] - 80 : p[0] % 40);
+    for (size_t i = 1; i < len && used < size - 12; i++) {
+        value = (value << 7) | (p[i] & 0x7f);
+        if (!(p[i] & 0x80)) {
+            used += (size_t)snprintf(out + used, size - used, ".%lu", value);
+            value = 0;
+        }
+    }
+}
+
+static bool usage_allows_signing(CFTypeRef item) {
+    char oid[128] = "";
+    if (CFGetTypeID(item) == CFDataGetTypeID()) {
+        CFDataRef data = item;
+        oid_string(CFDataGetBytePtr(data), (size_t)CFDataGetLength(data), oid, sizeof oid);
+    } else if (CFGetTypeID(item) == CFStringGetTypeID()) {
+        copy_string(item, oid, sizeof oid);
+    }
+    for (size_t i = 0; i < sizeof SIGNING_USAGES / sizeof *SIGNING_USAGES; i++)
+        if (!strcmp(oid, SIGNING_USAGES[i])) return true;
+    return false;
+}
+
+// Whether the certificate may sign documents: no extended key usage or one
+// that allows it, and (if it limits key usage) digital signature or
+// non-repudiation.
+static bool usable_for_signing(SecCertificateRef cert) {
+    const void *keys[] = { kSecOIDExtendedKeyUsage, kSecOIDKeyUsage };
+    CFArrayRef wanted = CFArrayCreate(NULL, keys, 2, &kCFTypeArrayCallBacks);
+    CFDictionaryRef values = wanted ? SecCertificateCopyValues(cert, wanted, NULL) : NULL;
+    if (wanted) CFRelease(wanted);
+    if (!values) return true;   // neither extension: no limits
+    bool usable = true;
+    CFDictionaryRef eku = CFDictionaryGetValue(values, kSecOIDExtendedKeyUsage);
+    if (eku && CFGetTypeID(eku) == CFDictionaryGetTypeID()) {
+        CFTypeRef list = CFDictionaryGetValue(eku, kSecPropertyKeyValue);
+        usable = false;
+        if (list && CFGetTypeID(list) == CFArrayGetTypeID())
+            for (CFIndex i = 0; i < CFArrayGetCount(list) && !usable; i++)
+                usable = usage_allows_signing(CFArrayGetValueAtIndex(list, i));
+    }
+    CFDictionaryRef ku = CFDictionaryGetValue(values, kSecOIDKeyUsage);
+    if (usable && ku && CFGetTypeID(ku) == CFDictionaryGetTypeID()) {
+        CFTypeRef bits = CFDictionaryGetValue(ku, kSecPropertyKeyValue);
+        int value = 0;
+        if (bits && CFGetTypeID(bits) == CFNumberGetTypeID() && CFNumberGetValue(bits, kCFNumberIntType, &value))
+            // Security.framework reports a missing extension as 0 (a real one
+            // has at least one bit).
+            usable = value == 0 || (value & (kSecKeyUsageDigitalSignature | kSecKeyUsageNonRepudiation)) != 0;
+        else
+            usable = false;
+    }
+    CFRelease(values);
+    return usable;
 }
 
 static bool self_issued(SecCertificateRef cert) {
@@ -260,6 +380,7 @@ void cms_verify(const unsigned char *signature, size_t signature_len,
     SecPolicyRef policy = NULL;
     SecTrustRef trust = NULL;
     SecCertificateRef cert = NULL;
+    if (!is_detached_signature(signature, signature_len)) goto done;
     if (CMSDecoderCreate(&decoder) != errSecSuccess) goto done;
     if (CMSDecoderUpdateMessage(decoder, signature, signature_len) != errSecSuccess) goto done;
     content = CFDataCreateWithBytesNoCopy(NULL, data, (CFIndex)data_len, kCFAllocatorNull);
@@ -282,7 +403,8 @@ void cms_verify(const unsigned char *signature, size_t signature_len,
     CFAbsoluteTime when = 0;
     if (CMSDecoderCopySignerSigningTime(decoder, 0, &when) == errSecSuccess)
         r->signing_time = when + kCFAbsoluteTimeIntervalSince1970;
-    if (trust) r->trust = evaluate_trust(trust, network);
+    if (cert && !usable_for_signing(cert)) r->trust = CMS_TRUST_NOT_FOR_SIGNING;
+    else if (trust) r->trust = evaluate_trust(trust, network);
 done:
     if (cert) CFRelease(cert);
     if (trust) CFRelease(trust);

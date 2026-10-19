@@ -107,6 +107,7 @@ final class SignaturesViewController: NSViewController {
         case .expired: lines.append("The certificate has expired, or isn’t valid yet.")
         case .revoked: lines.append("The certificate has been revoked.")
         case .unknown: lines.append("The certificate couldn’t be checked.")
+        case .notForSigning: lines.append("The certificate isn’t one for signing documents (it’s for a website, or another use), so who signed isn’t confirmed.")
         }
         if [.untrusted, .unknown].contains(s.trust), !Settings.checksCertificatesOnline {
             lines.append("Checked offline. Turning on Check certificates online in Settings may fetch the certificates it needs.")

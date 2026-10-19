@@ -5642,6 +5642,10 @@ static void check_signature(fz_context *ctx, pdf_document *pdf, pdf_obj *field, 
         pdf_obj *v = pdf_dict_get(ctx, field, PDF_NAME(V));
         s->reason = dup_string(pdf_dict_get_text_string(ctx, v, PDF_NAME(Reason)));
         s->location = dup_string(pdf_dict_get_text_string(ctx, v, PDF_NAME(Location)));
+        // Only detached signatures over the byte ranges are checked (not
+        // adbe.pkcs7.sha1, whose signed content is inside the signature).
+        pdf_obj *subfilter = pdf_dict_get(ctx, v, PDF_NAME(SubFilter));
+        if (!pdf_name_eq(ctx, subfilter, PDF_NAME(adbe_pkcs7_detached)) && !(pdf_is_name(ctx, subfilter) && !strcmp(pdf_to_name(ctx, subfilter), "ETSI.CAdES.detached"))) break;
         size_t contents_len = pdf_signature_contents(ctx, pdf, field, &contents);
         int64_t end = 0;
         if (!contents || !signature_hole_matches(ctx, pdf, field, (unsigned char *)contents, contents_len, &end)) break;
