@@ -25,6 +25,11 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Annotation replies and status | Replies are Text annotations with /IRT, and review status a hidden reply with /State and /StateModel Review, as Acrobat writes them. They are not drawn on the page; they appear in the Comments list. | 2026-10-19 |
 | Markup tools | A markup bar under the toolbar (View › Show Markup Toolbar, ⇧⌘A) with the tools, colour and line width, as in Preview; the inspector edits the selected annotation | 2026-10-19 |
 | Risky features | Any feature that adds a security risk (for example form JavaScript) gets a switch in a Settings window (⌘,) and is off until turned on. The phase that adds the first such feature adds the Settings window. Each one is named in its roadmap item, with what it exposes. Features already in the app that get a switch: opening web and email links, and converting non-PDF, non-image documents in Create PDF from Files. Saving attachments has none (it already warns and quarantines). | 2026-10-19 |
+| Form JavaScript | Off, with no switch: values are set as typed, and calculated fields don't recalculate. Revisit only if asked. | 2026-10-19 |
+| Filling and editing forms | Filling is always on: with the Select tool, click a field to fill it in. Editing fields is a mode (Forms › Edit Fields, ⌥⌘F) with its own bar of field tools; fields are selected, moved, resized and deleted like annotations and set up in the inspector. | 2026-10-19 |
+| XFA | Not supported. Filling in a hybrid AcroForm/XFA form removes /XFA, so other apps show the values typed here. | 2026-10-19 |
+| Flatten Form | `pdf_bake_document` for widgets only, as one undoable step, saved incrementally like every change. | 2026-10-19 |
+| Signature fields | Made empty in 0.4.0; signing them is Phase 6. | 2026-10-19 |
 
 ## Phase 0: Foundations
 
@@ -115,6 +120,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] Flatten forms
   - Forms › Flatten Form… draws every field into its page and removes the form, as one undoable step; on a signed document the alert says the signatures will no longer be valid. Saves stay incremental, so earlier values remain in the file's history (as with crops and deleted pages).
   - Left for later (Low): an empty signature field is flattened as MuPDF's "SIGN" tag.
+- [x] Settings window for risky features (see above)
+- [ ] Security review before release
 - [x] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)
   - Open web and email links (pages and bookmarks): a PDF can send you to any address its author chose
   - Create PDF from HTML, SVG, EPUB, XPS, Word, Excel and PowerPoint files: MuPDF's parsers for those formats, and HTML and SVG reading images from the source file's folder
@@ -150,6 +157,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **0.4.0**: Forms. Click a form field to fill it in: type into text fields in place (Tab moves to the next one), tick checkboxes and radio buttons, and choose from dropdowns and lists. View › Highlight Form Fields tints the fields you can fill in. Forms › Edit Fields lets you add text fields, checkboxes, radio buttons, dropdowns, list boxes and signature fields, move and resize them, and set their name, tooltip, choices and options in the inspector. Forms › Flatten Form makes what you filled in part of the pages. Every change can be undone. Scripts in forms never run. The new Settings window (⌘,) has switches for opening web and email links and for converting documents other than PDFs and images; both are off until you turn them on, and pointing at a link shows where it goes. The app no longer checks for updates by itself: use Check for Updates… when you want to.
 
 - **0.3.0**: Page management. Rotate, delete, insert blank pages, crop and extract pages from the new Pages menu or by right-clicking thumbnails. Select several thumbnails to change them together, and drag them to put pages in a new order. Insert the pages of another PDF, or drop PDFs, images and other documents between the thumbnails to add them. Split a document every few pages or at its bookmarks, make one PDF from a set of files (PDFs, images, EPUB, Word, Excel, PowerPoint and more) with File › Create PDF from Files, and save a smaller copy with File › Reduce File Size. Every change can be undone. ⌘L and ⌘R now turn pages; turning just the view is ⌥⌘L and ⌥⌘R.
 

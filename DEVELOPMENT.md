@@ -7,7 +7,7 @@ Everything needed to pick up the work on another Mac: where things stand, how th
 ## Where things stand
 
 - **Released:** 0.3.0 (October 19, 2026): viewer, annotations, page management. Phases 0–3 in ROADMAP.md are done.
-- **Next:** Phase 4, forms (0.4.0). It has not been started; wait for the go-ahead (see below).
+- **In progress:** Phase 4, forms (0.4.0): built, waiting for its security review and release.
 - **Known Lows** (accepted, not yet fixed) are listed under each phase's "Security review" item in ROADMAP.md. They are the backlog to pick from when a phase touches the same code.
 - **Version:** `Resources/Info.plist` (`CFBundleShortVersionString`, `CFBundleVersion`), set only by `make release`.
 
@@ -155,8 +155,9 @@ These come from real bugs and review findings. Break one and something crashes o
 4. Commit, then `make release VERSION=x.y.z`. It checks the tree is clean and current, sets the version, builds, signs, notarises and staples the DMG and zip, signs the zip for Sparkle, writes `appcast.xml`, commits, tags, pushes, and creates the GitHub release. Installed copies pick it up from `appcast.xml` on `main`.
 5. Quit the app, `make install`, and reopen it.
 
-## Phase 4 starting points
+## Forms (0.4.0)
 
-- The custom display list in the bridge draws page contents, then annotations except replies, then widgets: form fields already render.
-- MuJS is compiled in, but form JavaScript should stay off unless agreed (it's a security surface).
-- `signed.pdf` in the corpus has a signature field. Remember that forms add `/AcroForm` to the catalog, which grafting and the page operations must keep.
+- **Engine:** `Sources/PDFCore/Forms.swift` over the bridge's "Form fields" and "Creating and changing form fields" sections. Fields are widgets, identified by object number like annotations; `opdf_fields_load` has its own limits (`OPDF_MAX_FIELDS_PER_PAGE`, options, bytes per page). `pdf_enable_js` is never called, so no form script runs.
+- **Where values live:** a field's value is on its field dictionary, which for a radio button is the group (the widget's parent). `field_holder` finds it. MuPDF's `pdf_field_value` rewrites stream values in place, so the bridge reads values itself (`field_value`).
+- **App:** `FormController` (finding, filling, editing), `FieldEditor` (typing in place), `PagesView+Forms.swift` (filling with the Select tool), `PagesView+FieldEditing.swift` (Forms › Edit Fields), `FieldInspectorViewController`.
+- **Not yet:** Insert, Extract, Split and Create PDF don't carry form fields across (grafting drops `/Annots`).

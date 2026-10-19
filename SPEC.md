@@ -35,7 +35,7 @@ Where this spec and ROADMAP.md disagree, the Decisions table in ROADMAP.md wins.
 
 ## Forms
 
-- Fill in and save interactive PDF forms (AcroForms). XFA forms are not supported.
+- Fill in and save interactive PDF forms (AcroForms). XFA forms are not supported. Form JavaScript doesn't run.
 - Create and edit form fields: text fields, checkboxes, radio buttons, dropdowns and signature fields.
 - Form JavaScript is off by default.
 
