@@ -64,13 +64,14 @@ final class FormController {
     }
 
     /// The field typed into after (or before) this one, in page order and
-    /// then the order of each page's fields; wraps around.
+    /// then the order of each page's fields; wraps around. Looks at most 20
+    /// pages on (fields load on the main thread).
     func neighbour(of ref: FieldRef, forward: Bool) -> FormField? {
         let count = model.pageCount
         guard count > 0 else { return nil }
         var page = ref.page
         var current: Int? = ref.id
-        for _ in 0...count {
+        for _ in 0...min(count, 20) {
             let fields = model.fields(page: page).filter { Self.isFillable($0) && Self.isTyped($0) }
             let ordered = forward ? fields : fields.reversed()
             if let id = current {

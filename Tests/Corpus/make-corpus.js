@@ -301,6 +301,49 @@ function makeFormBomb() {
 	var b = doc.addObject({ T: doc.newString("back"), Kids: [a], Parent: a })
 	a.put("Parent", b)
 	doc.save(out + "/formloop.pdf", "compress")
+	makeFormTrees()
+}
+
+// --- Field trees that MuPDF's own walks don't survive (from the 0.4.0
+// security review): a radio group that is its own kid, a text field that is
+// its own kid, fields reached many times over, and options that are big or
+// many but cost little in the file.
+function makeFormTrees() {
+	var doc = formDocument()
+	var Btn = doc.newName("Btn"), Tx = doc.newName("Tx")
+	var group = doc.addObject({ FT: Btn, T: doc.newString("loopgroup"), Ff: 1 << 15, V: doc.newName("Off"), Kids: [] })
+	doc.getTrailer().get("Root").get("AcroForm").get("Fields").push(group)
+	var kid = addField(doc, { Parent: group, AS: doc.newName("Off"), AP: stateAppearances(doc, 14, "On") }, [72, 700, 86, 714])
+	group.get("Kids").push(kid)
+	group.get("Kids").push(group)
+	var text = addField(doc, { FT: Tx, T: doc.newString("looptext") }, [72, 650, 300, 670])
+	text.put("Kids", [text])
+	doc.save(out + "/formcycle.pdf", "compress")
+
+	doc = formDocument()
+	var fields = doc.getTrailer().get("Root").get("AcroForm").get("Fields")
+	var next = doc.addObject({ FT: Tx, T: doc.newString("leaf") })
+	for (var i = 0; i < 60; i++) next = doc.addObject({ Kids: [next, next] })
+	fields.push(next)
+	addField(doc, { FT: Tx, T: doc.newString("plain") }, [72, 700, 300, 720])
+	doc.save(out + "/formdag.pdf", "compress")
+
+	doc = formDocument()
+	var big = ""
+	while (big.length < 100000) big += "0123456789"
+	var shared = doc.addObject(doc.newString(big))
+	var options = []
+	for (var j = 0; j < 1000; j++) options.push(shared)
+	addField(doc, { FT: doc.newName("Ch"), T: doc.newString("big"), Ff: 1 << 17, Opt: options }, [72, 700, 300, 720])
+	var empty = []
+	for (var k = 0; k < 1000; k++) empty.push(doc.newString(""))
+	var many = doc.addObject(empty)
+	for (var m = 0; m < 2000; m++)
+		addField(doc, { FT: doc.newName("Ch"), T: doc.newString("c" + m), Opt: many }, [10 + (m % 50) * 11, 10 + Math.floor(m / 50) * 11, 20 + (m % 50) * 11, 20 + Math.floor(m / 50) * 11])
+	// Without NeedAppearances: MuPDF would redraw 2,000 lists as the page
+	// loads (slow, but not the listing this file tests).
+	doc.getTrailer().get("Root").get("AcroForm").put("NeedAppearances", false)
+	doc.save(out + "/formheavy.pdf", "compress")
 }
 
 // --- Hostile files, for the security tests ----------------------------------

@@ -121,7 +121,8 @@ From the first release-time security review (all findings above Low fixed, plus 
   - Forms › Flatten Form… draws every field into its page and removes the form, as one undoable step; on a signed document the alert says the signatures will no longer be valid. Saves stay incremental, so earlier values remain in the file's history (as with crops and deleted pages).
   - Left for later (Low): an empty signature field is flattened as MuPDF's "SIGN" tag.
 - [x] Settings window for risky features (see above)
-- [ ] Security review before release
+- [x] Security review before release: three Medium fixed. A field that is its own descendant crashed the app when filled in or deleted (MuPDF's walks recurse without noticing), and fields reached many times over hung making or renaming a field; field trees are now checked, bounded, before MuPDF walks them, and such fields are listed read-only. A small file could make the field listing copy large amounts of memory, kept for every page; strings now cost a fixed amount against a 2 MB budget per page, and fields are kept for 40 pages. The Settings gates and the update change were checked and hold.
+  - Left for later (Low): the inspector's choices editor rewrites a dropdown's or list's options from its text, so options cut short by the limits, or containing "|", a new line or surrounding spaces, are changed if it is edited. A page with thousands of fields that need appearances is slow to load the first time (MuPDF makes them all; as in 0.3.0).
 - [x] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)
   - Open web and email links (pages and bookmarks): a PDF can send you to any address its author chose
   - Create PDF from HTML, SVG, EPUB, XPS, Word, Excel and PowerPoint files: MuPDF's parsers for those formats, and HTML and SVG reading images from the source file's folder

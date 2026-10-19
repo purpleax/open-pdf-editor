@@ -249,6 +249,49 @@ import Testing
         #expect(try doc.fields(page: 0).count == 2000)
     }
 
+    /// A field that is its own descendant: MuPDF's walks would recurse
+    /// until the stack ran out, so the field is listed read-only and refused.
+    @Test func cyclicFieldsAreRefused() throws {
+        let doc = try Corpus.open("formcycle.pdf")
+        let fields = try doc.fields(page: 0)
+        let radio = try #require(fields.first { $0.kind == .radio })
+        let text = try #require(fields.first { $0.name.hasPrefix("looptext") })
+        #expect(radio.isReadOnly && text.isReadOnly)
+        #expect(throws: EngineError.self) { try doc.toggle(page: 0, field: radio.id) }
+        #expect(throws: EngineError.self) { try doc.setText("x", page: 0, field: text.id) }
+        #expect(throws: EngineError.self) { try doc.deleteField(page: 0, id: radio.id) }
+        #expect(throws: EngineError.self) { try doc.createField(.text, page: 0, rect: CGRect(x: 72, y: 500, width: 100, height: 20)) }
+    }
+
+    /// Fields reached many times over: looking a name up would take
+    /// 2^60 steps, so making or renaming fields is refused at once.
+    @Test func sharedFieldsAreRefused() throws {
+        let doc = try Corpus.open("formdag.pdf")
+        let start = Date()
+        #expect(throws: EngineError.self) { try doc.createField(.text, page: 0, rect: CGRect(x: 72, y: 500, width: 100, height: 20)) }
+        let plain = try #require(try doc.fields(page: 0).first { $0.name == "plain" })
+        var change = FieldChange()
+        change.name = "renamed"
+        #expect(throws: EngineError.self) { try doc.updateField(page: 0, id: plain.id, change) }
+        #expect(Date().timeIntervalSince(start) < 2)
+    }
+
+    /// Big or many options that cost little in the file: listing stays small and quick.
+    @Test func heavyOptionsAreCapped() throws {
+        let doc = try Corpus.open("formheavy.pdf")
+        // Loading the page the first time makes the fields' appearances
+        // (MuPDF, slow for 2,000 lists); the listing is what's timed.
+        _ = try doc.displayList(page: 0)
+        let start = Date()
+        let fields = try doc.fields(page: 0)
+        #expect(Date().timeIntervalSince(start) < 2)
+        let bytes = fields.reduce(0) { $0 + $1.options.reduce(0) { $0 + $1.value.utf8.count + $1.label.utf8.count } }
+        #expect(bytes <= 2 << 20)
+        let options = fields.reduce(0) { $0 + $1.options.count }
+        #expect(options < 100_000)
+        #expect(try #require(fields.first { $0.name == "big" }).isReadOnly)
+    }
+
     @Test func oversizedFieldsAreReadOnly() throws {
         let doc = try Corpus.open("formloop.pdf")
         let fields = try doc.fields(page: 0)

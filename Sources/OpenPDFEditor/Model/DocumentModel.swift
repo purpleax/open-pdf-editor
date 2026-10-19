@@ -33,11 +33,14 @@ final class DocumentModel: @unchecked Sendable {
     private var linkCache: [Int: [PageLink]] = [:]
     private var annotationCache: [Int: [Annotation]] = [:]
     private var fieldCache: [Int: [FormField]] = [:]
+    private var fieldOrder: [Int] = []
     private var _revision = 0
     private var pageRevisions: [Int: Int] = [:]
 
     private static let maxLists = 40
     private static let maxTexts = 400
+    /// Pages whose form fields are kept (a crafted page can hold a lot).
+    private static let maxFieldPages = 40
 
     /// Posted on the main thread when pages must be redrawn from scratch
     /// (a layer was turned on or off).
@@ -151,7 +154,13 @@ final class DocumentModel: @unchecked Sendable {
         if let cached = lock.withLock({ fieldCache[page] }) { return cached }
         let before = revision(page: page)
         let fields = (try? engine.fields(page: page)) ?? []
-        lock.withLock { if unchanged(page, since: before) { fieldCache[page] = fields } }
+        lock.withLock {
+            if fieldCache[page] == nil, unchanged(page, since: before) {
+                fieldCache[page] = fields
+                fieldOrder.append(page)
+                if fieldOrder.count > Self.maxFieldPages { fieldCache[fieldOrder.removeFirst()] = nil }
+            }
+        }
         return fields
     }
 
@@ -212,6 +221,7 @@ final class DocumentModel: @unchecked Sendable {
             linkCache.removeAll()
             annotationCache.removeAll()
             fieldCache.removeAll()
+            fieldOrder.removeAll()
             pageRevisions.removeAll()
             _revision += 1
         }
@@ -234,6 +244,7 @@ final class DocumentModel: @unchecked Sendable {
             }
             listOrder.removeAll { all.contains($0) }
             textOrder.removeAll { all.contains($0) }
+            fieldOrder.removeAll { all.contains($0) }
         }
         NotificationCenter.default.post(name: Self.pagesDidChange, object: self,
                                         userInfo: pages.map { ["pages": $0] })
@@ -251,6 +262,7 @@ final class DocumentModel: @unchecked Sendable {
             linkCache.removeAll()
             annotationCache.removeAll()
             fieldCache.removeAll()
+            fieldOrder.removeAll()
             _revision += 1
         }
         DispatchQueue.main.async {
