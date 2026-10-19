@@ -1619,6 +1619,8 @@ struct content_proc {
     int target_text, target_image;
     void (*emit_text)(fz_context *ctx, content_proc *p, void *arg);
     void (*emit_image)(fz_context *ctx, content_proc *p, const char *name, fz_image *image, void *arg);
+    // Called at the end of the content, with the graphics state balanced.
+    void (*emit_end)(fz_context *ctx, content_proc *p, void *arg);
     void *arg;
 };
 
@@ -2103,6 +2105,11 @@ static void process_page_content(fz_context *ctx, pdf_document *doc, pdf_page *p
     // by stopping at the operation limit; this refuses the plainly huge.
     if (total > OPDF_MAX_CONTENT_BYTES) fz_throw(ctx, FZ_ERROR_LIMIT, "This page's content is too large to edit");
     pdf_process_contents(ctx, &p->super, doc, pdf_page_resources(ctx, page), contents, NULL, NULL);
+    if (p->emit_end && CHAIN(p)) {
+        // Whatever the content left open is closed first.
+        for (int i = p->top + p->overflow; i > 0; i--) CHAIN(p)->op_Q(ctx, CHAIN(p));
+        p->emit_end(ctx, p, p->arg);
+    }
     pdf_close_processor(ctx, &p->super);
 }
 
@@ -2191,6 +2198,197 @@ static void rewrite_page_content(fz_context *ctx, pdf_document *pdf, pdf_page *p
     }
     fz_catch(ctx)
         fz_rethrow(ctx);
+}
+
+// The page's own resources dictionary (a copy of what it inherits, if it
+// has none), and a subdictionary of it.
+static pdf_obj *own_resources(fz_context *ctx, pdf_document *pdf, pdf_page *page, pdf_obj *type) {
+    pdf_obj *res = pdf_dict_get(ctx, page->obj, PDF_NAME(Resources));
+    if (!pdf_is_dict(ctx, res)) {
+        pdf_obj *inherited = pdf_page_resources(ctx, page);
+        res = pdf_is_dict(ctx, inherited) ? pdf_copy_dict(ctx, inherited) : pdf_new_dict(ctx, pdf, 2);
+        pdf_dict_put_drop(ctx, page->obj, PDF_NAME(Resources), res);
+    }
+    pdf_obj *sub = pdf_dict_get(ctx, res, type);
+    if (!pdf_is_dict(ctx, sub)) sub = pdf_dict_put_dict(ctx, res, type, 2);
+    return sub;
+}
+
+// A name not yet used in a resources subdictionary.
+static void new_resource_name(fz_context *ctx, pdf_obj *dict, const char *prefix, char name[32]) {
+    for (int i = 0; i < 100000; i++) {
+        fz_snprintf(name, 32, "%s%d", prefix, i);
+        if (!pdf_dict_gets(ctx, dict, name)) return;
+    }
+    fz_throw(ctx, FZ_ERROR_LIMIT, "The page has too many resources");
+}
+
+// An image from a JPEG or PNG file, checked against the limits.
+static fz_image *import_image(fz_context *ctx, const unsigned char *data, size_t len) {
+    if (!data || len < 8 || len > OPDF_MAX_IMAGE_BYTES) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That image file is empty or too large");
+    int kind = fz_recognize_image_format(ctx, (unsigned char *)data);
+    if (kind != FZ_IMAGE_JPEG && kind != FZ_IMAGE_PNG) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Images are added as JPEG or PNG");
+    fz_buffer *buf = fz_new_buffer_from_copied_data(ctx, data, len);
+    fz_image *image = NULL;
+    fz_try(ctx)
+        image = fz_new_image_from_buffer(ctx, buf);
+    fz_always(ctx)
+        fz_drop_buffer(ctx, buf);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+    if (image->w <= 0 || image->h <= 0 || (int64_t)image->w * image->h > OPDF_MAX_IMAGE_PIXELS) {
+        fz_drop_image(ctx, image);
+        fz_throw(ctx, FZ_ERROR_LIMIT, "That image has too many pixels");
+    }
+    return image;
+}
+
+// Adds the image to the page's resources under a new name.
+static void add_image_resource(fz_context *ctx, pdf_document *pdf, pdf_page *page, fz_image *image, char name[32]) {
+    pdf_obj *xobjects = own_resources(ctx, pdf, page, PDF_NAME(XObject));
+    new_resource_name(ctx, xobjects, "OPDFIm", name);
+    pdf_dict_puts_drop(ctx, xobjects, name, pdf_add_image(ctx, pdf, image));
+}
+
+static fz_rect checked_rect(fz_context *ctx, opdf_rect rect) {
+    fz_rect r = fz_make_rect(rect.x0, rect.y0, rect.x1, rect.y1);
+    if (!(r.x1 - r.x0 >= 1 && r.y1 - r.y0 >= 1 && r.x1 - r.x0 <= 14400 && r.y1 - r.y0 <= 14400)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That is the wrong size");
+    return r;
+}
+
+typedef struct {
+    char name[32];       // the image to draw
+    fz_rect rect;        // where, in page space
+    float aspect;        // replacing: the new image's width / height
+    int mode;            // 0 add, 1 set rect, 2 delete, 3 replace
+    int op;              // the image drawing to change
+    bool found;
+} image_edit;
+
+static void emit_cm(fz_context *ctx, content_proc *p, fz_matrix m) {
+    CHAIN(p)->op_cm(ctx, CHAIN(p), m.a, m.b, m.c, m.d, m.e, m.f);
+}
+
+// Draws the new image at the end of the page, upright as the page is shown.
+static void emit_added_image(fz_context *ctx, content_proc *p, void *arg) {
+    image_edit *e = arg;
+    fz_rect r = e->rect;
+    fz_matrix unit_to_page = fz_make_matrix(r.x1 - r.x0, 0, 0, -(r.y1 - r.y0), r.x0, r.y1);
+    CHAIN(p)->op_q(ctx, CHAIN(p));
+    emit_cm(ctx, p, fz_concat(unit_to_page, fz_invert_matrix(p->page_ctm)));
+    CHAIN(p)->op_Do_image(ctx, CHAIN(p), e->name, NULL);
+    CHAIN(p)->op_Q(ctx, CHAIN(p));
+}
+
+// Moves, resizes, deletes or replaces the target image drawing.
+static void emit_edited_image(fz_context *ctx, content_proc *p, const char *name, fz_image *image, void *arg) {
+    image_edit *e = arg;
+    e->found = true;
+    if (e->mode == 2) return;
+    fz_matrix to_page = fz_concat(G(p)->ctm, p->page_ctm);
+    fz_rect old = fz_transform_rect(fz_unit_rect, to_page);
+    fz_matrix extra = fz_identity;
+    if (e->mode == 1) {
+        float w = old.x1 - old.x0, h = old.y1 - old.y0;
+        if (w < 0.01f || h < 0.01f) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This image is too small to resize");
+        float sx = (e->rect.x1 - e->rect.x0) / w, sy = (e->rect.y1 - e->rect.y0) / h;
+        fz_matrix t = fz_make_matrix(sx, 0, 0, sy, e->rect.x0 - old.x0 * sx, e->rect.y0 - old.y0 * sy);
+        // extra × ctm × page = ctm × page × t
+        extra = fz_concat(fz_concat(fz_concat(to_page, t), fz_invert_matrix(p->page_ctm)), fz_invert_matrix(G(p)->ctm));
+    } else if (e->mode == 3) {
+        float w = sqrtf(to_page.a * to_page.a + to_page.b * to_page.b);
+        float h = sqrtf(to_page.c * to_page.c + to_page.d * to_page.d);
+        float sx = 1, sy = 1;
+        if (w > 0 && h > 0) {
+            if (e->aspect > w / h) sy = (w / e->aspect) / h;
+            else sx = (h * e->aspect) / w;
+        }
+        extra = fz_make_matrix(sx, 0, 0, sy, (1 - sx) / 2, (1 - sy) / 2);
+    }
+    CHAIN(p)->op_q(ctx, CHAIN(p));
+    emit_cm(ctx, p, extra);
+    CHAIN(p)->op_Do_image(ctx, CHAIN(p), e->mode == 3 ? e->name : name, image);
+    CHAIN(p)->op_Q(ctx, CHAIN(p));
+}
+
+static void configure_image_edit(content_proc *p, void *arg) {
+    image_edit *e = arg;
+    if (e->mode == 0) {
+        p->emit_end = emit_added_image;
+    } else {
+        p->emit_image = emit_edited_image;
+        p->target_image = e->op;
+    }
+    p->arg = e;
+}
+
+static void edit_image(fz_context *ctx, pdf_document *pdf, pdf_page *page, image_edit *e, int op) {
+    e->op = op;
+    rewrite_page_content(ctx, pdf, page, configure_image_edit, e);
+    if (e->mode != 0 && !e->found) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such image");
+}
+
+bool opdf_image_add(opdf_doc *d, int page_number, opdf_rect rect, const unsigned char *data, size_t len, opdf_error *err) {
+    clear_error(err);
+    fz_image *image = NULL;
+    fz_var(image);
+    WITH_PAGE_OPERATION(d, page_number, "Add Image", err, {
+        fz_try(ctx) {
+            image_edit e = { .mode = 0 };
+            e.rect = checked_rect(ctx, rect);
+            image = import_image(ctx, data, len);
+            add_image_resource(ctx, pdf, pp, image, e.name);
+            edit_image(ctx, pdf, pp, &e, -1);
+        }
+        fz_always(ctx) {
+            fz_drop_image(ctx, image);
+            image = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_image_set_rect(opdf_doc *d, int page_number, int op, opdf_rect rect, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Move Image", err, {
+        image_edit e = { .mode = 1 };
+        e.rect = checked_rect(ctx, rect);
+        edit_image(ctx, pdf, pp, &e, op);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_image_delete(opdf_doc *d, int page_number, int op, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Delete Image", err, {
+        image_edit e = { .mode = 2 };
+        edit_image(ctx, pdf, pp, &e, op);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_image_replace(opdf_doc *d, int page_number, int op, const unsigned char *data, size_t len, opdf_error *err) {
+    clear_error(err);
+    fz_image *image = NULL;
+    fz_var(image);
+    WITH_PAGE_OPERATION(d, page_number, "Replace Image", err, {
+        fz_try(ctx) {
+            image_edit e = { .mode = 3 };
+            image = import_image(ctx, data, len);
+            e.aspect = (float)image->w / (float)image->h;
+            add_image_resource(ctx, pdf, pp, image, e.name);
+            edit_image(ctx, pdf, pp, &e, op);
+        }
+        fz_always(ctx) {
+            fz_drop_image(ctx, image);
+            image = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    return !(err && err->code);
 }
 
 bool opdf_page_content_rewrite(opdf_doc *d, int page_number, opdf_error *err) {

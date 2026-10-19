@@ -178,3 +178,91 @@ import Testing
         #expect(deep.text == "deep" && abs(deep.rect.minX - 72) < 1)
     }
 }
+
+@Suite struct ImageEditingTests {
+    private func temporaryURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
+    }
+
+    private func red(_ pixels: Pixels, _ x: CGFloat, _ y: CGFloat) -> Bool {
+        let c = pixels.rgb(Int(x), Int(y))
+        return c[0] > 200 && c[1] < 80 && c[2] < 80
+    }
+
+    @Test func addMoveResizeReplaceDelete() throws {
+        let png = temporaryURL("red.png")
+        let blue = temporaryURL("blue.png")
+        defer { [png, blue].forEach { try? FileManager.default.removeItem(at: $0) } }
+        try PageTests.writePNG(to: png, width: 40, height: 20)   // blue-ish fill (0.2, 0.4, 0.8)
+        let doc = try Corpus.open("content.pdf")
+        let bounds = try doc.pageBounds()[0]
+        func pixels() throws -> Pixels { try Pixels(doc.renderPage(0, bounds: bounds, scale: 1)) }
+        func isBlue(_ p: Pixels, _ x: CGFloat, _ y: CGFloat) -> Bool {
+            let c = p.rgb(Int(x), Int(y))
+            return c[2] > 150 && c[0] < 100
+        }
+        let image = try ImageImport.prepare(contentsOf: png)
+        #expect(image.size == CGSize(width: 40, height: 20))
+        let rect = CGRect(x: 300, y: 600, width: 120, height: 60)
+        try doc.addImage(image, page: 0, rect: rect)
+        var content = try doc.content(page: 0)
+        #expect(content.images.count == 3)
+        let added = try #require(content.images.last)
+        #expect(abs(added.rect.minX - 300) < 0.5 && abs(added.rect.minY - 600) < 0.5 && abs(added.rect.width - 120) < 0.5)
+        #expect(isBlue(try pixels(), 360, 630))
+
+        try doc.setImageRect(page: 0, op: added.op, rect: CGRect(x: 400, y: 650, width: 60, height: 30))
+        content = try doc.content(page: 0)
+        let moved = try #require(content.images.last)
+        #expect(abs(moved.rect.minX - 400) < 0.5 && abs(moved.rect.height - 30) < 0.5)
+        var p = try pixels()
+        #expect(isBlue(p, 430, 665) && !isBlue(p, 320, 620))
+
+        // The first drawing of the shared image moves; the second stays.
+        let second = content.images[1].rect
+        try doc.setImageRect(page: 0, op: 0, rect: CGRect(x: 72, y: 100, width: 50, height: 50))
+        content = try doc.content(page: 0)
+        #expect(abs(content.images[0].rect.minY - 100) < 0.5 && content.images[1].rect == second)
+
+        // Replacing fits the new image inside the old box (2:1 in a 1:1 box).
+        try doc.replaceImage(page: 0, op: 0, with: image)
+        let replaced = try doc.content(page: 0).images[0].rect
+        #expect(abs(replaced.width - 50) < 0.5 && abs(replaced.height - 25) < 0.5 && abs(replaced.minY - 112.5) < 0.5)
+
+        try doc.deleteImage(page: 0, op: 0)
+        #expect(try doc.content(page: 0).images.count == 2)
+        let out = temporaryURL("images.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        #expect(try EngineDocument(url: out).content(page: 0).images.count == 2)
+        for _ in 0..<5 { try doc.undo() }
+        #expect(try doc.content(page: 0).images.count == 2)
+        p = try pixels()
+        #expect(!isBlue(p, 360, 630))
+        // Text is untouched by image edits.
+        #expect(try doc.content(page: 0).runs.map(\.text).contains("Hello world"))
+    }
+
+    @Test func rotatedPagesStayUpright() throws {
+        let png = temporaryURL("wide.png")
+        defer { try? FileManager.default.removeItem(at: png) }
+        try PageTests.writePNG(to: png, width: 40, height: 20)
+        let doc = try Corpus.open("content.pdf")
+        let rect = CGRect(x: 100, y: 100, width: 200, height: 100)
+        try doc.addImage(ImageImport.prepare(contentsOf: png), page: 1, rect: rect)
+        let added = try #require(try doc.content(page: 1).images.last)
+        #expect(abs(added.rect.minX - 100) < 0.5 && abs(added.rect.width - 200) < 0.5 && abs(added.rect.height - 100) < 0.5)
+    }
+
+    @Test func refusesWhatItShould() throws {
+        let doc = try Corpus.open("content.pdf")
+        let text = temporaryURL("notes.txt")
+        defer { try? FileManager.default.removeItem(at: text) }
+        try "not an image".write(to: text, atomically: true, encoding: .utf8)
+        #expect(throws: EngineError.self) { try ImageImport.prepare(contentsOf: text) }
+        let fake = ImageImport.Prepared(data: Data("GIF89a not really".utf8), size: CGSize(width: 1, height: 1))
+        #expect(throws: EngineError.self) { try doc.addImage(fake, page: 0, rect: CGRect(x: 0, y: 0, width: 10, height: 10)) }
+        #expect(throws: EngineError.self) { try doc.deleteImage(page: 0, op: 9) }
+        #expect(throws: EngineError.self) { try doc.setImageRect(page: 0, op: 0, rect: .zero) }
+    }
+}

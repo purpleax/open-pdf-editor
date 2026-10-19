@@ -360,6 +360,20 @@ typedef struct {
 
 bool opdf_page_content_load(opdf_doc *doc, int page, opdf_page_content *out, opdf_error *err);
 void opdf_page_content_free(opdf_page_content *content);
+// Images. `data` is a JPEG or PNG file (other formats are converted
+// before they get here), at most OPDF_MAX_IMAGE_BYTES and
+// OPDF_MAX_IMAGE_PIXELS. Rectangles are in page space; an image is drawn
+// upright as the page is shown. Each is one undoable step.
+#define OPDF_MAX_IMAGE_BYTES (100 << 20)
+#define OPDF_MAX_IMAGE_PIXELS 40000000
+// Draws a new image over the page's content, filling `rect`.
+bool opdf_image_add(opdf_doc *doc, int page, opdf_rect rect, const unsigned char *data, size_t len, opdf_error *err);
+// Moves or resizes image drawing `op` so that it fills `rect`.
+bool opdf_image_set_rect(opdf_doc *doc, int page, int op, opdf_rect rect, opdf_error *err);
+bool opdf_image_delete(opdf_doc *doc, int page, int op, opdf_error *err);
+// Draws another image instead, fitted inside the same box.
+bool opdf_image_replace(opdf_doc *doc, int page, int op, const unsigned char *data, size_t len, opdf_error *err);
+
 // Writes the page's content again through the editing machinery with no
 // change (for tests: what it draws must not change). One undoable step.
 bool opdf_page_content_rewrite(opdf_doc *doc, int page, opdf_error *err);
