@@ -32,7 +32,7 @@ extension PagesView {
             gesture = .crop(page: page, start: point, current: point)
             return
         }
-        if !model.isEditable && tool != .select { tool = .select }
+        if !model.allows(.annotate) && tool != .select { tool = .select }
         switch tool {
         case .select:
             if let ref = selectedAnnotation, ref.page == page, let a = annotations.annotation(ref),
@@ -52,7 +52,7 @@ extension PagesView {
                 return
             }
             selectedAnnotation = nil
-            if onPage, model.isEditable, let field = forms?.hit(point, page: page) {
+            if onPage, model.allows(.fillForms), let field = forms?.hit(point, page: page) {
                 selection = nil
                 fill(field)
                 return

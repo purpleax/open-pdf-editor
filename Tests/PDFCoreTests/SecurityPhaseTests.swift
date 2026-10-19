@@ -75,3 +75,54 @@ import Testing
         #expect(!reopened.needsPassword)
     }
 }
+
+@Suite struct PermissionTests {
+    private func temporaryURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
+    }
+
+    @Test func userAndOwnerAccess() throws {
+        let doc = try Corpus.open("text.pdf")
+        #expect(doc.isOwner && doc.allowed == .everything && !doc.isEncrypted)
+        try doc.rebase(encryption: .aes256(user: "user", owner: "owner", permissions: [.print, .annotate]))
+        #expect(doc.isOwner && doc.isEncrypted)
+        let out = temporaryURL("restricted.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+
+        let asUser = try EngineDocument(url: out)
+        #expect(asUser.authenticate(password: "user"))
+        #expect(!asUser.isOwner)
+        #expect(asUser.allowed.contains(.print) && asUser.allowed.contains(.annotate))
+        #expect(!asUser.allowed.contains(.copy) && !asUser.allowed.contains(.edit) && !asUser.allowed.contains(.assemble))
+
+        let asOwner = try EngineDocument(url: out)
+        #expect(asOwner.authenticate(password: "owner"))
+        #expect(asOwner.isOwner && asOwner.allowed == .everything)
+        // The user can become the owner by giving its password.
+        #expect(asUser.authenticate(password: "owner") && asUser.isOwner)
+    }
+
+    @Test func whatTheSheetReadsBack() throws {
+        let doc = try Corpus.open("text.pdf")
+        #expect(!doc.needsPasswordToOpen && doc.ownerAllowedToUser == .all)
+        // Restricted, but opens without a password: no password is asked for,
+        // and the user's access is the granted bits.
+        try doc.rebase(encryption: .aes256(user: "", owner: "владелец", permissions: [.print, .fillForms]))
+        #expect(!doc.needsPasswordToOpen && doc.ownerAllowedToUser == [.print, .fillForms])
+        let out = temporaryURL("opens-freely.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let reopened = try EngineDocument(url: out)
+        #expect(!reopened.needsPassword && !reopened.needsPasswordToOpen)
+        #expect(!reopened.isOwner && reopened.allowed.contains(.fillForms) && !reopened.allowed.contains(.annotate))
+        #expect(reopened.ownerAllowedToUser == [.print, .fillForms])
+        #expect(reopened.authenticate(password: "владелец") && reopened.isOwner)
+
+        try doc.rebase(encryption: .aes256(user: "密码", owner: "владелец", permissions: .all), openPassword: "владелец")
+        #expect(doc.needsPasswordToOpen)
+        try doc.save(to: out)
+        let locked = try EngineDocument(url: out)
+        #expect(locked.needsPassword && locked.needsPasswordToOpen && locked.authenticate(password: "密码"))
+    }
+}

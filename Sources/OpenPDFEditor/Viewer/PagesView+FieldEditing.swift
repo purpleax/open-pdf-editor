@@ -30,7 +30,7 @@ extension PagesView {
 
     func fieldMouseDown(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
-        guard let forms, model.isEditable, let (page, point) = pageAndPoint(at: location),
+        guard let forms, model.allows(.edit), let (page, point) = pageAndPoint(at: location),
               layout.frames[page]?.contains(location) == true else {
             selectedField = nil
             return

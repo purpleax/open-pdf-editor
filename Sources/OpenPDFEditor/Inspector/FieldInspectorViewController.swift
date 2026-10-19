@@ -148,7 +148,7 @@ final class FieldInspectorViewController: NSViewController, NSTextFieldDelegate,
         shownChoices = field.options.map { $0.label.isEmpty || $0.label == $0.value ? $0.value : "\($0.value) | \($0.label)" }
             .joined(separator: "\n")
         if choicesView.string != shownChoices, view.window?.firstResponder !== choicesView { choicesView.string = shownChoices }
-        let editable = viewer.model.isEditable
+        let editable = viewer.model.allows(.edit)
         for control in [nameField, tooltipField, maxLengthField] as [NSControl] { control.isEnabled = editable }
         for box in [required, readOnly, multiline, password, comb, typedChoice, multiSelect, deleteButton] { box.isEnabled = editable }
         choicesView.isEditable = editable

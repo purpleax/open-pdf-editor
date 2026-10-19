@@ -60,3 +60,35 @@ extension EngineDocument {
         guard ok else { throw EngineError(error) }
     }
 }
+
+/// What may be done with an open document.
+public struct Allowed: OptionSet, Sendable {
+    public let rawValue: Int32
+    public init(rawValue: Int32) { self.rawValue = rawValue }
+    public static let print = Allowed(rawValue: 1 << 0)
+    public static let copy = Allowed(rawValue: 1 << 1)
+    public static let edit = Allowed(rawValue: 1 << 2)
+    public static let annotate = Allowed(rawValue: 1 << 3)
+    public static let fillForms = Allowed(rawValue: 1 << 4)
+    public static let assemble = Allowed(rawValue: 1 << 5)
+    public static let everything: Allowed = [.print, .copy, .edit, .annotate, .fillForms, .assemble]
+}
+
+extension EngineDocument {
+    /// Unlocked with the owner password, or not encrypted.
+    public var isOwner: Bool { opdf_is_owner(handle) }
+
+    /// Everything for the owner; otherwise what the document's permissions grant.
+    public var allowed: Allowed { Allowed(rawValue: opdf_allowed(handle)) }
+
+    /// Whether opening the document takes a password.
+    public var needsPasswordToOpen: Bool { opdf_needs_open_password(handle) }
+
+    /// What the document grants to people without the owner password.
+    public var ownerAllowedToUser: Permissions {
+        Permissions(rawValue: opdf_permission_bits(handle)).intersection(.all)
+    }
+
+    /// Whether the document is encrypted.
+    public var isEncrypted: Bool { metadata("encryption").map { $0 != "None" } ?? false }
+}

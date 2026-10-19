@@ -12,23 +12,11 @@ The state of the work and how it is run, for picking it up in a new session or o
 - **Committed locally, not released:**
   - `b8cd77c` "Save changes automatically is a setting, off by default". It ships with 0.6.0.
   - Draft release notes are under ROADMAP.md › Releases as "**Next release** (draft)". Fold them into the 0.6.0 entry.
-- **In progress: Phase 6, security and signing (0.6.0).** The user said to start it. Three read-only explorations were launched; no plan is written yet and no code is changed:
-  1. MuPDF redaction (`pdf_redact_page`, `pdf_redact_options`), encryption and permissions (`pdf_write_options` `do_encrypt`, `PDF_PERM_*`), and full-rewrite saving against the bridge's incremental save.
-  2. MuPDF signer and verifier callbacks (`pdf_pkcs7_signer`, `pdf_pkcs7_verifier`, `pdf_sign_signature`, digest completion at save time) against Security.framework CMS (CMSEncoder, CMSDecoder, SecTrust). Includes whether `opdf_save` (original bytes + appended `pdf_save_document`) breaks signature byte ranges.
-  3. App hooks: annotation tools for a Redact tool, stamp images for handwritten signatures, password UI, signature fields, inspector and menus, Settings.
+- **In progress: Phase 6, security and signing (0.6.0).** The plan is approved (below). Done and committed locally:
+  1. Rebase (`opdf_rebase`, `EngineDocument.rebase`).
+  2. Passwords, encryption and permissions: File › Security…, the restriction notice, `DocumentModel.allowed` / `edit(needs:)`, `opdf_allowed`, `opdf_permission_bits` (read from /Encrypt: MuPDF reports every permission to the owner), `opdf_needs_open_password` (recorded at open, since trying "" later would clobber the crypt key). Self-test run `security`.
 
-  If those results are lost, rerun them, then write the plan.
-- **Phase 6 roadmap items:**
-  - redaction that removes the content underneath;
-  - passwords, encryption and permissions;
-  - digital signatures with Keychain identities, and verification;
-  - handwritten and image signatures.
-
-  Also in 0.6.0: the autosave setting.
-- **Open questions to put to the user while planning Phase 6** (suggested defaults):
-  - Where saved signature images live: the Keychain (private) or Application Support.
-  - Whether signature verification may use the network for revocation (OCSP/CRL). Suggested: off, or a Settings switch that is off by default, per the Risky features rule.
-  - Whether redaction always writes a cleaned full copy (it must not save incrementally) and warns that signatures will be invalidated.
+  Next: step 3, redaction.
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.
@@ -95,6 +83,7 @@ The state of the work and how it is run, for picking it up in a new session or o
 - Scripted self-test edits run outside real events. NSUndoManager groups only close at the end of a run-loop cycle, so don't call `endUndoGrouping` by hand; it crashes.
 - `make test` regenerates the corpus. Run long commands in the background (notarisation takes minutes).
 - Sending keystrokes to the app (System Events) isn't permitted; use self-test hooks instead.
+- The self-test prints "data race detected: @MainActor function at EditorDocument.swift:12": NSDocumentController makes documents off the main thread when reading concurrently, and the SDK marks `NSDocument.init()` main-actor, so it can't be declared nonisolated. Present since before Phase 6; harmless (a warning).
 
 ## Known Lows (accepted, in ROADMAP.md under each phase)
 - Incremental saves keep replaced and deleted content in earlier revisions. Phase 6 redaction should rewrite files.

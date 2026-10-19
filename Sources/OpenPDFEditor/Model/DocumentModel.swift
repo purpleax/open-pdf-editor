@@ -59,10 +59,23 @@ final class DocumentModel: @unchecked Sendable {
     /// False for documents that can be viewed but not changed (damaged
     /// beyond repair, or not PDF).
     let isEditable: Bool
+    /// What the document's permissions allow (everything for its owner).
+    private(set) var allowed: Allowed = .everything
+
+    /// Reads the permissions again (after unlocking as the owner, or a
+    /// security change).
+    func refreshPermissions() {
+        allowed = engine.allowed
+    }
+
+    func allows(_ needed: Allowed) -> Bool {
+        isEditable && allowed.isSuperset(of: needed)
+    }
 
     init(engine: EngineDocument, isEditable: Bool) throws {
         self.engine = engine
         self.isEditable = isEditable
+        allowed = engine.allowed
         _pageBounds = try engine.pageBounds()
     }
 
@@ -191,8 +204,9 @@ final class DocumentModel: @unchecked Sendable {
     /// the pages are redrawn and the change is recorded for undo.
     @MainActor
     @discardableResult
-    func edit<T>(_ actionName: String, pages: Set<Int>, _ body: (EngineDocument) throws -> T) throws -> T {
+    func edit<T>(_ actionName: String, pages: Set<Int>, needs: Allowed = .edit, _ body: (EngineDocument) throws -> T) throws -> T {
         guard isEditable else { throw EngineError(code: -1, message: "This document can’t be changed.") }
+        guard allowed.isSuperset(of: needs) else { throw EngineError(code: -1, message: "The document’s owner doesn’t allow this.") }
         let result = try body(engine)
         pagesChanged(pages)
         editRecorder?.didEdit(actionName: actionName, change: .pages(pages))
@@ -205,6 +219,7 @@ final class DocumentModel: @unchecked Sendable {
     @discardableResult
     func editStructure<T>(_ actionName: String, _ body: (EngineDocument) throws -> T) throws -> T {
         guard isEditable else { throw EngineError(code: -1, message: "This document can’t be changed.") }
+        guard allowed.contains(.assemble) else { throw EngineError(code: -1, message: "The document’s owner doesn’t allow its pages to be changed.") }
         let result = try body(engine)
         structureChanged()
         editRecorder?.didEdit(actionName: actionName, change: .structure)

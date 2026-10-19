@@ -167,7 +167,7 @@ extension DocumentWindowController {
     /// nil for actions that aren't page commands.
     func validatePageAction(_ action: Selector?, setState: (Bool) -> Void) -> Bool? {
         guard let viewer else { return nil }
-        let editable = viewer.model.isEditable
+        let editable = viewer.model.allows(.assemble)
         switch action {
         case #selector(rotatePagesLeft(_:)), #selector(rotatePagesRight(_:)), #selector(insertBlankPage(_:)),
              #selector(insertPagesFromFile(_:)):

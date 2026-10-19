@@ -56,8 +56,24 @@ void opdf_close(opdf_doc *doc);
 
 bool opdf_is_pdf(opdf_doc *doc);
 bool opdf_needs_password(opdf_doc *doc);
+// Whether opening the document takes a password (known once opdf_needs_password
+// has been asked, and kept up to date by opdf_rebase).
+bool opdf_needs_open_password(opdf_doc *doc);
 // True when the password unlocks the document.
 bool opdf_authenticate(opdf_doc *doc, const char *password);
+// Whether the last password given was the owner password (or the document
+// isn't encrypted): full access, including changing its security.
+bool opdf_is_owner(opdf_doc *doc);
+// What may be done with it (OPDF_ALLOW_*): everything for the owner,
+// otherwise what the document's permissions grant.
+enum {
+    OPDF_ALLOW_PRINT = 1 << 0, OPDF_ALLOW_COPY = 1 << 1, OPDF_ALLOW_EDIT = 1 << 2,
+    OPDF_ALLOW_ANNOTATE = 1 << 3, OPDF_ALLOW_FORMS = 1 << 4, OPDF_ALLOW_ASSEMBLE = 1 << 5,
+};
+int opdf_allowed(opdf_doc *doc);
+// The permission bits (P) the document grants without the owner password
+// (all of them when it isn't encrypted).
+int opdf_permission_bits(opdf_doc *doc);
 
 // Number of pages, or -1 on failure.
 int opdf_page_count(opdf_doc *doc, opdf_error *err);

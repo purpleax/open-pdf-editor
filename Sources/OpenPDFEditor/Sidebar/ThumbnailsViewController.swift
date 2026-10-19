@@ -31,7 +31,7 @@ final class ThumbnailsViewController: NSViewController, NSTableViewDataSource, N
         table.allowsMultipleSelection = true
         table.setAccessibilityLabel("Page thumbnails")
         table.onDelete = { [weak self] in self?.deleteSelected() }
-        if viewer.model.isEditable {
+        if viewer.model.allows(.assemble) {
             table.registerForDraggedTypes([Self.pagesType, .fileURL])
             table.setDraggingSourceOperationMask(.move, forLocal: true)
             table.draggingDestinationFeedbackStyle = .gap
@@ -131,7 +131,7 @@ final class ThumbnailsViewController: NSViewController, NSTableViewDataSource, N
     // MARK: Dragging
 
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-        guard viewer.model.isEditable else { return nil }
+        guard viewer.model.allows(.assemble) else { return nil }
         let item = NSPasteboardItem()
         item.setString("\(dragToken):\(row)", forType: Self.pagesType)
         return item
@@ -139,7 +139,7 @@ final class ThumbnailsViewController: NSViewController, NSTableViewDataSource, N
 
     func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int,
                    proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
-        guard viewer.model.isEditable else { return [] }
+        guard viewer.model.allows(.assemble) else { return [] }
         if dropOperation == .on { tableView.setDropRow(row, dropOperation: .above) }
         if !draggedRows(info).isEmpty { return .move }
         return droppedFiles(info).isEmpty ? [] : .copy
@@ -204,7 +204,7 @@ final class ThumbnailsViewController: NSViewController, NSTableViewDataSource, N
     }
 
     private func deleteSelected() {
-        guard viewer.model.isEditable else {
+        guard viewer.model.allows(.assemble) else {
             NSSound.beep()
             return
         }

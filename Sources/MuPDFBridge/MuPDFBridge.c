@@ -45,6 +45,8 @@ struct opdf_doc {
     // Set by opdf_prepare_for_editing.
     bool edits_prepared;
     bool repaired_before_edits;
+    int access;            // pdf_authenticate_password's result for the last password given (4: owner)
+    bool needs_open_password; // opening it takes a password (the empty one doesn't work)
 
     pthread_mutex_t pool_lock;
     pthread_cond_t pool_cond;
@@ -328,23 +330,89 @@ bool opdf_is_pdf(opdf_doc *d) {
 bool opdf_needs_password(opdf_doc *d) {
     bool needs = false;
     lock_doc(d);
-    fz_try(d->ctx)
-        needs = fz_needs_password(d->ctx, d->doc) != 0;
+    fz_try(d->ctx) {
+        pdf_document *pdf = pdf_specifics(d->ctx, d->doc);
+        if (pdf && pdf->crypt) {
+            // The empty password's access is recorded, as a typed one's is.
+            int access = pdf_authenticate_password(d->ctx, pdf, "");
+            needs = access == 0;
+            if (needs) d->needs_open_password = true;
+            else d->access = access;
+        } else {
+            needs = fz_needs_password(d->ctx, d->doc) != 0;
+        }
+    }
     fz_catch(d->ctx)
         needs = false;
     unlock_doc(d);
     return needs;
 }
 
+bool opdf_needs_open_password(opdf_doc *d) {
+    return d->needs_open_password;
+}
+
 bool opdf_authenticate(opdf_doc *d, const char *password) {
     bool ok = false;
     lock_doc(d);
-    fz_try(d->ctx)
-        ok = fz_authenticate_password(d->ctx, d->doc, password) != 0;
+    fz_try(d->ctx) {
+        int access = fz_authenticate_password(d->ctx, d->doc, password);
+        ok = access != 0;
+        if (ok) d->access = access;
+    }
     fz_catch(d->ctx)
         ok = false;
     unlock_doc(d);
     return ok;
+}
+
+bool opdf_is_owner(opdf_doc *d) {
+    bool owner = true;
+    lock_doc(d);
+    fz_try(d->ctx) {
+        pdf_document *pdf = pdf_specifics(d->ctx, d->doc);
+        // Unencrypted documents are anyone's; encrypted ones need the owner password.
+        if (pdf && pdf->crypt) owner = (d->access & 4) != 0;
+    }
+    fz_catch(d->ctx)
+        owner = false;
+    unlock_doc(d);
+    return owner;
+}
+
+int opdf_permission_bits(opdf_doc *d) {
+    int bits = -1;
+    lock_doc(d);
+    fz_try(d->ctx) {
+        pdf_document *pdf = pdf_specifics(d->ctx, d->doc);
+        // Read from /Encrypt: MuPDF reports every permission to the owner.
+        if (pdf && pdf->crypt)
+            bits = pdf_dict_get_int(d->ctx, pdf_dict_get(d->ctx, pdf_trailer(d->ctx, pdf), PDF_NAME(Encrypt)), PDF_NAME(P));
+    }
+    fz_catch(d->ctx)
+        bits = -1;
+    unlock_doc(d);
+    return bits;
+}
+
+int opdf_allowed(opdf_doc *d) {
+    int allowed = 0;
+    lock_doc(d);
+    fz_try(d->ctx) {
+        const struct { fz_permission perm; int bit; } map[] = {
+            { FZ_PERMISSION_PRINT, OPDF_ALLOW_PRINT }, { FZ_PERMISSION_COPY, OPDF_ALLOW_COPY },
+            { FZ_PERMISSION_EDIT, OPDF_ALLOW_EDIT }, { FZ_PERMISSION_ANNOTATE, OPDF_ALLOW_ANNOTATE },
+            { FZ_PERMISSION_FORM, OPDF_ALLOW_FORMS }, { FZ_PERMISSION_ASSEMBLE, OPDF_ALLOW_ASSEMBLE },
+        };
+        pdf_document *pdf = pdf_specifics(d->ctx, d->doc);
+        bool owner = !pdf || !pdf->crypt || (d->access & 4);
+        for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
+            if (owner || fz_has_permission(d->ctx, d->doc, map[i].perm)) allowed |= map[i].bit;
+    }
+    fz_catch(d->ctx)
+        allowed = 0;
+    unlock_doc(d);
+    return allowed;
 }
 
 int opdf_page_count(opdf_doc *d, opdf_error *err) {
@@ -3903,6 +3971,10 @@ bool opdf_rebase(opdf_doc *d, const opdf_rebase_options *o, opdf_error *err) {
         pdf_check_document(ctx, fresh);
         if (pdf_was_repaired(ctx, fresh)) fz_throw(ctx, FZ_ERROR_FORMAT, "The rewritten document is damaged");
         pdf_enable_journal(ctx, fresh);
+        // Unlocked with the owner password (or not encrypted): full access.
+        d->access = fresh->crypt ? pdf_authenticate_password(ctx, fresh, unlock ? unlock : "") : 4;
+        if (o->encryption == OPDF_ENCRYPT_NONE) d->needs_open_password = false;
+        if (o->encryption == OPDF_ENCRYPT_AES256) d->needs_open_password = o->user_password && *o->user_password;
         fz_drop_document(ctx, d->doc);
         d->doc = (fz_document *)fresh;
         fresh = NULL;

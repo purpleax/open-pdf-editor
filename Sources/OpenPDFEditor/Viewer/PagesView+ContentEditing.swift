@@ -10,7 +10,7 @@ extension PagesView {
 
     func contentMouseDown(with event: NSEvent) {
         let location = convert(event.locationInWindow, from: nil)
-        guard let content, model.isEditable, let (page, point) = pageAndPoint(at: location),
+        guard let content, model.allows(.edit), let (page, point) = pageAndPoint(at: location),
               layout.frames[page]?.contains(location) == true else {
             selectedContent = nil
             return

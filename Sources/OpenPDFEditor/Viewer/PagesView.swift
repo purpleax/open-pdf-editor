@@ -415,7 +415,7 @@ final class PagesView: NSView, NSMenuItemValidation {
     }
 
     @objc func copy(_ sender: Any?) {
-        guard let text = selectedText else { NSSound.beep(); return }
+        guard model.allowed.contains(.copy), let text = selectedText else { NSSound.beep(); return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
     }
@@ -431,7 +431,7 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(copy(_:)): return selection.map { !$0.isEmpty } ?? false
+        case #selector(copy(_:)): return model.allowed.contains(.copy) && (selection.map { !$0.isEmpty } ?? false)
         case #selector(selectAll(_:)): return model.pageCount > 0
         case #selector(delete(_:)): return selectedAnnotation != nil || selectedField != nil || selectedContent != nil
         default: return true
@@ -558,7 +558,7 @@ final class PagesView: NSView, NSMenuItemValidation {
         }
         let link = link(at: point, page: page)
         let address = link.flatMap { $0.isExternal ? WebLinks.url($0.uri)?.absoluteString : nil }
-        let field = tool == .select && model.isEditable ? forms?.hit(point, page: page, cachedOnly: true) : nil
+        let field = tool == .select && model.allows(.fillForms) ? forms?.hit(point, page: page, cachedOnly: true) : nil
         let tip = address ?? field.flatMap { $0.tooltip.isEmpty ? nil : $0.tooltip }
         if toolTip != tip { toolTip = tip }
         if let field {

@@ -134,14 +134,14 @@ final class FormController {
     }
 
     func setText(_ ref: FieldRef, _ text: String) throws {
-        try model.edit("Fill In Field", pages: allPages) { try $0.setText(text, page: ref.page, field: ref.id) }
+        try model.edit("Fill In Field", pages: allPages, needs: .fillForms) { try $0.setText(text, page: ref.page, field: ref.id) }
     }
 
     func setChoices(_ ref: FieldRef, _ values: [String]) throws {
-        try model.edit("Fill In Field", pages: allPages) { try $0.setChoices(values, page: ref.page, field: ref.id) }
+        try model.edit("Fill In Field", pages: allPages, needs: .fillForms) { try $0.setChoices(values, page: ref.page, field: ref.id) }
     }
 
     func toggle(_ ref: FieldRef) throws {
-        try model.edit("Fill In Field", pages: allPages) { try $0.toggle(page: ref.page, field: ref.id) }
+        try model.edit("Fill In Field", pages: allPages, needs: .fillForms) { try $0.toggle(page: ref.page, field: ref.id) }
     }
 }

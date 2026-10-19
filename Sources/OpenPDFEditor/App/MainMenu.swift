@@ -50,6 +50,7 @@ enum MainMenu {
         file.addItem(withTitle: "Create PDF from Files…", action: #selector(AppDelegate.createPDFFromFiles(_:)), keyEquivalent: "n")
             .keyEquivalentModifierMask = [.command, .option]
         file.addItem(withTitle: "Reduce File Size…", action: #selector(DocumentWindowController.reduceFileSize(_:)), keyEquivalent: "")
+        file.addItem(withTitle: "Security…", action: #selector(DocumentWindowController.showSecurity(_:)), keyEquivalent: "")
         file.addItem(.separator())
         file.addItem(withTitle: "Page Setup…", action: #selector(NSDocument.runPageLayout(_:)), keyEquivalent: "P")
         file.addItem(withTitle: "Print…", action: #selector(NSDocument.printDocument(_:)), keyEquivalent: "p")

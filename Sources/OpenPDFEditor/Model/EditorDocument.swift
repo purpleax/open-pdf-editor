@@ -128,11 +128,35 @@ final class EditorDocument: NSDocument, EditRecorder {
         }
     }
 
+    // MARK: Security
+
+    /// Writes the document whole with new encryption (or none), from then on
+    /// unlocked with `unlock`. Undo history goes: the change can't be undone.
+    func changeSecurity(_ encryption: Encryption, unlock: String?) throws {
+        guard let engine, let model else { return }
+        try engine.rebase(encryption: encryption, openPassword: password)
+        password = unlock
+        undoManager?.removeAllActions()
+        model.refreshPermissions()
+        model.structureChanged()
+        updateChangeCount(.changeDone)
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(printDocument(_:)), let model, !model.allowed.contains(.print) { return false }
+        return super.validateUserInterfaceItem(item)
+    }
+
     // MARK: Printing
 
     /// Printing goes through PDFKit for the standard print panel, page
     /// ranges and scaling, from a copy that includes unsaved changes.
     override func printOperation(withSettings printSettings: [NSPrintInfo.AttributeKey: Any]) throws -> NSPrintOperation {
+        if let model, !model.allowed.contains(.print) {
+            throw NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError, userInfo: [
+                NSLocalizedDescriptionKey: "The document’s owner doesn’t allow it to be printed.",
+            ])
+        }
         var url = fileURL
         var copy: URL?
         // Removed on every way out; PDFKit has read it by then.

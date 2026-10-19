@@ -88,7 +88,7 @@ final class ContentInspectorViewController: NSViewController, NSTextFieldDelegat
             return
         }
         view.isHidden = false
-        let editable = viewer.model.isEditable
+        let editable = viewer.model.allows(.edit)
         textRows.forEach { $0.isHidden = true }
         changeButton.isHidden = false
         switch ref {

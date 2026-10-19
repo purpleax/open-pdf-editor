@@ -42,6 +42,8 @@ enum SelfTest {
                     manualSaveSteps(document)
                 } else if environment["OPDF_SELFTEST_FORMS"] != nil {
                     formSteps(document)
+                } else if environment["OPDF_SELFTEST_SECURITY"] != nil {
+                    securitySteps(document)
                 } else if environment["OPDF_SELFTEST_CONTENT"] != nil {
                     contentSteps(document)
                 } else {
@@ -492,6 +494,64 @@ enum SelfTest {
                 let saved = (try? EngineDocument(url: document.fileURL!).annotations(page: 0).count) ?? -1
                 say("after File › Save: on disk \(saved); edited: \(document.isDocumentEdited)")
                 finish()
+            }
+        }
+    }
+
+    /// File › Security…: an owner password that keeps copying and editing
+    /// back; then the saved file opened again, restricted, and unlocked.
+    static func securitySteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let window = controller.window else {
+            say("FAIL no viewer")
+            return finish()
+        }
+        func views<T: NSView>(_ view: NSView, _ type: T.Type) -> [T] {
+            ((view as? T).map { [$0] } ?? []) + view.subviews.flatMap { views($0, type) }
+        }
+        controller.showSecurity(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard let sheet = window.attachedSheet?.contentView else { say("FAIL no Security sheet"); return finish() }
+            let boxes = Dictionary(views(sheet, NSButton.self).map { ($0.title, $0) }, uniquingKeysWith: { a, _ in a })
+            let secure = views(sheet, NSSecureTextField.self)
+            say("sheet: open password \(boxes["Require a password to open the document"]?.state == .on), restricted \(boxes["Require a password to change security and to:"]?.state == .on), fields \(secure.count)")
+            boxes["Require a password to change security and to:"]?.state = .on
+            boxes["Copy text and images"]?.state = .off
+            boxes["Edit content and pages"]?.state = .off
+            secure[2].stringValue = "owner"
+            secure[3].stringValue = "owner"
+            _ = pressSheetButton(window, "Apply")
+            let engine = document.engine!
+            say("applied: encrypted \(engine.isEncrypted), owner \(engine.isOwner), grants \(engine.ownerAllowedToUser.rawValue), undo \(document.undoManager?.canUndo == true)")
+            document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                let url = document.fileURL!
+                let reopened = try? EngineDocument(url: url)
+                say("on disk: needs password \(reopened?.needsPassword == true), owner \(reopened?.isOwner == true), allowed \(reopened?.allowed.rawValue ?? -1)")
+                document.close()
+                NSDocumentController.shared.openDocument(withContentsOf: url, display: true) { again, _, _ in
+                    guard let again = again as? EditorDocument else { say("FAIL reopen"); return finish() }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        guard let controller = again.windowControllers.first as? DocumentWindowController,
+                              let viewer = controller.viewer, let window = controller.window else { say("FAIL no viewer"); return finish() }
+                        let editItem = NSMenuItem(title: "", action: #selector(DocumentWindowController.toggleEditContent(_:)), keyEquivalent: "")
+                        say("restricted: banner \(controller.restrictionAccessory?.isHidden == false) “\(controller.restrictionLabel?.stringValue ?? "")”, edit allowed \(viewer.model.allows(.edit)), Edit Content enabled \(controller.validateMenuItem(editItem)), annotate \(viewer.model.allows(.annotate))")
+                        snapshot(window, "restricted")
+                        controller.enterOwnerPassword(nil)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                            guard let sheet = window.attachedSheet?.contentView, let field = views(sheet, NSSecureTextField.self).first else {
+                                say("FAIL no password sheet")
+                                return finish()
+                            }
+                            field.stringValue = "owner"
+                            _ = pressSheetButton(window, "OK")
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                say("owner: banner \(controller.restrictionAccessory?.isHidden == false), edit allowed \(viewer.model.allows(.edit)), Edit Content enabled \(controller.validateMenuItem(editItem))")
+                                finish()
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -91,11 +91,11 @@ final class AnnotationController {
     // MARK: Selection geometry
 
     func canMove(_ a: Annotation) -> Bool {
-        model.isEditable && !a.isReadOnly && !a.kind.isTextMarkup && a.flags & 0x80 == 0   // not Locked
+        model.allows(.annotate) && !a.isReadOnly && !a.kind.isTextMarkup && a.flags & 0x80 == 0   // not Locked
     }
 
     func canEdit(_ a: Annotation) -> Bool {
-        model.isEditable && !a.isReadOnly
+        model.allows(.annotate) && !a.isReadOnly
     }
 
     func canResize(_ a: Annotation) -> Bool {
@@ -162,7 +162,7 @@ final class AnnotationController {
             change.quads = rects.map(Quad.init)
             change.color = .some(ToolSettings.color(for: tool))
             change.author = author
-            let id = try model.edit(tool.title, pages: [page]) {
+            let id = try model.edit(tool.title, pages: [page], needs: .annotate) {
                 try $0.createAnnotation(page: page, change, actionName: tool.title)
             }
             created = created ?? AnnotationRef(page: page, id: id)
@@ -199,7 +199,7 @@ final class AnnotationController {
         default:
             return nil
         }
-        let id = try model.edit(tool.title, pages: [page]) { try $0.createAnnotation(page: page, change, actionName: tool.title) }
+        let id = try model.edit(tool.title, pages: [page], needs: .annotate) { try $0.createAnnotation(page: page, change, actionName: tool.title) }
         return AnnotationRef(page: page, id: id)
     }
 
@@ -210,7 +210,7 @@ final class AnnotationController {
         change.color = .some(ToolSettings.color(for: .pen))
         change.borderWidth = ToolSettings.lineWidth(for: .pen)
         change.author = author
-        let id = try model.edit("Drawing", pages: [page]) { try $0.createAnnotation(page: page, change, actionName: "Drawing") }
+        let id = try model.edit("Drawing", pages: [page], needs: .annotate) { try $0.createAnnotation(page: page, change, actionName: "Drawing") }
         return AnnotationRef(page: page, id: id)
     }
 
@@ -221,7 +221,7 @@ final class AnnotationController {
         change.iconName = "Note"
         change.contents = ""
         change.author = author
-        let id = try model.edit("Note", pages: [page]) { try $0.createAnnotation(page: page, change, actionName: "Note") }
+        let id = try model.edit("Note", pages: [page], needs: .annotate) { try $0.createAnnotation(page: page, change, actionName: "Note") }
         return AnnotationRef(page: page, id: id)
     }
 
@@ -232,7 +232,7 @@ final class AnnotationController {
         change.rect = clamp(CGRect(x: point.x - width / 2, y: point.y - 25, width: width, height: 50), page: page)
         change.iconName = stamp.rawValue
         change.author = author
-        let id = try model.edit("Stamp", pages: [page]) { try $0.createAnnotation(page: page, change, actionName: "Stamp") }
+        let id = try model.edit("Stamp", pages: [page], needs: .annotate) { try $0.createAnnotation(page: page, change, actionName: "Stamp") }
         return AnnotationRef(page: page, id: id)
     }
 
@@ -240,7 +240,7 @@ final class AnnotationController {
 
     func move(_ ref: AnnotationRef, by delta: CGVector) throws {
         guard delta.dx != 0 || delta.dy != 0 else { return }
-        try model.edit("Move", pages: [ref.page]) {
+        try model.edit("Move", pages: [ref.page], needs: .annotate) {
             try $0.transformAnnotation(page: ref.page, id: ref.id, by: CGAffineTransform(translationX: delta.dx, y: delta.dy), actionName: "Move")
         }
     }
@@ -250,7 +250,7 @@ final class AnnotationController {
         if let line = a.line, handle == .lineStart || handle == .lineEnd {
             var change = AnnotationChange(kind: a.kind)
             change.line = handle == .lineStart ? (point, line.1) : (line.0, point)
-            try model.edit("Resize", pages: [ref.page]) { try $0.updateAnnotation(page: ref.page, id: ref.id, change, actionName: "Resize") }
+            try model.edit("Resize", pages: [ref.page], needs: .annotate) { try $0.updateAnnotation(page: ref.page, id: ref.id, change, actionName: "Resize") }
             return
         }
         let old = a.rect
@@ -259,14 +259,14 @@ final class AnnotationController {
         let transform = CGAffineTransform(translationX: -old.minX, y: -old.minY)
             .concatenating(CGAffineTransform(scaleX: new.width / old.width, y: new.height / old.height))
             .concatenating(CGAffineTransform(translationX: new.minX, y: new.minY))
-        try model.edit("Resize", pages: [ref.page]) {
+        try model.edit("Resize", pages: [ref.page], needs: .annotate) {
             try $0.transformAnnotation(page: ref.page, id: ref.id, by: transform, actionName: "Resize")
         }
     }
 
     func delete(_ ref: AnnotationRef) throws {
         if let a = annotation(ref), !canEdit(a) { throw EngineError(code: -1, message: "This annotation can’t be changed.") }
-        try model.edit("Delete", pages: [ref.page]) { try $0.deleteAnnotation(page: ref.page, id: ref.id, actionName: "Delete") }
+        try model.edit("Delete", pages: [ref.page], needs: .annotate) { try $0.deleteAnnotation(page: ref.page, id: ref.id, actionName: "Delete") }
     }
 
     /// Changes some properties of an annotation as one undoable step.
@@ -274,17 +274,17 @@ final class AnnotationController {
         guard let a = annotation(ref) else { return }
         var change = AnnotationChange(kind: a.kind)
         configure(&change)
-        try model.edit(actionName, pages: [ref.page]) {
+        try model.edit(actionName, pages: [ref.page], needs: .annotate) {
             try $0.updateAnnotation(page: ref.page, id: ref.id, change, actionName: actionName)
         }
     }
 
     func reply(to ref: AnnotationRef, text: String) throws {
-        try model.edit("Reply", pages: [ref.page]) { try $0.reply(page: ref.page, to: ref.id, author: author, contents: text) }
+        try model.edit("Reply", pages: [ref.page], needs: .annotate) { try $0.reply(page: ref.page, to: ref.id, author: author, contents: text) }
     }
 
     /// Sets (nil: clears) this user's review status on an annotation.
     func setStatus(_ ref: AnnotationRef, _ state: String?) throws {
-        try model.edit("Set Status", pages: [ref.page]) { try $0.setStatus(page: ref.page, of: ref.id, author: author, state: state) }
+        try model.edit("Set Status", pages: [ref.page], needs: .annotate) { try $0.setStatus(page: ref.page, of: ref.id, author: author, state: state) }
     }
 }

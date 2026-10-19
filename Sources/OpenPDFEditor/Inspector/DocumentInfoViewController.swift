@@ -93,7 +93,7 @@ final class DocumentInfoViewController: NSViewController, NSTextFieldDelegate {
             if Self.editableKeys.contains(label) {
                 field = NSTextField(string: value ?? "")
                 field.placeholderString = "—"
-                field.isEditable = viewer.model.isEditable
+                field.isEditable = viewer.model.allows(.edit)
                 field.delegate = self
                 field.target = self
                 field.action = #selector(infoCommitted(_:))
@@ -130,7 +130,9 @@ final class DocumentInfoViewController: NSViewController, NSTextFieldDelegate {
         let engine = viewer.model.engine
         for (key, field) in editable where field.currentEditor() == nil {
             field.stringValue = engine.metadata("info:\(key)") ?? ""
+            field.isEditable = viewer.model.allows(.edit)
         }
+        valueFields["Security"]?.stringValue = engine.metadata("encryption").flatMap { $0 == "None" ? nil : $0 } ?? "None"
         let dates = DateFormatter()
         dates.dateStyle = .medium
         dates.timeStyle = .short

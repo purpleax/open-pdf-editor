@@ -24,6 +24,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var markupAccessory: NSTitlebarAccessoryViewController?
     let fieldBar = FieldBarViewController()
     var fieldAccessory: NSTitlebarAccessoryViewController?
+    var restrictionAccessory: NSTitlebarAccessoryViewController?
+    var restrictionLabel: NSTextField?
     let contentBar = ContentBarViewController()
     var contentAccessory: NSTitlebarAccessoryViewController?
     private var split: NSSplitViewController?
@@ -41,7 +43,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var jumpToFirstMatch = false
     private var pendingRestore: (page: Int, zoom: ZoomMode, magnification: CGFloat)?
 
-    private var editorDocument: EditorDocument? { document as? EditorDocument }
+    var editorDocument: EditorDocument? { document as? EditorDocument }
 
     convenience init(document: EditorDocument) {
         let window = NSWindow(
@@ -141,6 +143,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         setUpMarkupBar()
         setUpFieldBar()
         setUpContentBar()
+        setUpRestrictionBanner()
         inspector.content.onChangeLink = { [weak self] ref in self?.changeLinkTarget(ref) }
         inspector.content.onReplaceImage = { [weak self] ref in self?.replaceImage(ref) }
         NotificationCenter.default.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] note in
@@ -346,7 +349,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         window.subtitle = viewer.pagesView.isCropping
             ? "Drag over a page to crop it · Esc to stop"
             : "Page \(viewer.currentPage + 1) of \(count)"
-        rotateControl?.isEnabled = viewer.model.isEditable
+        rotateControl?.isEnabled = viewer.model.allows(.assemble)
         invalidateRestorableState()
         sidebar?.currentPageDidChange()
         inspector?.pageDidChange()
@@ -635,27 +638,31 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(showComments(_:)): setState(sidebar?.tab == .comments && sidebarItem?.isCollapsed == false)
         case #selector(toggleMarkupBar(_:)):
             setState(markupAccessory?.isHidden == false)
-            return viewer.model.isEditable
+            return viewer.model.allows(.annotate)
         case #selector(chooseTool(_:)):
             setState(AnnotationTool.allCases.indices.contains(tagOfValidatedItem) && viewer.tool == AnnotationTool.allCases[tagOfValidatedItem])
-            return viewer.model.isEditable
+            return viewer.model.allows(.annotate)
         case #selector(flattenAnnotations(_:)):
-            return viewer.model.isEditable
+            return viewer.model.allows(.edit)
         case #selector(flattenForm(_:)):
-            return viewer.model.isEditable && ((try? viewer.model.engine.formInfo().hasFields) ?? false)
+            return viewer.model.allows(.edit) && ((try? viewer.model.engine.formInfo().hasFields) ?? false)
         case #selector(addHeadersAndFooters(_:)), #selector(addPageNumbers(_:)), #selector(addWatermark(_:)),
              #selector(removeHeadersAndFooters(_:)), #selector(removeWatermarks(_:)):
-            return viewer.model.isEditable
+            return viewer.model.allows(.edit)
+        case #selector(showSecurity(_:)):
+            return viewer.model.isEditable && viewer.model.engine.isPDF
+        case #selector(enterOwnerPassword(_:)):
+            return !viewer.model.engine.isOwner
         case #selector(toggleEditContent(_:)):
             setState(viewer.pagesView.editingContent)
-            return viewer.model.isEditable
+            return viewer.model.allows(.edit)
         case #selector(toggleEditFields(_:)):
             setState(viewer.pagesView.editingFields)
-            return viewer.model.isEditable
+            return viewer.model.allows(.edit)
         case #selector(chooseFieldTool(_:)):
             setState(viewer.pagesView.editingFields && FieldTool.allCases.indices.contains(tagOfValidatedItem)
                 && viewer.pagesView.fieldTool == FieldTool.allCases[tagOfValidatedItem])
-            return viewer.model.isEditable
+            return viewer.model.allows(.edit)
         case #selector(showAttachments(_:)): setState(sidebar?.tab == .attachments && sidebarItem?.isCollapsed == false)
         case #selector(showLayers(_:)): setState(sidebar?.tab == .layers && sidebarItem?.isCollapsed == false)
         case #selector(showDocumentInfo(_:)): setState(inspectorItem?.isCollapsed == false)
