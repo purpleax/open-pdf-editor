@@ -12,7 +12,7 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Calling MuPDF from Swift | A small C target (`MuPDFBridge`) wraps every MuPDF call in `fz_try`/`fz_catch` and returns errors as values, because MuPDF's exceptions are `setjmp`/`longjmp` and Swift can't unwind through them | 2026-10-18 |
 | App | Swift and AppKit, built with SwiftPM and a Makefile like mdview: `NSDocument` per PDF, native window tabs, `NSToolbar`, split view with sidebars and an inspector | 2026-10-18 |
 | Platforms | macOS 14 or later, Apple Silicon (arm64) only. Intel Macs are not supported. | 2026-10-18 |
-| Updates | Sparkle 2.10.0 (SwiftPM), automatic checks, EdDSA-signed updates. The appcast is `appcast.xml` on `main` of this repository, written by `make release`. | 2026-10-18 |
+| Updates | Sparkle 2.10.0 (SwiftPM), EdDSA-signed updates. The appcast is `appcast.xml` on `main` of this repository, written by `make release`. Only when asked (Open PDF Editor › Check for Updates…): no automatic checks or installs (changed 2026-10-19). | 2026-10-18 |
 | Releases | GitHub Releases on this repository: a DMG and a zip per version, signed with the Developer ID, notarised and stapled (scripts adapted from mdview) | 2026-10-18 |
 | OCR | Apple's Vision framework on device; MuPDF writes the invisible text layer. Not MuPDF's Tesseract build. | 2026-10-18 |
 | Text editing | Within a line only: insert, replace and delete characters in one text run, change its font, size and colour, using the embedded font's glyphs or a fallback font. No reflow across lines. | 2026-10-18 |
@@ -24,7 +24,7 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Autosave | Autosave in place with Versions, as in Preview (File › Revert To, Duplicate, Rename, Move To); possible because saving keeps undo history | 2026-10-19 |
 | Annotation replies and status | Replies are Text annotations with /IRT, and review status a hidden reply with /State and /StateModel Review, as Acrobat writes them. They are not drawn on the page; they appear in the Comments list. | 2026-10-19 |
 | Markup tools | A markup bar under the toolbar (View › Show Markup Toolbar, ⇧⌘A) with the tools, colour and line width, as in Preview; the inspector edits the selected annotation | 2026-10-19 |
-| Risky features | Any feature that adds a security risk (for example form JavaScript) gets a switch in a Settings window (⌘,) and is off until turned on. The phase that adds the first such feature adds the Settings window. Each one is named in its roadmap item, with what it exposes. | 2026-10-19 |
+| Risky features | Any feature that adds a security risk (for example form JavaScript) gets a switch in a Settings window (⌘,) and is off until turned on. The phase that adds the first such feature adds the Settings window. Each one is named in its roadmap item, with what it exposes. Features already in the app that get a switch: opening web and email links, and converting non-PDF, non-image documents in Create PDF from Files. Saving attachments has none (it already warns and quarantines). | 2026-10-19 |
 
 ## Phase 0: Foundations
 
@@ -109,6 +109,10 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [ ] Fill in and save forms
 - [ ] Create and edit text fields, checkboxes, radio buttons, dropdowns and signature fields
 - [ ] Flatten forms
+- [ ] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)
+  - Open web and email links (pages and bookmarks): a PDF can send you to any address its author chose
+  - Create PDF from HTML, SVG, EPUB, XPS, Word, Excel and PowerPoint files: MuPDF's parsers for those formats, and HTML and SVG reading images from the source file's folder
+- [x] Updates only through Check for Updates…: no automatic checks, including where an earlier version saved a yes to Sparkle's question
 
 ## Phase 5: Content editing (0.5.0)
 

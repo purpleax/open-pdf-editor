@@ -5,9 +5,14 @@ import Sparkle
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Sparkle: checks the appcast (SUFeedURL in Info.plist) and installs
-    /// updates signed with the key in SUPublicEDKey.
-    let updaterController = SPUStandardUpdaterController(
-        startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    /// updates signed with the key in SUPublicEDKey. Only when asked
+    /// (Check for Updates…): never automatically, even where an earlier
+    /// version saved a yes to Sparkle's "check automatically?" question.
+    let updaterController: SPUStandardUpdaterController = {
+        UserDefaults.standard.set(false, forKey: "SUEnableAutomaticChecks")
+        UserDefaults.standard.set(false, forKey: "SUAutomaticallyUpdate")
+        return SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    }()
     private var acknowledgements: NSWindowController?
     static let website = URL(string: "https://github.com/purpleax/open-pdf-editor")!
 

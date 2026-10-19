@@ -1,6 +1,6 @@
 # Open PDF Editor
 
-Open PDF Editor is a free, fully featured PDF editor for macOS. It aims to match the features of Foxit PDF Editor and similar commercial apps as closely as an open-source engine allows. It is built on the MuPDF engine and looks and feels like a native Mac app. It is open source under the AGPL-3.0 licence, to match MuPDF, and is distributed to the public as a notarised app with automatic updates.
+Open PDF Editor is a free, fully featured PDF editor for macOS. It aims to match the features of Foxit PDF Editor and similar commercial apps as closely as an open-source engine allows. It is built on the MuPDF engine and looks and feels like a native Mac app. It is open source under the AGPL-3.0 licence, to match MuPDF, and is distributed to the public as a notarised app that updates when asked.
 
 Where this spec and ROADMAP.md disagree, the Decisions table in ROADMAP.md wins.
 
@@ -8,7 +8,7 @@ Where this spec and ROADMAP.md disagree, the Decisions table in ROADMAP.md wins.
 
 - macOS 14 Sonoma or later, on Apple Silicon Macs only. Intel Macs are not supported.
 - Distributed as a signed, notarised DMG and zip from GitHub Releases. Not on the Mac App Store, which the AGPL rules out.
-- Updates through Sparkle, checking an appcast in this repository.
+- Updates through Sparkle, checking an appcast in this repository only when the user chooses Check for Updates…
 
 ## Look and feel
 

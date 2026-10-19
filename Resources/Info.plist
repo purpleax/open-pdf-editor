@@ -55,6 +55,10 @@
 	<string>© 2026 Guy Brown. Licensed under the GNU AGPL-3.0.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/purpleax/open-pdf-editor/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>

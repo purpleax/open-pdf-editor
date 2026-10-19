@@ -13,7 +13,7 @@ A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.c
 - Rotate, delete, insert, move, crop and extract pages; merge and split PDFs; make a PDF from images and other documents; reduce file size
 - Undo that survives saving; autosave with Versions; saves keep digital signatures valid
 - Password-protected PDFs, printing, window tabs, full screen, Dark Mode and VoiceOver
-- Automatic updates
+- Updates when you choose Check for Updates…
 
 ## Requirements
 
@@ -22,7 +22,7 @@ A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.c
 
 ## Download
 
-Download the latest DMG from the [Releases page](https://github.com/purpleax/open-pdf-editor/releases). It is signed and notarised, and once installed the app updates itself.
+Download the latest DMG from the [Releases page](https://github.com/purpleax/open-pdf-editor/releases). It is signed and notarised. Once installed, Open PDF Editor › Check for Updates… updates it; the app never checks on its own.
 
 ## Building from source
 
