@@ -1434,9 +1434,12 @@ bool opdf_annot_transform(opdf_doc *d, int page_number, int id, opdf_matrix matr
     return !(err && err->code);
 }
 
+static void strip_annotation(fz_context *ctx, pdf_obj *obj);
+
 // Deletes the annotations marked in `doomed` (in page order, `n` of them in
-// `annots`) with their replies, their replies' replies, and so on.
-static void delete_with_replies(fz_context *ctx, pdf_page *pp, int n, pdf_annot **annots, bool *doomed) {
+// `annots`) with their replies, their replies' replies, and so on; with
+// `strip`, emptied of what they say first (see strip_annotation).
+static void delete_with_replies(fz_context *ctx, pdf_page *pp, int n, pdf_annot **annots, bool *doomed, bool strip) {
     int *parent = NULL, *ids = NULL, *irt = NULL, *order = NULL;
     fz_var(parent);
     fz_var(ids);
@@ -1480,8 +1483,11 @@ static void delete_with_replies(fz_context *ctx, pdf_page *pp, int n, pdf_annot 
                     changed = true;
                 }
         }
-        for (i = n - 1; i >= 0; i--)
-            if (doomed[i]) pdf_delete_annot(ctx, pp, annots[i]);
+        for (i = n - 1; i >= 0; i--) {
+            if (!doomed[i]) continue;
+            if (strip) strip_annotation(ctx, pdf_annot_obj(ctx, annots[i]));
+            pdf_delete_annot(ctx, pp, annots[i]);
+        }
     }
     fz_always(ctx) {
         free(parent);
@@ -1510,7 +1516,7 @@ bool opdf_annot_delete(opdf_doc *d, int page_number, int id, const char *operati
             annots[i] = a;
             doomed[i] = annot_id(ctx, a) == id;
         }
-        delete_with_replies(ctx, pp, i, annots, doomed);
+        delete_with_replies(ctx, pp, i, annots, doomed, false);
     });
     free(annots);
     free(doomed);
@@ -3954,21 +3960,61 @@ static bool touches_any(const fz_rect *areas, int count, fz_rect r) {
     return false;
 }
 
-// Clears a widget's field value, and its ancestors' (shared values included):
-// what was typed there is gone even where another widget showed it.
+// Takes out what an annotation or field says or shows (its text, values,
+// appearances, attached files), so nothing readable is left even where
+// another object (the structure tree, say) still refers to it.
+static void strip_annotation(fz_context *ctx, pdf_obj *obj) {
+    static const char *const keys[] = { "Contents", "RC", "AP", "AS", "T", "TU", "TM", "Subj", "V", "DV", "RV",
+                                        "DS", "FS", "Sound", "Movie", "RichMediaContent", "Opt", "MK" };
+    for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) pdf_dict_dels(ctx, obj, keys[i]);
+    pdf_obj *popup = pdf_dict_get(ctx, obj, PDF_NAME(Popup));
+    if (pdf_is_dict(ctx, popup)) {
+        pdf_dict_del(ctx, popup, PDF_NAME(Contents));
+        pdf_dict_del(ctx, popup, PDF_NAME(AP));
+    }
+}
+
+// The most nodes of one field's tree cleared under a redaction mark.
+#define OPDF_MAX_CLEARED_FIELD_NODES 4096
+
+static void clear_field_tree(fz_context *ctx, pdf_obj *field, int depth, int *budget) {
+    if (!pdf_is_dict(ctx, field) || depth > 32 || --*budget < 0 || pdf_mark_obj(ctx, field)) return;
+    fz_try(ctx) {
+        pdf_dict_del(ctx, field, PDF_NAME(V));
+        pdf_dict_del(ctx, field, PDF_NAME(DV));
+        pdf_dict_del(ctx, field, PDF_NAME(RV));
+        pdf_dict_del(ctx, field, PDF_NAME(AP));
+        pdf_obj *kids = pdf_dict_get(ctx, field, PDF_NAME(Kids));
+        for (int i = 0; i < pdf_array_len(ctx, kids) && *budget > 0; i++)
+            clear_field_tree(ctx, pdf_array_get(ctx, kids, i), depth + 1, budget);
+    }
+    fz_always(ctx)
+        pdf_unmark_obj(ctx, field);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+// Clears a widget's field value and its ancestors', and the value and
+// appearance of every widget of the same field: what was typed there is
+// gone even where another widget showed it.
 static void clear_field_values(fz_context *ctx, pdf_obj *widget) {
-    pdf_obj *field = widget;
+    pdf_obj *field = widget, *terminal = NULL;
     for (int depth = 0; field && depth < 32; depth++) {
         pdf_dict_del(ctx, field, PDF_NAME(V));
         pdf_dict_del(ctx, field, PDF_NAME(DV));
         pdf_dict_del(ctx, field, PDF_NAME(RV));
+        // The field the widget belongs to: the nearest with a name.
+        if (!terminal && pdf_dict_get(ctx, field, PDF_NAME(T))) terminal = field;
         field = pdf_dict_get(ctx, field, PDF_NAME(Parent));
     }
+    int budget = OPDF_MAX_CLEARED_FIELD_NODES;
+    if (terminal) clear_field_tree(ctx, terminal, 0, &budget);
 }
 
 // Applies the Redact annotations on every page (see opdf_rebase).
 static void redact_document(fz_context *ctx, pdf_document *doc) {
     int pages = pdf_count_pages(ctx, doc);
+    bool redacted = false;
     pdf_page *page = NULL;
     fz_rect *areas = NULL;
     pdf_annot **annots = NULL;
@@ -3977,14 +4023,17 @@ static void redact_document(fz_context *ctx, pdf_document *doc) {
     fz_var(areas);
     fz_var(annots);
     fz_var(doomed);
+    fz_var(redacted);
     fz_try(ctx) {
         for (int p = 0; p < pages; p++) {
             page = pdf_load_page(ctx, doc, p);
             // The marked areas: each quad of a mark, or its rectangle (in page
             // space, as pdf_annot_rect gives every annotation's).
-            int count = 0, n = 0;
+            int count = 0, n = 0, widgets = 0;
+            for (pdf_annot *w = pdf_first_widget(ctx, page); w; w = pdf_next_widget(ctx, w))
+                if (++widgets > OPDF_MAX_FIELDS_PER_PAGE) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many form fields to redact", p + 1);
             for (pdf_annot *a = pdf_first_annot(ctx, page); a; a = pdf_next_annot(ctx, a)) {
-                n++;
+                if (++n > OPDF_MAX_ANNOTS_PER_PAGE) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many annotations to redact", p + 1);
                 if (pdf_annot_type(ctx, a) != PDF_ANNOT_REDACT) continue;
                 int q = pdf_annot_quad_point_count(ctx, a);
                 count += q > 0 ? q : 1;
@@ -4015,12 +4064,16 @@ static void redact_document(fz_context *ctx, pdf_document *doc) {
                 }
                 for (pdf_annot *w = pdf_first_widget(ctx, page); w; w = pdf_next_widget(ctx, w))
                     if (touches_any(areas, count, pdf_annot_rect(ctx, w))) clear_field_values(ctx, pdf_annot_obj(ctx, w));
-                delete_with_replies(ctx, page, i, annots, doomed);
+                delete_with_replies(ctx, page, i, annots, doomed, true);
                 for (pdf_annot *w = pdf_first_widget(ctx, page); w;) {
                     pdf_annot *next = pdf_next_widget(ctx, w);
-                    if (touches_any(areas, count, pdf_annot_rect(ctx, w))) pdf_delete_annot(ctx, page, w);
+                    if (touches_any(areas, count, pdf_annot_rect(ctx, w))) {
+                        strip_annotation(ctx, pdf_annot_obj(ctx, w));
+                        pdf_delete_annot(ctx, page, w);
+                    }
                     w = next;
                 }
+                redacted = true;
                 pdf_redact_options opts = { 1, PDF_REDACT_IMAGE_PIXELS, PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED, PDF_REDACT_TEXT_REMOVE };
                 pdf_redact_page(ctx, doc, page, &opts);
                 pdf_update_page(ctx, page);
@@ -4043,6 +4096,11 @@ static void redact_document(fz_context *ctx, pdf_document *doc) {
     }
     fz_catch(ctx)
         fz_rethrow(ctx);
+    // XFA keeps its own copy of the form's data: it goes.
+    if (redacted) {
+        pdf_obj *form = pdf_dict_getp(ctx, pdf_trailer(ctx, doc), "Root/AcroForm");
+        if (pdf_is_dict(ctx, form)) pdf_dict_del(ctx, form, PDF_NAME(XFA));
+    }
 }
 
 bool opdf_rebase(opdf_doc *d, const opdf_rebase_options *o, opdf_error *err) {

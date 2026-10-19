@@ -424,3 +424,32 @@ import Testing
         #expect(try EngineDocument(url: out).signatures().first?.integrity == .invalid)
     }
 }
+
+@Suite struct RedactionLeftoverTests {
+    @Test func siblingWidgetsReferencedNotesAndXFA() throws {
+        let doc = try Corpus.open("redact.pdf")
+        for rect in [CGRect(x: 70, y: 70, width: 232, height: 24), CGRect(x: 398, y: 70, width: 24, height: 24)] {
+            var mark = AnnotationChange(kind: .redact)
+            mark.rect = rect
+            _ = try doc.createAnnotation(page: 0, mark, actionName: "Redact")
+        }
+        try doc.applyRedactions()
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-leftovers.pdf")
+        let plain = FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-plain.pdf")
+        defer {
+            try? FileManager.default.removeItem(at: out)
+            try? FileManager.default.removeItem(at: plain)
+        }
+        try doc.save(to: out)
+        let mutool = Process()
+        mutool.executableURL = Corpus.root.appendingPathComponent("../mupdf/arm64/mutool").standardizedFileURL
+        mutool.arguments = ["clean", "-d", out.path, plain.path]
+        try mutool.run()
+        mutool.waitUntilExit()
+        let bytes = String(decoding: try Data(contentsOf: plain), as: UTF8.self)
+        #expect(!bytes.contains("secret-sibling"))
+        #expect(!bytes.contains("secret-in-struct"))
+        #expect(!bytes.contains("xfa-secret"))
+        #expect(try !doc.formInfo().hasXFA)
+    }
+}

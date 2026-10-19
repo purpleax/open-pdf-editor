@@ -107,7 +107,7 @@ final class SettingsWindowController: NSWindowController {
             documents,
             Self.note("Create PDF from Files and Insert Pages can read HTML, SVG, EPUB, XPS, text, Word, Excel and PowerPoint files. Reading these formats gives a harmful file more of the app to attack. PDFs and images always work."),
             certificates,
-            Self.note("When checking a digital signature, fetch certificates its signer left out and ask whether the certificate was revoked. This contacts the addresses the certificates name, which tells them a signed document is being opened. Off, signatures are checked against this Mac's certificates only."),
+            Self.note("When checking a digital signature, fetch certificates its signer left out and ask whether the certificate was revoked. This contacts addresses named in the document's certificates, which whoever made the document can choose, and tells them when and from where it is opened. Off, signatures are checked against this Mac's certificates only."),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading

@@ -281,6 +281,29 @@ function makeForms() {
 	doc.save(out + "/forms.pdf", "compress")
 }
 
+// --- redact.pdf: leftovers redaction must reach: a field shown by two
+// widgets, a note the structure tree also refers to, and XFA data.
+function makeRedactLeftovers() {
+	var doc = formDocument()
+	var da = doc.newString("/Helv 12 Tf 0 g")
+	var secret = doc.addObject({ FT: doc.newName("Tx"), T: doc.newString("secret"), V: doc.newString("secret-sibling"), DA: da, Kids: [] })
+	doc.getTrailer().get("Root").get("AcroForm").get("Fields").push(secret)
+	secret.get("Kids").push(addField(doc, { Parent: secret }, [72, 700, 300, 720]))
+	var shown = doc.addStream("/Tx BMC BT /Helv 12 Tf 2 5 Td (secret-sibling) Tj ET EMC",
+		{ Type: doc.newName("XObject"), Subtype: doc.newName("Form"), BBox: [0, 0, 228, 20],
+		  Resources: doc.getTrailer().get("Root").get("AcroForm").get("DR") })
+	secret.get("Kids").push(addField(doc, { Parent: secret, AP: { N: shown } }, [72, 600, 300, 620]))
+	var page = doc.findPage(0)
+	var note = doc.addObject({ Type: doc.newName("Annot"), Subtype: doc.newName("Text"), Rect: [400, 700, 420, 720],
+		Contents: doc.newString("secret-in-struct"), P: page })
+	page.get("Annots").push(note)
+	doc.getTrailer().get("Root").put("StructTreeRoot", { Type: doc.newName("StructTreeRoot"),
+		K: { Type: doc.newName("OBJR"), Obj: note, Pg: page } })
+	doc.getTrailer().get("Root").get("AcroForm").put("XFA",
+		doc.addStream("<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"><xfa:datasets><secret>xfa-secret</secret></xfa:datasets></xdp:xdp>", {}))
+	doc.save(out + "/redact.pdf", "")
+}
+
 // --- formbomb.pdf: more fields and choices than the limits, a name over
 // MuPDF's 16 KB, and fields that are their own parents.
 function makeFormBomb() {
@@ -630,6 +653,7 @@ makeAttachments()
 makeLayers()
 makeLong()
 makeForms()
+makeRedactLeftovers()
 makeFormBomb()
 makeXMP()
 makeContent()
