@@ -15,7 +15,8 @@ The state of the work and how it is run, for picking it up in a new session or o
   5. Export engine: `opdf_export_*` session, `export_filter`, streaming TIFF (ImageIO held every page: 4 GB for 150 pages).
   6. App export: File › Export… with `ExportOptions`; images into new folders; `restricted.pdf`.
   Docs are updated (ROADMAP Phase 8, decisions, 0.8.0 notes; DEVELOPMENT; SPEC; README). 170 tests pass; self-test runs `ocr` and `export` pass.
-  - Still to do: the security review and its fixes (Lows into ROADMAP), then release 0.8.0 after the user agrees (dry run first) and ask about installing.
+  - Security review done. Fixed: one High (font names put markup into exported HTML/Word) and two Mediums (Word export slow on crowded pages: caps of 20,000 characters and 200 path segments a page; OCR fonts on shared resources). Three re-reviews passed; the Lows are in ROADMAP. `make test` runs ExportTests on their own after the rest, because every MuPDF context shares one memory lock.
+  - Still to do: release 0.8.0 after the user agrees (dry run first), then ask about installing.
   - Self-test note: the `ocr` run saves 2 s after undo/redo. Saving in the same turn deadlocks NSDocument with the autosave that undo started; a person can't do that.
 
 ## How the user wants to work (agreed in this session)
