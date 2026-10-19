@@ -110,3 +110,24 @@ The state of the work and how it is run, for picking it up in a new session or o
 - **Signature fields:** `.signature` fields aren't fillable, so clicking one in Select mode does nothing; that click would open "Sign…". The test corpus's `signed.pdf` is a fake signature.
 - **Inspector:** the "Security" row in `DocumentInfoViewController` shows `meta("encryption")`. A Security or Signatures section, or sidebar pane, would follow the existing patterns.
 - **Settings:** an "online revocation checking" switch would follow `Settings.swift`, off by default.
+
+## Phase 6 exploration notes (MuPDF redaction, encryption, saving)
+- **Redaction:** `pdf_redact_page` / `pdf_apply_redaction`, as a journaled operation that deletes the Redact annotations.
+  - Set every `pdf_redact_options` field explicitly: a zeroed struct is not the same as NULL. Use black boxes on, text REMOVE, image PIXELS (or REMOVE), and line art REMOVE_IF_TOUCHED.
+  - MuPDF deletes only Links and FreeText under the area. Widgets (and their /V values), Ink, Square, Stamp, markup, notes and attachments must be cleared by the bridge.
+  - The structure tree beyond /ActualText and /Alt of removed glyphs is untouched.
+  - `doc->redacted` is never cleared, even by undo. After it is set, `pdf_can_be_saved_incrementally` is 0, so the current `opdf_save` refuses ("This document can't be saved.").
+  - Removing content needs a full save with `do_garbage >= 1` (3 is best). /Info, XMP, document JavaScript, /Thumb, EmbeddedFiles, /PieceInfo, the outline, OCGs and widget values survive unless scrubbed by the bridge.
+  - macOS Versions (with autosave on) keeps older, unredacted copies.
+- **A full rewrite mutates the open document** (garbage collection drops the page tree and renumbers objects). Two designs:
+  - (a) rewrite a copy at save time (write the snapshot to a buffer, open it in a separate context as `opdf_reduce_file` does, scrub, save whole); this keeps undo.
+  - (b) rebase at apply time, like `opdf_prepare_for_editing` (write whole, reopen, re-authenticate, swap `d->doc`), clearing undo ("can't be undone").
+  - Either way, a full rewrite invalidates signatures: warn, reusing the `flattenForm` signed warning.
+- **Encryption:**
+  - `pdf_write_options.do_encrypt` (KEEP 0, NONE, RC4_40, RC4_128, AES_128, AES_256), `permissions`, `opwd_utf8`/`upwd_utf8` (char[128], so at most 127 bytes). Use AES-256 (R6, UTF-8 passwords).
+  - An incremental save requires KEEP, so adding, changing or removing a password needs a full write.
+  - Permission bits are `PDF_PERM_PRINT 1<<2 … PRINT_HQ 1<<11`.
+- **Permissions:** `pdf_has_permission` / `fz_has_permission` (FZ_PERMISSION_PRINT 'p', COPY 'c', EDIT 'e', ANNOTATE 'n', FORM 'f', ACCESSIBILITY 'y', ASSEMBLE 'a', PRINT_HQ 'h') return true when unencrypted or owner-unlocked.
+  - `pdf_authenticate_password` returns 0 (wrong), 2 (user), 4 (owner) or 6 (both); `opdf_authenticate` collapses it to a bool.
+  - `pdf_needs_password` re-runs with "" and resets access.
+  - **The app enforces no permissions today.** Changing or removing security must require owner access.
