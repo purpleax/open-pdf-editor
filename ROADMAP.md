@@ -14,7 +14,8 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Platforms | macOS 14 or later, Apple Silicon (arm64) only. Intel Macs are not supported. | 2026-10-18 |
 | Updates | Sparkle 2.10.0 (SwiftPM), EdDSA-signed updates. The appcast is `appcast.xml` on `main` of this repository, written by `make release`. Only when asked (Open PDF Editor › Check for Updates…): no automatic checks or installs (changed 2026-10-19). | 2026-10-18 |
 | Releases | GitHub Releases on this repository: a DMG and a zip per version, signed with the Developer ID, notarised and stapled (scripts adapted from mdview) | 2026-10-18 |
-| OCR | Apple's Vision framework on device; MuPDF writes the invisible text layer. Not MuPDF's Tesseract build. | 2026-10-18 |
+| OCR | Apple's Vision framework on device; MuPDF writes the invisible text layer. Not MuPDF's Tesseract build. On demand (Tools › Recognise Text…), with a notice on pages that are scans; pages without text by default; languages detected automatically unless one is chosen (2026-10-20). The layer is a stream of its own at the front of the page, marked /OPDFOCR, in GlyphLessFont (from MuPDF's pdfocr writer), so recognising again replaces it. No Settings switch: it runs only when asked and reads nothing new. | 2026-10-18 |
+| Export | File › Export…: Word (MuPDF's extract), web page and plain text (MuPDF's text writers), PNG and JPEG per page, and a multipage TIFF (written by the bridge a page at a time). A copy of the document as it is now is opened on its own with memory capped, as for converting. Needs the copy permission. No Settings switch: the writers only receive what MuPDF has already parsed for the viewer, and every corpus file goes through every format in the tests; a crash there would put Word export behind one. | 2026-10-20 |
 | Text editing | Paragraph editing, as in a word processor (changed 2026-10-19 from "within a line only"): click in text for a caret; a paragraph (MuPDF's lines and blocks, split and merged by checks of their own) is edited as a whole and re-wraps at its box's width, with Return, Delete and selection across its lines. Text doesn't flow between paragraphs or pages: a paragraph that grows can run into what's below, and the box says so. Paragraphs that fail the checks are edited a line at a time. | 2026-10-19 |
 | Fonts while editing text | Mac glyphs on screen, PDF metrics for layout, PDF font on commit: the editor draws with the matching Mac font, kerned so each character has its width in the PDF's font (so lines break where they did). On commit, characters still in a page font are written in it by its own codes; new characters it lacks, and text given another font, bold or italic, use a subset of the Mac font (TrueType or plain CFF; CID-keyed CFF and fonts without outlines are refused). The PDF's embedded font programs never reach CoreText. | 2026-10-19 |
 | What an edit changes | Lines before the first change are kept exactly as they were (when the layout still breaks them in the same places); from there the paragraph is drawn again. Its old glyphs are removed by identity (each tied to its text operation and place), each replaced by a move of its width so the rest of the page doesn't shift; copies drawn on top of them (fake bold) go too. One undoable step. | 2026-10-19 |
@@ -203,8 +204,15 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 ## Phase 8: OCR and export (0.8.0)
 
-- [ ] OCR with Vision, adding a searchable text layer
-- [ ] Export to images, plain text, Word and HTML
+- [x] OCR with Vision, adding a searchable text layer
+  - Tools › Recognise Text…: pages without text (default), all pages, this page or a range; language automatic or chosen. Pages are read on this Mac at 300 dpi (their own contents only, not comments or form fields) with a progress bar and Cancel, and the words go on as invisible text under the scan, one undoable step. Words the page already has as text (a stamped page number) aren't added twice; recognising again replaces the earlier layer. Signed documents are warned that this changes them after signing.
+  - A notice under the toolbar on a page that is a scan (mostly image, almost no text, none recognised), with Recognise Text… and a close button.
+  - Recognised text is found by Find, selected and copied like any text, and isn't edited (it is there for searching).
+  - Left for later: characters outside the Basic Multilingual Plane (emoji, rare CJK) become U+FFFD; vertical text; right-to-left words are kept in reading order but a word's own box from Vision isn't used for them.
+- [x] Export to images, plain text, Word and HTML
+  - File › Export…: Word Document, Web Page, Plain Text, PNG Images, JPEG Images (quality), TIFF Image (one file, a page per page); all pages, this page or a range; 72 to 600 dpi for images. What's exported is the document as it is now, unsaved changes included.
+  - Word gets recognised text as text and leaves out the scan under it; pictures are given to Word as PNG. The web page leaves out the scan too.
+  - Several PNG or JPEG pages go into a new folder named like the file chosen (never over an existing one); pages too large for the resolution are drawn smaller and the app says so.
 
 ## Phase 9: 1.0 (1.0.0)
 
@@ -215,6 +223,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **0.8.0**: Recognise text and export. Scanned pages now say so, and Tools › Recognise Text… reads them on this Mac with Apple's text recognition, so their words can be found, selected and copied; it reads pages without text unless you choose others, and works out the language by itself. File › Export… saves the document as a Word document, a web page, plain text, PNG or JPEG pictures of its pages, or one TIFF file, for all pages or some, including changes you haven't saved yet. Word documents and web pages made from recognised scans have the text rather than a picture of it.
 
 - **0.7.1**: Select and type. Select some text and start typing, and it changes, just as in a word processor: no need to switch to editing first. Click anywhere in a paragraph and a cursor appears there for typing; Delete, Backspace and Return work the same way, and Space types a space when there's a cursor or selection (it still scrolls otherwise). Paragraphs whose lines happen to end together are no longer mistaken for justified text, so their spacing stays as it was after an edit.
 

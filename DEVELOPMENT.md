@@ -12,7 +12,8 @@ Everything needed to pick up the work on another Mac: where things stand, how th
 - **Released:** 0.4.0, forms.
 - **Released:** 0.5.0, content editing.
 - **Released:** 0.6.0, security and signing, with saving automatically as a setting.
-- **Released:** 0.7.0, editing like a word processor.
+- **Released:** 0.7.0, editing like a word processor; 0.7.1, select and type.
+- **Next:** 0.8.0, OCR and export (Phase 8).
 - **Known Lows** (accepted, not yet fixed) are listed under each phase's "Security review" item in ROADMAP.md. They are the backlog to pick from when a phase touches the same code.
 - **Version:** `Resources/Info.plist` (`CFBundleShortVersionString`, `CFBundleVersion`), set only by `make release`.
 
@@ -168,6 +169,15 @@ These come from real bugs and review findings. Break one and something crashes o
 - **Where values live:** a field's value is on its field dictionary, which for a radio button is the group (the widget's parent). `field_holder` finds it. MuPDF's `pdf_field_value` rewrites stream values in place, so the bridge reads values itself (`field_value`).
 - **App:** `FormController` (finding, filling, editing), `FieldEditor` (typing in place), `PagesView+Forms.swift` (filling with the Select tool), `PagesView+FieldEditing.swift` (Forms › Edit Fields), `FieldInspectorViewController`.
 - **Not yet:** Insert, Extract, Split and Create PDF don't carry form fields across (grafting drops `/Annots`).
+
+## OCR and export (0.8.0)
+
+- **Scans** (`opdf_page_text_info`, `PageTextInfo`): a counting device over the page's own contents (visible characters, invisible ones, images on a 32×32 grid). A scan has under 20 visible characters, no invisible text and images over half the page. `DocumentModel.textInfo` caches it per page version for the notice.
+- **Recognition** (`TextRecognizer`): the page's contents only (`displayList(contentsOnly:)`, so comments and field values aren't read) at 300 dpi, within the render limits; Vision's lines split at whitespace; a word's own box from Vision only when it's believable (inside the line, in order, not the whole line), else the line divided by characters. Each word's space reaches the next word.
+- **Text layer** (`opdf_text_layers_set`, `RecognizedWord`): one journal step; per page, remove the old layer (streams marked `/OPDFOCR true`, or `/OPDFOCR BMC` blocks cut out by `rewrite_page_content` when editing merged the content, plus `OPDFOCR<n>` GlyphLessFont resources), skip words over the page's own text, then a new deflated stream at the front of `/Contents`: `3 Tr`, one `Tm` per word (`[dx dy dy -dx x y]` in page space concatenated with the inverse page transform), `Tz` fitting the letters to the box, UTF-16 hex codes, and the space drawn at its own `Tz` across the gap.
+- **Export** (`opdf_export_*`, `PDFExporter`): a temp copy of the document as it is now, opened in a capped context (NO_HANDLERS, `pdf_open_document`). Pages go through `export_filter` into MuPDF's writers: for docx, invisible text becomes filled text and images are re-encoded as PNG (the docx device ignores invisible text and takes images' compressed data as they are); for docx and HTML, page-size images on pages with invisible text are dropped. TIFF is the bridge's own streaming writer (`write_tiff_page`: RGB, Deflate with predictor 2, IFD before each page's strips), since ImageIO kept every page in memory (4 GB for 150 pages at 300 dpi).
+- **App:** `DocumentWindowController+Recognition.swift` (sheet, `recognize(pages:…)`, scan notice), `+Export.swift` (`ExportOptions`, `export(_:viewer:_:to:then:)`), `ProgressSheet` with a bar, `PageEditor.writeNew` for folders.
+- **Tests:** `scanned.pdf` (plain, `/Rotate 90`, offset CropBox, strips over a layered image, a stamped page number, an existing text layer) and `restricted.pdf` (print only) in the corpus; `RecognitionTests`, `ExportTests` (every corpus file through every format); self-test runs `ocr` and `export`. Vision's first use in a new build takes ~25 s to load its model.
 
 ## Editing like a word processor (0.7.0)
 
