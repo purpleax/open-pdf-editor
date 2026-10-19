@@ -130,11 +130,22 @@ typedef struct {
     bool external;       // a web or file link rather than a place in this document
     int page;            // for internal links: the target page, or -1
     float x, y;          // for internal links: the target point in page space (NaN if none)
+    int id;              // the link annotation's object number (0: can't be changed)
 } opdf_link;
 
 // A new array; free with opdf_links_free.
 opdf_link *opdf_links_load(opdf_doc *doc, int page, int *count, opdf_error *err);
 void opdf_links_free(opdf_link *links, int count);
+
+// Making and changing links: each is one undoable step. A link goes to a web
+// address (`uri`: http, https or mailto only) or, when `uri` is NULL, to
+// `target_page` of this document. Rectangles are in page space.
+// Returns the new link's id, or 0.
+int opdf_link_create(opdf_doc *doc, int page, opdf_rect rect, const char *uri, int target_page, opdf_error *err);
+// Changes a link's rectangle, and its target unless `retarget` is false.
+bool opdf_link_update(opdf_doc *doc, int page, int id, opdf_rect rect, bool retarget, const char *uri, int target_page,
+                      opdf_error *err);
+bool opdf_link_delete(opdf_doc *doc, int page, int id, opdf_error *err);
 
 // --- Outline ----------------------------------------------------------------
 

@@ -21,6 +21,7 @@ final class PageView: NSView {
     private let previewLayer = CALayer()
     private let tileContainer = CALayer()
     private let fieldLayer = CAShapeLayer()
+    private let contentLayer = CAShapeLayer()
     private let searchLayer = CAShapeLayer()
     private let currentMatchLayer = CAShapeLayer()
     private let selectionLayer = CAShapeLayer()
@@ -61,6 +62,12 @@ final class PageView: NSView {
             if multiply { shape.compositingFilter = "multiplyBlendMode" }
             layer.addSublayer(shape)
         }
+        // Edit Content: the outlines of what can be changed.
+        contentLayer.fillColor = nil
+        contentLayer.strokeColor = NSColor.systemGray.cgColor
+        contentLayer.lineDashPattern = [3, 2]
+        contentLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull(), "lineWidth": NSNull()]
+        layer.addSublayer(contentLayer)
         // Annotation editing: a shape being drawn, and the selection outline and grips.
         for shape in [draftLayer, outlineLayer, handleLayer] {
             shape.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull(), "strokeColor": NSNull(), "lineWidth": NSNull()]
@@ -86,7 +93,7 @@ final class PageView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for sub in [previewLayer, tileContainer, fieldLayer, searchLayer, currentMatchLayer, selectionLayer, draftLayer, outlineLayer, handleLayer] {
+        for sub in [previewLayer, tileContainer, fieldLayer, contentLayer, searchLayer, currentMatchLayer, selectionLayer, draftLayer, outlineLayer, handleLayer] {
             sub.frame = bounds
         }
         CATransaction.commit()
@@ -134,6 +141,7 @@ final class PageView: NSView {
         tileLayers.removeAll()
         previewLayer.contents = nil
         fieldLayer.path = nil
+        contentLayer.path = nil
         searchLayer.path = nil
         currentMatchLayer.path = nil
         selectionLayer.path = nil
@@ -255,6 +263,17 @@ final class PageView: NSView {
     /// Form fields that can be filled in, tinted (page space).
     func setFieldHighlights(_ rects: [CGRect], transform: CGAffineTransform) {
         fieldLayer.path = path(rects, transform)
+    }
+
+    /// Edit Content's outlines (page space); `zoom` keeps lines thin on screen.
+    func setContentOutlines(_ rects: [CGRect], transform: CGAffineTransform, zoom: CGFloat) {
+        contentLayer.path = rects.isEmpty ? nil : {
+            let path = CGMutablePath()
+            for rect in rects { path.addRect(rect.applying(transform)) }
+            return path
+        }()
+        contentLayer.lineWidth = 1 / max(zoom, 0.05)
+        contentLayer.lineDashPattern = [NSNumber(value: 3 / max(zoom, 0.05)), NSNumber(value: 2 / max(zoom, 0.05))]
     }
 
     /// The text selection, in page space.

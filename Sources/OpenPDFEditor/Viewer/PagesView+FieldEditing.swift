@@ -7,7 +7,8 @@ import PDFCore
 extension PagesView {
     private static let handleOrder: [AnnotationHandle] = [.topLeft, .top, .topRight, .right, .bottomRight, .bottom, .bottomLeft, .left]
 
-    private func handles(_ rect: CGRect) -> [(AnnotationHandle, CGPoint)] {
+    /// The eight grips around a rectangle (page space).
+    func rectHandles(_ rect: CGRect) -> [(AnnotationHandle, CGPoint)] {
         Self.handleOrder.map { handle in
             let point: CGPoint = switch handle {
             case .topLeft: CGPoint(x: rect.minX, y: rect.minY)
@@ -24,7 +25,7 @@ extension PagesView {
     }
 
     private func handle(at point: CGPoint, of field: FormField) -> AnnotationHandle? {
-        handles(field.rect).first { hypot($0.1.x - point.x, $0.1.y - point.y) <= tolerance }?.0
+        rectHandles(field.rect).first { hypot($0.1.x - point.x, $0.1.y - point.y) <= tolerance }?.0
     }
 
     func fieldMouseDown(with event: NSEvent) {
@@ -135,7 +136,7 @@ extension PagesView {
             view.setAnnotationSelection(outline: nil, handles: [], transform: .identity, zoom: zoom)
             return
         }
-        view.setAnnotationSelection(outline: CGPath(rect: field.rect, transform: nil), handles: handles(field.rect).map(\.1),
+        view.setAnnotationSelection(outline: CGPath(rect: field.rect, transform: nil), handles: rectHandles(field.rect).map(\.1),
                                     transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
     }
 

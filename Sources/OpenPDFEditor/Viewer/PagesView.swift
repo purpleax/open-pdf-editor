@@ -48,6 +48,10 @@ protocol PagesViewDelegate: AnyObject {
     func pagesView(_ view: PagesView, crop rect: CGRect, onPage page: Int)
     /// Crop mode was turned on or off.
     func pagesViewCropModeDidChange(_ view: PagesView)
+    /// The selected page content changed (while editing content).
+    func pagesView(_ view: PagesView, didSelectContent content: ContentRef?)
+    /// A link's area was dragged out: ask where it goes, then make it.
+    func pagesView(_ view: PagesView, makeLinkIn rect: CGRect, onPage page: Int)
     /// The selected form field changed (while editing fields).
     func pagesView(_ view: PagesView, didSelectField field: FieldRef?)
     /// A field tool has been used (it goes back to Select).
@@ -89,6 +93,47 @@ final class PagesView: NSView, NSMenuItemValidation {
     var forms: FormController?
     /// The text field being typed into, if any.
     var fieldEditor: FieldEditor?
+    /// Editing page content (Edit › Edit Content): links, and as Phase 5
+    /// goes on images and text.
+    var editingContent = false {
+        didSet {
+            guard editingContent != oldValue else { return }
+            fieldEditor?.finish()
+            contentGesture = .none
+            contentTool = .select
+            selectedContent = nil
+            if editingContent {
+                editingFields = false
+                isCropping = false
+                selectedAnnotation = nil
+                selection = nil
+                tool = .select
+            }
+            clearDrafts()
+            refreshContentOutlines()
+            window?.invalidateCursorRects(for: self)
+        }
+    }
+    var contentTool = ContentTool.select {
+        didSet { window?.invalidateCursorRects(for: self) }
+    }
+    var selectedContent: ContentRef? {
+        didSet {
+            guard selectedContent != oldValue else { return }
+            refreshAnnotationSelection()
+            delegate?.pagesView(self, didSelectContent: selectedContent)
+        }
+    }
+    enum ContentGesture {
+        case none
+        case create(page: Int, start: CGPoint, current: CGPoint)
+        case move(ContentRef, start: CGPoint, current: CGPoint)
+        case resize(ContentRef, AnnotationHandle, current: CGPoint)
+    }
+    var contentGesture = ContentGesture.none
+    /// Finds and changes page content (set by the viewer).
+    var content: ContentController?
+
     /// Editing the form's fields (Forms › Edit Fields) rather than filling
     /// them in: fields are selected, moved, resized and made with the field
     /// tools.
@@ -100,6 +145,7 @@ final class PagesView: NSView, NSMenuItemValidation {
             fieldTool = .select
             selectedField = nil
             if editingFields {
+                editingContent = false
                 selectedAnnotation = nil
                 selection = nil
                 tool = .select
@@ -219,6 +265,7 @@ final class PagesView: NSView, NSMenuItemValidation {
             if pageViews[page] == nil || changed {
                 pageViews[page] = view
                 applyFieldHighlights(to: view, page: page)
+                applyContentOutlines(to: view, page: page)
                 applyHighlights(to: view, page: page)
                 applySelection(to: view, page: page)
                 applyAnnotationSelection(to: view, page: page)
@@ -269,6 +316,15 @@ final class PagesView: NSView, NSMenuItemValidation {
     }
 
     // MARK: Highlights
+
+    func refreshContentOutlines() {
+        for (page, view) in pageViews { applyContentOutlines(to: view, page: page) }
+    }
+
+    private func applyContentOutlines(to view: PageView, page: Int) {
+        let rects = editingContent ? (content?.items(page: page).map(\.rect) ?? []) : []
+        view.setContentOutlines(rects, transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
+    }
 
     func refreshFieldHighlights() {
         for (page, view) in pageViews { applyFieldHighlights(to: view, page: page) }
@@ -362,7 +418,7 @@ final class PagesView: NSView, NSMenuItemValidation {
         switch item.action {
         case #selector(copy(_:)): return selection.map { !$0.isEmpty } ?? false
         case #selector(selectAll(_:)): return model.pageCount > 0
-        case #selector(delete(_:)): return selectedAnnotation != nil || selectedField != nil
+        case #selector(delete(_:)): return selectedAnnotation != nil || selectedField != nil || selectedContent != nil
         default: return true
         }
     }
@@ -468,6 +524,10 @@ final class PagesView: NSView, NSMenuItemValidation {
             fieldCursor(at: location).set()
             return
         }
+        if editingContent {
+            contentCursor(at: location).set()
+            return
+        }
         if isCropping || (tool != .select && !tool.marksText) {
             NSCursor.crosshair.set()
             return
@@ -544,6 +604,15 @@ final class PagesView: NSView, NSMenuItemValidation {
         if case .none = fieldGesture {} else {
             fieldGesture = .none
             clearDrafts()
+            return
+        }
+        if case .none = contentGesture {} else {
+            contentGesture = .none
+            clearDrafts()
+            return
+        }
+        if selectedContent != nil {
+            selectedContent = nil
             return
         }
         if isCropping {

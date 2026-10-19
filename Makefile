@@ -64,6 +64,9 @@ selftest: build corpus
 	OPDF_SELFTEST="$(CURDIR)/build/corpus/forms.pdf" OPDF_SELFTEST_FORMS=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/forms" \
 		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES
 	cat build/selftest/forms/log.txt
+	OPDF_SELFTEST="$(CURDIR)/build/corpus/text.pdf" OPDF_SELFTEST_CONTENT=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/content" \
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES
+	cat build/selftest/content/log.txt
 
 # Copy the app to /Applications.
 install: build

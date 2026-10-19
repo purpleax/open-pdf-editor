@@ -16,6 +16,10 @@ extension PagesView {
             fieldMouseDown(with: event)
             return
         }
+        if editingContent {
+            contentMouseDown(with: event)
+            return
+        }
         let location = convert(event.locationInWindow, from: nil)
         guard let (page, point) = pageAndPoint(at: location), let annotations else {
             textMouseDown(with: event)
@@ -69,6 +73,10 @@ extension PagesView {
             fieldMouseDragged(with: event)
             return
         }
+        if editingContent {
+            contentMouseDragged(with: event)
+            return
+        }
         let location = convert(event.locationInWindow, from: nil)
         switch gesture {
         case .none:
@@ -103,6 +111,10 @@ extension PagesView {
     override func mouseUp(with event: NSEvent) {
         if editingFields {
             fieldMouseUp(with: event)
+            return
+        }
+        if editingContent {
+            contentMouseUp(with: event)
             return
         }
         let finished = gesture
@@ -269,6 +281,11 @@ extension PagesView {
             selectedField = nil   // it was deleted or undone
             return
         }
+        if let ref = selectedContent, content?.item(ref) == nil {
+            selectedContent = nil
+            return
+        }
+        if editingContent { refreshContentOutlines() }
         if let ref = selectedAnnotation, annotations?.annotation(ref) == nil {
             selectedAnnotation = nil   // it was deleted or undone
             return
@@ -281,6 +298,10 @@ extension PagesView {
     func applyAnnotationSelection(to view: PageView, page: Int) {
         if editingFields {
             applyFieldSelection(to: view, page: page)
+            return
+        }
+        if editingContent {
+            applyContentSelection(to: view, page: page)
             return
         }
         guard let ref = selectedAnnotation, ref.page == page, let annotations, let a = annotations.annotation(ref) else {
@@ -308,6 +329,15 @@ extension PagesView {
     }
 
     func deleteSelectedAnnotation() {
+        if let ref = selectedContent, let content {
+            do {
+                try content.delete(ref)
+                selectedContent = nil
+            } catch {
+                NSSound.beep()
+            }
+            return
+        }
         if let field = selectedField, let forms {
             do {
                 try forms.delete(field)

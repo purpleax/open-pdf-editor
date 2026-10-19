@@ -24,6 +24,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     private var markupAccessory: NSTitlebarAccessoryViewController?
     let fieldBar = FieldBarViewController()
     var fieldAccessory: NSTitlebarAccessoryViewController?
+    let contentBar = ContentBarViewController()
+    var contentAccessory: NSTitlebarAccessoryViewController?
     private var split: NSSplitViewController?
     private var sidebarItem: NSSplitViewItem?
     private(set) var inspectorItem: NSSplitViewItem?
@@ -138,6 +140,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         viewer.onCropModeChange = { [weak self] in self?.viewerStateDidChange() }
         setUpMarkupBar()
         setUpFieldBar()
+        setUpContentBar()
+        inspector.content.onChangeLink = { [weak self] ref in self?.changeLinkTarget(ref) }
         NotificationCenter.default.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] note in
             let pages = note.userInfo?["pages"] as? Set<Int>
             MainActor.assumeIsolated {
@@ -638,6 +642,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             return viewer.model.isEditable
         case #selector(flattenForm(_:)):
             return viewer.model.isEditable && ((try? viewer.model.engine.formInfo().hasFields) ?? false)
+        case #selector(toggleEditContent(_:)):
+            setState(viewer.pagesView.editingContent)
+            return viewer.model.isEditable
         case #selector(toggleEditFields(_:)):
             setState(viewer.pagesView.editingFields)
             return viewer.model.isEditable

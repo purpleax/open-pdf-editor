@@ -19,6 +19,7 @@ extension DocumentWindowController {
 
     func setEditingFields(_ editing: Bool) {
         guard let viewer else { return }
+        if editing, viewer.pagesView.editingContent { setEditingContent(false) }
         viewer.pagesView.isCropping = false
         viewer.pagesView.editingFields = editing
         fieldBar.setTool(.select)

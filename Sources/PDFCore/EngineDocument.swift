@@ -214,7 +214,7 @@ public final class EngineDocument: @unchecked Sendable {
         if links == nil && error.code != 0 { throw EngineError(error) }
         defer { opdf_links_free(links, count) }
         return UnsafeBufferPointer(start: links, count: Int(count)).map { link in
-            PageLink(rect: CGRect(link.rect), uri: link.uri.map { String(cString: $0) } ?? "",
+            PageLink(id: Int(link.id), rect: CGRect(link.rect), uri: link.uri.map { String(cString: $0) } ?? "",
                      isExternal: link.external, targetPage: link.page >= 0 ? Int(link.page) : nil,
                      targetPoint: CGPoint(x: CGFloat(link.x), y: CGFloat(link.y)).finiteOrNil)
         }
@@ -330,6 +330,8 @@ public final class RenderCookie: @unchecked Sendable {
 }
 
 public struct PageLink: Sendable {
+    /// The link annotation's object number; 0 if it can't be changed.
+    public let id: Int
     public let rect: CGRect
     public let uri: String
     public let isExternal: Bool

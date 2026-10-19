@@ -18,6 +18,15 @@
 // image engines instead.
 extern fz_document_handler pdf_document_handler;
 
+// MuPDF's pdf_link (source/pdf/pdf-annot-imp.h, not in its public headers):
+// the links fz_load_links returns for a PDF page, with their annotation
+// objects. Declared the same way; MuPDF is pinned (thirdparty/mupdf).
+typedef struct {
+    fz_link super;
+    pdf_page *page;
+    pdf_obj *obj;
+} mupdf_pdf_link;
+
 // Outlines deeper or larger than this are not loaded: MuPDF walks them
 // recursively, so a hostile file could exhaust the stack.
 #define MAX_OUTLINE_DEPTH 256
@@ -652,6 +661,7 @@ opdf_link *opdf_links_load(opdf_doc *d, int page_number, int *count, opdf_error 
             out->rect = rect_to(l->rect);
             out->uri = dup_string(l->uri);
             out->external = fz_is_external_link(ctx, l->uri) != 0;
+            if (pdf_page_from_fz_page(ctx, page)) out->id = pdf_to_num(ctx, ((mupdf_pdf_link *)l)->obj);
             out->page = -1;
             out->x = NAN;
             out->y = NAN;
@@ -688,6 +698,36 @@ void opdf_links_free(opdf_link *links, int count) {
     if (!links) return;
     for (int i = 0; i < count; i++) free(links[i].uri);
     free(links);
+}
+
+// A link's address, checked: a web address (http, https, mailto; printable
+// ASCII, at most 2048 bytes), or a page of this document.
+static char *link_uri(fz_context *ctx, fz_document *doc, const char *uri, int target_page) {
+    if (uri) {
+        size_t len = strlen(uri);
+        if (len == 0 || len > 2048) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That address is empty or too long");
+        for (size_t i = 0; i < len; i++)
+            if ((unsigned char)uri[i] <= 0x20 || (unsigned char)uri[i] >= 0x7f) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That address has characters a link can't hold");
+        size_t scheme = !fz_strncasecmp(uri, "http://", 7) ? 7 : !fz_strncasecmp(uri, "https://", 8) ? 8 : !fz_strncasecmp(uri, "mailto:", 7) ? 7 : 0;
+        if (!scheme) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Links can go to web addresses (http, https) and email addresses (mailto) only");
+        if (len == scheme) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That address is missing everything after its start");
+        return fz_strdup(ctx, uri);
+    }
+    if (target_page < 0 || target_page >= fz_count_pages(ctx, doc)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "There is no such page");
+    return pdf_new_uri_from_explicit_dest(ctx, fz_make_link_dest_xyz(0, target_page, NAN, NAN, NAN));
+}
+
+static fz_link *find_link(fz_context *ctx, pdf_page *page, int id) {
+    if (id <= 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This link can't be changed");
+    for (fz_link *l = page->links; l; l = l->next)
+        if (pdf_to_num(ctx, ((mupdf_pdf_link *)l)->obj) == id) return l;
+    fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such link");
+}
+
+static fz_rect link_rect(fz_context *ctx, opdf_rect rect) {
+    fz_rect r = fz_make_rect(rect.x0, rect.y0, rect.x1, rect.y1);
+    if (fz_is_empty_rect(r) || r.x1 - r.x0 > 14400 || r.y1 - r.y0 > 14400) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That link is the wrong size");
+    return r;
 }
 
 // --- Outline -----------------------------------------------------------------
@@ -1469,6 +1509,78 @@ bool opdf_annot_set_status(opdf_doc *d, int page_number, int parent, const char 
             fz_catch(ctx)
                 fz_rethrow(ctx);
         }
+    });
+    return !(err && err->code);
+}
+
+// --- Editing links ----------------------------------------------------------------
+
+int opdf_link_create(opdf_doc *d, int page_number, opdf_rect rect, const char *uri, int target_page, opdf_error *err) {
+    clear_error(err);
+    int id = 0;
+    char *target = NULL;
+    fz_link *link = NULL;
+    fz_var(id);
+    fz_var(target);
+    fz_var(link);
+    WITH_PAGE_OPERATION(d, page_number, "New Link", err, {
+        fz_try(ctx) {
+            fz_rect r = link_rect(ctx, rect);
+            target = link_uri(ctx, d->doc, uri, target_page);
+            link = pdf_create_link(ctx, pp, r, target);
+            id = pdf_to_num(ctx, ((mupdf_pdf_link *)link)->obj);
+            if (id == 0) id = pdf_obj_parent_num(ctx, ((mupdf_pdf_link *)link)->obj);
+        }
+        fz_always(ctx) {
+            fz_drop_link(ctx, link);
+            link = NULL;
+            fz_free(ctx, target);
+            target = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    if (err && err->code) id = 0;
+    return id;
+}
+
+bool opdf_link_update(opdf_doc *d, int page_number, int id, opdf_rect rect, bool retarget, const char *uri, int target_page,
+                      opdf_error *err) {
+    clear_error(err);
+    char *target = NULL;
+    fz_var(target);
+    WITH_PAGE_OPERATION(d, page_number, "Change Link", err, {
+        fz_try(ctx) {
+            fz_link *link = find_link(ctx, pp, id);
+            pdf_obj *obj = ((mupdf_pdf_link *)link)->obj;
+            // MuPDF's pdf_set_link_rect doesn't map page space to PDF
+            // space; /Rect is written here as pdf_create_link writes it.
+            fz_rect mediabox;
+            fz_matrix ctm;
+            pdf_page_transform(ctx, pp, &mediabox, &ctm);
+            fz_rect r = link_rect(ctx, rect);
+            pdf_dict_put_rect(ctx, obj, PDF_NAME(Rect), fz_transform_rect(r, fz_invert_matrix(ctm)));
+            link->rect = r;
+            if (retarget) {
+                target = link_uri(ctx, d->doc, uri, target_page);
+                pdf_dict_put_drop(ctx, obj, PDF_NAME(A), pdf_new_action_from_link(ctx, pdf, target));
+                pdf_dict_del(ctx, obj, PDF_NAME(Dest));
+            }
+        }
+        fz_always(ctx) {
+            fz_free(ctx, target);
+            target = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_link_delete(opdf_doc *d, int page_number, int id, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Delete Link", err, {
+        pdf_delete_link(ctx, pp, find_link(ctx, pp, id));
     });
     return !(err && err->code);
 }

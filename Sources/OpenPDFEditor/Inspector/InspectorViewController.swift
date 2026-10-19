@@ -7,12 +7,14 @@ import PDFCore
 final class InspectorViewController: NSViewController {
     let annotation: AnnotationInspectorViewController
     let field: FieldInspectorViewController
+    let content: ContentInspectorViewController
     let document: DocumentInfoViewController
     private let separator = NSBox()
 
     init(viewer: ViewerController, fileURL: URL?) {
         annotation = AnnotationInspectorViewController(viewer: viewer)
         field = FieldInspectorViewController(viewer: viewer)
+        content = ContentInspectorViewController(viewer: viewer)
         document = DocumentInfoViewController(viewer: viewer, fileURL: fileURL)
         super.init(nibName: nil, bundle: nil)
     }
@@ -23,20 +25,22 @@ final class InspectorViewController: NSViewController {
     override func loadView() {
         addChild(annotation)
         addChild(field)
+        addChild(content)
         addChild(document)
         separator.boxType = .separator
         // A stack collapses the annotation section when it is hidden.
-        let stack = NSStackView(views: [annotation.view, field.view, separator, document.view])
+        let stack = NSStackView(views: [annotation.view, field.view, content.view, separator, document.view])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.distribution = .fill
         stack.spacing = 0
-        for v in [annotation.view, field.view, separator, document.view] {
+        for v in [annotation.view, field.view, content.view, separator, document.view] {
             v.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
         document.view.setContentHuggingPriority(.defaultLow, for: .vertical)
         annotation.view.setContentHuggingPriority(.required, for: .vertical)
         field.view.setContentHuggingPriority(.required, for: .vertical)
+        content.view.setContentHuggingPriority(.required, for: .vertical)
         stack.translatesAutoresizingMaskIntoConstraints = false
         let root = NSView()
         root.addSubview(stack)
@@ -55,6 +59,11 @@ final class InspectorViewController: NSViewController {
         update()
     }
 
+    func show(content ref: ContentRef?) {
+        content.ref = ref
+        update()
+    }
+
     func show(field ref: FieldRef?) {
         field.ref = ref
         update()
@@ -63,13 +72,14 @@ final class InspectorViewController: NSViewController {
     func refresh() {
         annotation.reload()
         field.reload()
+        content.reload()
         document.reload()
         update()
     }
 
     private func update() {
         guard isViewLoaded else { return }
-        separator.isHidden = annotation.view.isHidden && field.view.isHidden
+        separator.isHidden = annotation.view.isHidden && field.view.isHidden && content.view.isHidden
     }
 
     func pageDidChange() { document.pageDidChange() }

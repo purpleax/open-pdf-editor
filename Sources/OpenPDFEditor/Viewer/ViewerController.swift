@@ -23,6 +23,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     let pagesView: PagesView
     let annotations: AnnotationController
     let forms: FormController
+    let content: ContentController
     private(set) lazy var pages = PageEditor(viewer: self)
     private var editor: AnnotationEditor?
 
@@ -46,6 +47,9 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     /// Called when the selected annotation changes.
     var onAnnotationSelectionChange: ((AnnotationRef?) -> Void)?
     var onFieldSelectionChange: ((FieldRef?) -> Void)?
+    var onContentSelectionChange: ((ContentRef?) -> Void)?
+    /// A link's area was dragged out (the window asks where it goes).
+    var onMakeLink: ((CGRect, Int) -> Void)?
     var onFieldToolChange: ((FieldTool) -> Void)?
     /// Called when the tool changes (a one-off tool going back to Select).
     var onToolChange: ((AnnotationTool) -> Void)?
@@ -75,6 +79,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
         pagesView = PagesView(model: model, renderer: renderer)
         annotations = AnnotationController(model: model)
         forms = FormController(model: model)
+        content = ContentController(model: model)
         displayMode = Self.savedDisplayMode
         super.init(nibName: nil, bundle: nil)
     }
@@ -100,6 +105,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
         pagesView.delegate = self
         pagesView.annotations = annotations
         pagesView.forms = forms
+        pagesView.content = content
         pagesView.highlightsFields = UserDefaults.standard.object(forKey: "HighlightFields") as? Bool ?? true
         pagesView.accessibilityPages.focusHandler = { [weak self] page in
             guard let self, !self.isVisible(page: page) else { return }
@@ -553,6 +559,14 @@ final class ViewerController: NSViewController, PagesViewDelegate {
 
     func pagesView(_ view: PagesView, didSelectField field: FieldRef?) {
         onFieldSelectionChange?(field)
+    }
+
+    func pagesView(_ view: PagesView, didSelectContent content: ContentRef?) {
+        onContentSelectionChange?(content)
+    }
+
+    func pagesView(_ view: PagesView, makeLinkIn rect: CGRect, onPage page: Int) {
+        onMakeLink?(rect, page)
     }
 
     func pagesViewDidUseFieldTool(_ view: PagesView) {

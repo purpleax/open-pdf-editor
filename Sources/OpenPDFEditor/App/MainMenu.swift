@@ -59,6 +59,9 @@ enum MainMenu {
         edit.addItem(withTitle: "Delete", action: #selector(PagesView.delete(_:)), keyEquivalent: "")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.addItem(.separator())
+        edit.addItem(withTitle: "Edit Content", action: #selector(DocumentWindowController.toggleEditContent(_:)), keyEquivalent: "e")
+            .keyEquivalentModifierMask = [.command, .option]
+        edit.addItem(.separator())
         let findItem = edit.addItem(withTitle: "Find", action: nil, keyEquivalent: "")
         let find = NSMenu(title: "Find")
         findItem.submenu = find

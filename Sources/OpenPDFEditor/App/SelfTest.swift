@@ -31,7 +31,14 @@ enum SelfTest {
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                if ProcessInfo.processInfo.environment["OPDF_SELFTEST_FORMS"] != nil { formSteps(document) } else { steps(document) }
+                let environment = ProcessInfo.processInfo.environment
+                if environment["OPDF_SELFTEST_FORMS"] != nil {
+                    formSteps(document)
+                } else if environment["OPDF_SELFTEST_CONTENT"] != nil {
+                    contentSteps(document)
+                } else {
+                    steps(document)
+                }
             }
         }
     }
@@ -349,6 +356,53 @@ enum SelfTest {
                     snapshot(window, "forms-4-flattened")
                     finish()
                 }
+            }
+        }
+    }
+
+    /// Edits page content: the document's information, then links drawn with
+    /// the Link tool, moved, retargeted and deleted.
+    static func contentSteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let viewer = controller.viewer, let window = controller.window else {
+            say("FAIL no viewer")
+            return finish()
+        }
+        window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 860), display: true)
+        do {
+            try viewer.model.edit("Change Title", pages: []) { try $0.setMetadata(title: "Self test title") }
+        } catch { say("FAIL metadata: \(error)") }
+        say("title: \(viewer.model.engine.metadata("info:Title") ?? "none")")
+        controller.setEditingContent(true)
+        let before = viewer.model.links(page: 0).count
+        viewer.pagesView.contentTool = .link
+        drag(viewer, page: 0, from: CGPoint(x: 300, y: 400), to: CGPoint(x: 450, y: 425))
+        if let sheet = window.attachedSheet?.contentView {
+            func fields(_ view: NSView) -> [NSTextField] { (view as? NSTextField).map { [$0] } ?? view.subviews.flatMap(fields) }
+            fields(sheet).first { $0.stringValue == "https://" }?.stringValue = "https://example.com/self-test"
+        }
+        let asked = pressSheetButton(window, "OK")
+        let links = viewer.model.links(page: 0)
+        say("link sheet: \(asked); links \(before) -> \(links.count); selected \(String(describing: viewer.pagesView.selectedContent))")
+        if let made = links.first(where: { $0.id != 0 && abs($0.rect.minX - 300) < 1 }) {
+            say("made link: \(made.uri) at \(made.rect.integral)")
+            viewer.pagesView.contentTool = .select
+            drag(viewer, page: 0, from: CGPoint(x: made.rect.midX, y: made.rect.midY), to: CGPoint(x: made.rect.midX + 30, y: made.rect.midY + 40))
+            let moved = viewer.model.links(page: 0).first { $0.id == made.id }
+            say("moved link to \(moved?.rect.integral ?? .zero)")
+            do {
+                try viewer.content.setTarget(.link(page: 0, id: made.id), .page(2))
+            } catch { say("FAIL retarget: \(error)") }
+            say("retargeted: page \(viewer.model.links(page: 0).first { $0.id == made.id }?.targetPage ?? -1)")
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            snapshot(window, "content-1-links")
+            document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                if let url = document.fileURL, let saved = try? EngineDocument(url: url) {
+                    say("saved: title \(saved.metadata("info:Title") ?? "none"), links \((try? saved.links(page: 0).count) ?? -1)")
+                }
+                finish()
             }
         }
     }

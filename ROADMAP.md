@@ -133,7 +133,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 - [ ] Add, replace, move, resize and delete images
 - [ ] Headers, footers, watermarks and page numbers
-- [ ] Links
+- [x] Links
+  - Edit › Edit Content (⌥⌘E) shows the content bar. With the Link tool, drag out an area and choose a web or email address (http, https, mailto) or a page; links are outlined, and are selected, moved, resized, retargeted (inspector) and deleted like annotations. Each change is one undoable step. MuPDF's pdf_set_link_rect doesn't map page space to PDF space, so the bridge writes /Rect itself.
 - [ ] Edit text within a line: characters, font, size and colour
 - [x] Edit metadata
   - Title, Author, Subject and Keywords are edited in the inspector (one undoable step each), and ModDate is set. A file with XMP metadata gets a new XMP packet to match, keeping its PDF/A identification.
