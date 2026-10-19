@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 // MuPDF's PDF handler (not in its public headers; declared the same way in
 // its own sources). Only PDF is registered: MuPDF sniffs content, so with
@@ -3632,33 +3633,14 @@ static bool journal_step(opdf_doc *d, void (*step)(fz_context *, pdf_document *)
 bool opdf_undo(opdf_doc *d, opdf_error *err) { return journal_step(d, pdf_undo, err); }
 bool opdf_redo(opdf_doc *d, opdf_error *err) { return journal_step(d, pdf_redo, err); }
 
-bool opdf_save(opdf_doc *d, const char *path, opdf_error *err) {
-    clear_error(err);
-    fz_context *ctx = d->ctx;
+// Writes the document as it is now to `path`: the original bytes, then
+// every change as one snapshot (see opdf_save). The document is unchanged.
+static void write_snapshot(fz_context *ctx, pdf_document *pdf, const char *path) {
     fz_output *out = NULL;
     unsigned char *chunk = NULL;
-    bool ok = false;
     fz_var(out);
     fz_var(chunk);
-    fz_var(ok);
-    lock_doc(d);
     fz_try(ctx) {
-        pdf_document *pdf = pdf_specifics(ctx, d->doc);
-        if (!pdf || !pdf->file) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
-        // MuPDF repairs a damaged file when it first trips over it, and a
-        // repair throws away the changes made so far. opdf_prepare_for_editing
-        // makes that happen before any change; if it happened anyway, the
-        // edits are gone from the document and saving would lose them.
-        if (d->edits_prepared && pdf_was_repaired(ctx, pdf) && !d->repaired_before_edits)
-            fz_throw(ctx, FZ_ERROR_FORMAT, "The document is damaged, and MuPDF had to repair it after it was changed. To keep your work, the document wasn't saved.");
-        if (!pdf_can_be_saved_incrementally(ctx, pdf))
-            fz_throw(ctx, FZ_ERROR_ARGUMENT, "This document can't be saved.");
-        // The saved file starts with the bytes the document was opened from.
-        // If another app rewrote the file in place since, they're different.
-        fz_seek(ctx, pdf->file, 0, SEEK_END);
-        if (fz_tell(ctx, pdf->file) != pdf->file_size)
-            fz_throw(ctx, FZ_ERROR_FORMAT, "The file was changed by another app while it was open. Close it and open it again.");
-
         // The original bytes...
         out = fz_new_output_with_path(ctx, path, 0);
         chunk = fz_malloc(ctx, 1 << 16);
@@ -3693,6 +3675,43 @@ bool opdf_save(opdf_doc *d, const char *path, opdf_error *err) {
             fz_catch(ctx)
                 fz_rethrow(ctx);
         }
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, out);
+        fz_free(ctx, chunk);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_save(opdf_doc *d, const char *path, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = d->ctx;
+    fz_output *out = NULL;
+    unsigned char *chunk = NULL;
+    bool ok = false;
+    fz_var(out);
+    fz_var(chunk);
+    fz_var(ok);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf || !pdf->file) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        // MuPDF repairs a damaged file when it first trips over it, and a
+        // repair throws away the changes made so far. opdf_prepare_for_editing
+        // makes that happen before any change; if it happened anyway, the
+        // edits are gone from the document and saving would lose them.
+        if (d->edits_prepared && pdf_was_repaired(ctx, pdf) && !d->repaired_before_edits)
+            fz_throw(ctx, FZ_ERROR_FORMAT, "The document is damaged, and MuPDF had to repair it after it was changed. To keep your work, the document wasn't saved.");
+        if (!pdf_can_be_saved_incrementally(ctx, pdf))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "This document can't be saved.");
+        // The saved file starts with the bytes the document was opened from.
+        // If another app rewrote the file in place since, they're different.
+        fz_seek(ctx, pdf->file, 0, SEEK_END);
+        if (fz_tell(ctx, pdf->file) != pdf->file_size)
+            fz_throw(ctx, FZ_ERROR_FORMAT, "The file was changed by another app while it was open. Close it and open it again.");
+
+        write_snapshot(ctx, pdf, path);
         ok = true;
     }
     fz_always(ctx) {
@@ -3763,6 +3782,141 @@ bool opdf_prepare_for_editing(opdf_doc *d, const char *password, bool *repaired,
         fz_drop_stream(ctx, stm);
         fz_drop_buffer(ctx, buf);
         fz_drop_document(ctx, (fz_document *)fresh);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    unlock_doc(d);
+    return ok;
+}
+
+static void rewrite_xmp(fz_context *ctx, pdf_document *pdf, pdf_obj *stream, pdf_obj *info, int64_t now);
+
+// Hidden leftovers a rewrite would otherwise keep: page thumbnails (renders
+// of the old pages), PieceInfo (application data), document JavaScript, and
+// XMP that may repeat what was removed. Inside an operation.
+static void scrub_document(fz_context *ctx, pdf_document *pdf, int64_t now) {
+    pdf_obj *trailer = pdf_trailer(ctx, pdf);
+    pdf_obj *root = pdf_dict_get(ctx, trailer, PDF_NAME(Root));
+    int pages = pdf_count_pages(ctx, pdf);
+    for (int i = 0; i < pages; i++) {
+        pdf_obj *page = pdf_lookup_page_obj(ctx, pdf, i);
+        if (!pdf_is_dict(ctx, page)) continue;
+        pdf_dict_del(ctx, page, PDF_NAME(Thumb));
+        pdf_dict_dels(ctx, page, "PieceInfo");
+        pdf_dict_del(ctx, page, PDF_NAME(AA));
+    }
+    if (!pdf_is_dict(ctx, root)) return;
+    pdf_dict_dels(ctx, root, "PieceInfo");
+    pdf_dict_del(ctx, root, PDF_NAME(AA));
+    pdf_obj *names = pdf_dict_get(ctx, root, PDF_NAME(Names));
+    if (pdf_is_dict(ctx, names)) pdf_dict_del(ctx, names, PDF_NAME(JavaScript));
+    pdf_obj *open = pdf_dict_gets(ctx, root, "OpenAction");
+    if (pdf_is_dict(ctx, open) && pdf_name_eq(ctx, pdf_dict_get(ctx, open, PDF_NAME(S)), PDF_NAME(JavaScript)))
+        pdf_dict_dels(ctx, root, "OpenAction");
+    pdf_obj *xmp = pdf_dict_get(ctx, root, PDF_NAME(Metadata));
+    if (pdf_is_stream(ctx, xmp)) rewrite_xmp(ctx, pdf, xmp, pdf_dict_get(ctx, trailer, PDF_NAME(Info)), now);
+}
+
+bool opdf_rebase(opdf_doc *d, const opdf_rebase_options *o, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = d->ctx;
+    char temp[1024] = "";
+    pdf_document *copy = NULL, *fresh = NULL;
+    fz_buffer *buf = NULL;
+    fz_output *out = NULL;
+    fz_stream *stm = NULL;
+    bool ok = false;
+    fz_var(copy);
+    fz_var(fresh);
+    fz_var(buf);
+    fz_var(out);
+    fz_var(stm);
+    fz_var(ok);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf || !pdf->file) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        if (o->encryption == OPDF_ENCRYPT_AES256) {
+            if (!o->owner_password || !o->owner_password[0]) fz_throw(ctx, FZ_ERROR_ARGUMENT, "An owner password is needed");
+            if (strlen(o->owner_password) > 127 || (o->user_password && strlen(o->user_password) > 127))
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "Passwords can be at most 127 bytes long");
+        }
+        // The document to write: a copy of it as it is now, when it can be
+        // saved as a snapshot (so a failure leaves the open document as it
+        // was); after a redaction, which can't be, the document itself.
+        pdf_document *source = pdf;
+        if (pdf_can_be_saved_incrementally(ctx, pdf)) {
+            const char *dir = getenv("TMPDIR");
+            fz_snprintf(temp, sizeof temp, "%s/opdf-rebase-XXXXXX", dir && dir[0] ? dir : "/tmp");
+            int fd = mkstemp(temp);
+            if (fd < 0) {
+                temp[0] = 0;
+                fz_throw(ctx, FZ_ERROR_SYSTEM, "Could not make a temporary file");
+            }
+            close(fd);
+            write_snapshot(ctx, pdf, temp);
+            copy = pdf_open_document(ctx, temp);
+            if (pdf_needs_password(ctx, copy) && !(o->open_password && pdf_authenticate_password(ctx, copy, o->open_password)))
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "Could not unlock the document's copy");
+            source = copy;
+        }
+        if (o->scrub) {
+            pdf_begin_operation(ctx, source, "Clean Up");
+            fz_try(ctx) {
+                scrub_document(ctx, source, o->now);
+                pdf_end_operation(ctx, source);
+            }
+            fz_catch(ctx) {
+                pdf_abandon_operation(ctx, source);
+                fz_rethrow(ctx);
+            }
+        }
+        pdf_write_options opts = pdf_default_write_options;
+        opts.do_garbage = 3;
+        opts.do_compress = 1;
+        opts.do_use_objstms = 1;
+        if (o->encryption == OPDF_ENCRYPT_NONE) {
+            opts.do_encrypt = PDF_ENCRYPT_NONE;
+        } else if (o->encryption == OPDF_ENCRYPT_AES256) {
+            opts.do_encrypt = PDF_ENCRYPT_AES_256;
+            opts.permissions = o->permissions;
+            fz_strlcpy(opts.opwd_utf8, o->owner_password, sizeof opts.opwd_utf8);
+            fz_strlcpy(opts.upwd_utf8, o->user_password ? o->user_password : "", sizeof opts.upwd_utf8);
+        }
+        buf = fz_new_buffer(ctx, 1 << 20);
+        out = fz_new_output_with_buffer(ctx, buf);
+        pdf_journal *journal = source->journal;
+        source->journal = NULL;
+        fz_try(ctx)
+            pdf_write_document(ctx, source, out, &opts);
+        fz_always(ctx)
+            source->journal = journal;
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+        fz_close_output(ctx, out);
+        stm = fz_open_buffer(ctx, buf);
+        fresh = pdf_open_document_with_stream(ctx, stm);
+        const char *unlock = o->encryption == OPDF_ENCRYPT_AES256 ? o->owner_password
+                           : o->encryption == OPDF_ENCRYPT_NONE ? "" : o->open_password;
+        if (pdf_needs_password(ctx, fresh) && !(unlock && pdf_authenticate_password(ctx, fresh, unlock)))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Could not unlock the rewritten document");
+        pdf_check_document(ctx, fresh);
+        if (pdf_was_repaired(ctx, fresh)) fz_throw(ctx, FZ_ERROR_FORMAT, "The rewritten document is damaged");
+        pdf_enable_journal(ctx, fresh);
+        fz_drop_document(ctx, d->doc);
+        d->doc = (fz_document *)fresh;
+        fresh = NULL;
+        d->repaired_before_edits = false;
+        d->edits_prepared = true;
+        ok = true;
+    }
+    fz_always(ctx) {
+        fz_drop_output(ctx, out);
+        fz_drop_stream(ctx, stm);
+        fz_drop_buffer(ctx, buf);
+        pdf_drop_document(ctx, copy);
+        pdf_drop_document(ctx, fresh);
+        if (temp[0]) unlink(temp);
     }
     fz_catch(ctx)
         set_error(err, ctx);

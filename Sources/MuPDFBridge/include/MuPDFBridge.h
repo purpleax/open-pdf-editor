@@ -538,6 +538,22 @@ bool opdf_field_delete(opdf_doc *doc, int page, int id, opdf_error *err);
 // happened.
 bool opdf_prepare_for_editing(opdf_doc *doc, const char *password, bool *repaired, opdf_error *err);
 
+// Writing the document whole ("rebase"): the document as it is now is
+// written out again in full (unused objects and earlier revisions dropped),
+// opened from those bytes, and edited from then on. Undo history is gone.
+// Redaction and security changes use it.
+enum { OPDF_ENCRYPT_KEEP = 0, OPDF_ENCRYPT_NONE = 1, OPDF_ENCRYPT_AES256 = 2 };
+typedef struct {
+    int encryption;              // OPDF_ENCRYPT_*
+    const char *open_password;   // what the document was unlocked with (KEEP), or NULL
+    const char *user_password;   // AES256: to open ("" for none)
+    const char *owner_password;  // AES256: for full access (required)
+    int permissions;             // AES256: PDF_PERM_* bits granted to the user password
+    bool scrub;                  // also remove thumbnails, PieceInfo and document JavaScript, and rebuild XMP
+    int64_t now;                 // for the rebuilt XMP
+} opdf_rebase_options;
+bool opdf_rebase(opdf_doc *doc, const opdf_rebase_options *options, opdf_error *err);
+
 bool opdf_can_undo(opdf_doc *doc);
 bool opdf_can_redo(opdf_doc *doc);
 bool opdf_undo(opdf_doc *doc, opdf_error *err);
