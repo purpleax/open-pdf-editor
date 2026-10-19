@@ -168,6 +168,8 @@ enum MainMenu {
             item.image = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil)
             if tool == .select { forms.addItem(.separator()) }
         }
+        forms.addItem(.separator())
+        forms.addItem(withTitle: "Flatten Form…", action: #selector(DocumentWindowController.flattenForm(_:)), keyEquivalent: "")
 
         let window = submenu(in: main, title: "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")

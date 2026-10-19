@@ -210,6 +210,30 @@ import Testing
     }
 }
 
+@Suite struct FlattenFormTests {
+    @Test func flattenKeepsWhatWasFilledIn() throws {
+        let doc = try Corpus.open("forms.pdf")
+        let name = try #require(try doc.fields(page: 0).first { $0.name == "name" })
+        try doc.setText("WWWWWWWWWWWW", page: 0, field: name.id)
+        func ink(_ doc: EngineDocument) throws -> Int {
+            // Dark pixels where the name field is (page space is pixels at scale 1).
+            let pixels = try Pixels(doc.renderPage(0, bounds: try doc.pageBounds()[0], scale: 1))
+            var dark = 0
+            for y in Int(name.rect.minY)..<Int(name.rect.maxY) {
+                for x in Int(name.rect.minX)..<Int(name.rect.maxX) where pixels.rgb(x, y).allSatisfy({ $0 < 100 }) { dark += 1 }
+            }
+            return dark
+        }
+        let before = try ink(doc)
+        try doc.flattenForm()
+        #expect(try doc.fields(page: 0).isEmpty)
+        #expect(try !doc.formInfo().hasFields)
+        #expect(try ink(doc) >= before / 2 && before > 0)
+        try doc.undo()
+        #expect(try doc.fields(page: 0).count == 14)
+    }
+}
+
 @Suite struct FormSecurityTests {
     @Test func readOnlyFieldsRefuseWrites() throws {
         let doc = try Corpus.open("forms.pdf")

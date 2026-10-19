@@ -2334,6 +2334,45 @@ bool opdf_flatten_annotations(opdf_doc *d, opdf_error *err) {
     return ok;
 }
 
+bool opdf_flatten_form(opdf_doc *d, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = d->ctx;
+    pdf_page *page = NULL;
+    int began = 0;
+    fz_var(page);
+    fz_var(began);
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        if (!pdf) fz_throw(ctx, FZ_ERROR_ARGUMENT, "Not a PDF");
+        pdf_begin_operation(ctx, pdf, "Flatten Form");
+        began = 1;
+        pdf_bake_document(ctx, pdf, 0, 1);
+        // MuPDF gives up quietly when baking fails: check it happened.
+        if (pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/AcroForm")) fz_throw(ctx, FZ_ERROR_FORMAT, "The form couldn't be flattened");
+        int pages = pdf_count_pages(ctx, pdf);
+        for (int i = 0; i < pages; i++) {
+            page = pdf_load_page(ctx, pdf, i);
+            if (pdf_first_widget(ctx, page)) fz_throw(ctx, FZ_ERROR_FORMAT, "The form couldn't be flattened");
+            fz_drop_page(ctx, (fz_page *)page);
+            page = NULL;
+        }
+        pdf_end_operation(ctx, pdf);
+        began = 0;
+    }
+    fz_always(ctx)
+        fz_drop_page(ctx, (fz_page *)page);
+    fz_catch(ctx) {
+        set_error(err, ctx);
+        if (began) {
+            fz_try(ctx) pdf_abandon_operation(ctx, pdf_specifics(ctx, d->doc));
+            fz_catch(ctx) {}
+        }
+    }
+    unlock_doc(d);
+    return !(err && err->code);
+}
+
 // --- Pages -----------------------------------------------------------------------
 
 // Runs `body` as one journal operation on the whole document. Takes the

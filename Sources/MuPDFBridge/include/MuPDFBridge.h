@@ -412,6 +412,11 @@ bool opdf_save(opdf_doc *doc, const char *path, opdf_error *err);
 // fields are left alone). One undoable step.
 bool opdf_flatten_annotations(opdf_doc *doc, opdf_error *err);
 
+// Draws every form field into its page and removes the form: what was
+// filled in stays visible but can no longer be changed. Signatures in the
+// form stop being valid. One undoable step.
+bool opdf_flatten_form(opdf_doc *doc, opdf_error *err);
+
 // --- Pages -------------------------------------------------------------------
 //
 // Each is one step in the undo journal. Page numbers are from 0.

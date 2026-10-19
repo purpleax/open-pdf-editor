@@ -342,7 +342,13 @@ enum SelfTest {
                     let fields = (try? saved.fields(page: 0)) ?? []
                     say("saved fields: \(fields.count); email: \(fields.first { $0.name == "email" }?.tooltip ?? "missing")")
                 }
-                finish()
+                controller.flattenForm(nil)
+                _ = pressSheetButton(window, "Flatten")
+                say("after flattening: \(viewer.model.fields(page: 0).count) fields; undo name: \(document.undoManager?.undoActionName ?? "")")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    snapshot(window, "forms-4-flattened")
+                    finish()
+                }
             }
         }
     }

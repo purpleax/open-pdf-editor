@@ -636,6 +636,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             return viewer.model.isEditable
         case #selector(flattenAnnotations(_:)):
             return viewer.model.isEditable
+        case #selector(flattenForm(_:)):
+            return viewer.model.isEditable && ((try? viewer.model.engine.formInfo().hasFields) ?? false)
         case #selector(toggleEditFields(_:)):
             setState(viewer.pagesView.editingFields)
             return viewer.model.isEditable

@@ -112,7 +112,9 @@ From the first release-time security review (all findings above Low fixed, plus 
   - Left for later (Low): MuPDF draws a dropdown's stored value rather than its label, and doesn't mark a list box's choices; filling one in sets NeedAppearances, so other apps draw them properly.
 - [x] Create and edit text fields, checkboxes, radio buttons, dropdowns and signature fields
   - Forms › Edit Fields (⌥⌘F) shows the field bar: Select, Text Field, Checkbox, Radio Button, Dropdown, List Box and Signature Field. Drag out a field, or click for the usual size; a new radio button joins the selected radio button's group. Fields are moved, resized and deleted like annotations, and set up in the inspector: name (unique, no full stops), tooltip, required, read-only, a text field's lines, hidden typing, length and boxes, and a dropdown's or list's choices ("value | label" per line). Signature fields are made empty; signing is Phase 6.
-- [ ] Flatten forms
+- [x] Flatten forms
+  - Forms › Flatten Form… draws every field into its page and removes the form, as one undoable step; on a signed document the alert says the signatures will no longer be valid. Saves stay incremental, so earlier values remain in the file's history (as with crops and deleted pages).
+  - Left for later (Low): an empty signature field is flattened as MuPDF's "SIGN" tag.
 - [x] Settings window (⌘,) with switches for risky features, each off until turned on (see Decisions: Risky features)
   - Open web and email links (pages and bookmarks): a PDF can send you to any address its author chose
   - Create PDF from HTML, SVG, EPUB, XPS, Word, Excel and PowerPoint files: MuPDF's parsers for those formats, and HTML and SVG reading images from the source file's folder

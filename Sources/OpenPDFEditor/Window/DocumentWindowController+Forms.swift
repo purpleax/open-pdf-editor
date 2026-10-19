@@ -40,4 +40,26 @@ extension DocumentWindowController {
         viewer.pagesView.fieldTool = tool
         fieldBar.setTool(tool)
     }
+
+    @objc func flattenForm(_ sender: Any?) {
+        guard let viewer, let window else { return }
+        let signed = (try? viewer.model.engine.formInfo().isSigned) ?? false
+        let alert = NSAlert()
+        alert.messageText = "Flatten the form?"
+        alert.informativeText = "What has been filled in becomes part of the pages, and the fields can no longer be filled in or changed. You can undo this until you close the document."
+            + (signed ? "\n\nThis document is signed: its signatures will no longer be valid." : "")
+        alert.alertStyle = signed ? .warning : .informational
+        alert.addButton(withTitle: "Flatten")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            do {
+                self?.setEditingFields(false)
+                viewer.pagesView.fieldEditor?.finish()
+                try viewer.model.edit("Flatten Form", pages: Set(0..<viewer.model.pageCount)) { try $0.flattenForm() }
+            } catch {
+                NSAlert(error: error).beginSheetModal(for: window)
+            }
+        }
+    }
 }

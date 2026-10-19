@@ -202,6 +202,12 @@ extension EngineDocument {
         guard opdf_field_transform(handle, Int32(page), Int32(id), m, &error) else { throw EngineError(error) }
     }
 
+    /// Draws every field into its page and removes the form, as one step.
+    public func flattenForm() throws {
+        var error = opdf_error()
+        guard opdf_flatten_form(handle, &error) else { throw EngineError(error) }
+    }
+
     /// Deletes a field's widget, and the field once it has none left.
     public func deleteField(page: Int, id: Int) throws {
         var error = opdf_error()
