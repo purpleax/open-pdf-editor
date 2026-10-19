@@ -2802,52 +2802,75 @@ static void align_single_lines(opdf_paragraphs *o, fz_rect page) {
     }
 }
 
-// Joins a paragraph to the one before when it carries on from it: the same
-// left edge, size and spacing, and a first word that wouldn't have fitted
-// on the line before (MuPDF sometimes puts the lines of one paragraph in
-// separate blocks, such as a list item's after its bullet).
+// Whether paragraph b carries on from a: just below it, at the same left
+// edge, size and spacing, with a first word that wouldn't have fitted on
+// a's last line.
+static bool continues(const opdf_paragraph *a, const opdf_paragraph *b) {
+    if (a->not_editable || b->not_editable || !a->line_count || !b->line_count) return false;
+    if (a->line_count + b->line_count > OPDF_MAX_PARA_LINES || a->char_count + b->char_count > OPDF_MAX_RUN_CHARS) return false;
+    const opdf_para_line *last = &a->lines[a->line_count - 1], *next = &b->lines[0];
+    float size = para_size(a), size_b = para_size(b);
+    float gap = next->baseline - last->baseline;
+    float left = a->lines[a->line_count > 1 ? 1 : 0].rect.x0;
+    float right = fmaxf(a->rect.x1, b->rect.x1);
+    bool spacing = a->line_count > 1 ? fabsf(gap - a->line_spacing) < 0.5f : (gap > 0.8f * size && gap < 1.6f * size);
+    return fabsf(size - size_b) < 0.5f && spacing && fabsf(next->rect.x0 - left) < 1
+        && last->rect.x1 + 0.25f * size + first_word_width(b, next) > right + 0.5f;
+}
+
+// Joins paragraphs that carry on from one another (MuPDF puts lines in
+// separate blocks when they're drawn apart: a list item's after its bullet,
+// or lines rewritten at the end of the page's content).
 static void merge_wrapped_paragraphs(fz_context *ctx, opdf_paragraphs *o) {
-    int w = 0;
-    for (int r = 0; r < o->count; r++) {
-        opdf_paragraph *b = &o->items[r];
-        opdf_paragraph *a = w > 0 ? &o->items[w - 1] : NULL;
-        bool join = false;
-        if (a && !a->not_editable && !b->not_editable && a->line_count && b->line_count
-            && a->line_count + b->line_count <= OPDF_MAX_PARA_LINES && a->char_count + b->char_count <= OPDF_MAX_RUN_CHARS) {
-            const opdf_para_line *last = &a->lines[a->line_count - 1], *next = &b->lines[0];
-            float size = para_size(a), size_b = para_size(b);
-            float gap = next->baseline - last->baseline;
-            float left = a->lines[a->line_count > 1 ? 1 : 0].rect.x0;
-            float right = fmaxf(a->rect.x1, b->rect.x1);
-            bool spacing = a->line_count > 1 ? fabsf(gap - a->line_spacing) < 0.5f : (gap > 0.8f * size && gap < 1.6f * size);
-            join = fabsf(size - size_b) < 0.5f && spacing && fabsf(next->rect.x0 - left) < 1
-                && last->rect.x1 + 0.25f * size + first_word_width(b, next) > right + 0.5f;
+    bool *gone = calloc((size_t)o->count + 1, sizeof *gone);
+    if (!gone) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+    // Looking through every paragraph below is quadratic: only when there are few.
+    bool everywhere = o->count <= 2000;
+    fz_try(ctx) {
+        for (int a = 0; a < o->count; a++) {
+            if (gone[a]) continue;
+            for (bool joined = true; joined;) {
+                joined = false;
+                int from = a + 1, to = everywhere ? o->count : a + 2;
+                for (int r = from; r < to && r < o->count; r++) {
+                    if (gone[r] || !continues(&o->items[a], &o->items[r])) continue;
+                    opdf_paragraph *pa = &o->items[a], *pb = &o->items[r];
+                    // b's lines and characters go on the end of a's.
+                    opdf_para_char *chars = realloc(pa->chars, (size_t)(pa->char_count + pb->char_count + 1) * sizeof *chars);
+                    if (!chars) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+                    pa->chars = chars;
+                    opdf_para_line *lines = realloc(pa->lines, (size_t)(pa->line_count + pb->line_count + 1) * sizeof *lines);
+                    if (!lines) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+                    pa->lines = lines;
+                    memcpy(pa->chars + pa->char_count, pb->chars, (size_t)pb->char_count * sizeof *chars);
+                    for (int i = 0; i < pb->line_count; i++) {
+                        pa->lines[pa->line_count + i] = pb->lines[i];
+                        pa->lines[pa->line_count + i].first += pa->char_count;
+                    }
+                    pa->char_count += pb->char_count;
+                    pa->line_count += pb->line_count;
+                    pa->rect = rect_to(fz_union_rect(rect_from(pa->rect), rect_from(pb->rect)));
+                    if (pa->line_spacing == 0) pa->line_spacing = pa->lines[1].baseline - pa->lines[0].baseline;
+                    if (pa->align == OPDF_ALIGN_LEFT && pb->align == OPDF_ALIGN_JUSTIFIED) pa->align = OPDF_ALIGN_JUSTIFIED;
+                    free(pb->chars);
+                    free(pb->lines);
+                    pb->chars = NULL;
+                    pb->lines = NULL;
+                    pb->char_count = pb->line_count = 0;
+                    gone[r] = true;
+                    joined = true;
+                    break;
+                }
+            }
         }
-        if (!join) {
-            if (w != r) o->items[w] = *b;
-            w++;
-            continue;
-        }
-        // b's lines and characters go on the end of a's.
-        opdf_para_char *chars = realloc(a->chars, (size_t)(a->char_count + b->char_count + 1) * sizeof *chars);
-        if (!chars) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
-        a->chars = chars;
-        opdf_para_line *lines = realloc(a->lines, (size_t)(a->line_count + b->line_count + 1) * sizeof *lines);
-        if (!lines) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
-        a->lines = lines;
-        memcpy(a->chars + a->char_count, b->chars, (size_t)b->char_count * sizeof *chars);
-        for (int i = 0; i < b->line_count; i++) {
-            a->lines[a->line_count + i] = b->lines[i];
-            a->lines[a->line_count + i].first += a->char_count;
-        }
-        a->char_count += b->char_count;
-        a->line_count += b->line_count;
-        a->rect = rect_to(fz_union_rect(rect_from(a->rect), rect_from(b->rect)));
-        if (a->line_spacing == 0) a->line_spacing = a->lines[1].baseline - a->lines[0].baseline;
-        free(b->chars);
-        free(b->lines);
+        int w = 0;
+        for (int r = 0; r < o->count; r++) if (!gone[r]) o->items[w++] = o->items[r];
+        o->count = w;
     }
-    o->count = w;
+    fz_always(ctx)
+        free(gone);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
 }
 
 static void walk_paragraph_blocks(fz_context *ctx, para_builder *b, fz_stext_block *block, int depth) {
@@ -2942,7 +2965,7 @@ bool opdf_paragraphs_load(opdf_doc *d, int page_number, opdf_paragraphs *out, op
         // MuPDF's lines and blocks (its paragraph breaking splits short
         // paragraphs apart: blocks are split here instead), with fake bold
         // (text drawn twice) folded into one.
-        options.flags = FZ_STEXT_CLIP | FZ_STEXT_SEGMENT | FZ_STEXT_PRESERVE_SPANS | FZ_STEXT_COLLECT_STYLES
+        options.flags = FZ_STEXT_CLIP | FZ_STEXT_SEGMENT | FZ_STEXT_COLLECT_STYLES
                       | FZ_STEXT_PRESERVE_LIGATURES | FZ_STEXT_IGNORE_ACTUALTEXT | FZ_STEXT_ACCURATE_BBOXES;
         text = fz_new_stext_page_from_page(ctx, (fz_page *)page, &options);
         walk_paragraph_blocks(ctx, &b, text->first_block, 0);

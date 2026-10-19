@@ -131,8 +131,8 @@ final class PagesView: NSView, NSMenuItemValidation {
             window?.invalidateCursorRects(for: self)
         }
     }
-    /// The text run being typed over, if any.
-    var textEditor: TextRunEditor?
+    /// The paragraph being edited, if any.
+    var textEditor: ParagraphEditor?
     var selectedContent: ContentRef? {
         didSet {
             guard selectedContent != oldValue else { return }
@@ -339,7 +339,14 @@ final class PagesView: NSView, NSMenuItemValidation {
     }
 
     private func applyContentOutlines(to view: PageView, page: Int) {
-        let rects = editingContent ? (content?.items(page: page, text: contentTool == .text).map(\.rect) ?? []) : []
+        let rects: [CGRect]
+        if !editingContent {
+            rects = []
+        } else if contentTool == .text {
+            rects = content?.paragraphs(page: page)?.paragraphs.filter(\.isEditable).map(\.rect) ?? []
+        } else {
+            rects = content?.items(page: page).map(\.rect) ?? []
+        }
         view.setContentOutlines(rects, transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
     }
 

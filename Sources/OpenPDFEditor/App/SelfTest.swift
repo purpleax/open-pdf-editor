@@ -438,22 +438,42 @@ enum SelfTest {
             document.undoManager?.redo()
             say("after redoing: \(viewer.content.item(ref)?.rect.integral ?? .zero)")
         } catch { say("FAIL image: \(error)") }
-        // Text: the heading selected with the Text tool, edited in place,
-        // then given a character its font lacks.
+        // Text, as in a word processor: a click in the heading puts the caret
+        // there; typing (with a character its font lacks) and clicking away
+        // changes it. Then a paragraph grows by a line as it re-wraps, and
+        // what follows it stays put.
         viewer.pagesView.contentTool = .text
-        if let heading = viewer.model.content(page: 0)?.runs.first(where: { $0.text == "Chapter One" }) {
-            click(viewer, page: 0, at: CGPoint(x: heading.rect.midX, y: heading.rect.midY))
-            say("text selected: \(String(describing: viewer.pagesView.selectedContent))")
-            viewer.pagesView.beginTextEdit()
-            viewer.pagesView.textEditor?.debugType("Chapter One, edited")
+        let paragraphs = viewer.model.paragraphs(page: 0)?.paragraphs ?? []
+        say("paragraphs on page 1: \(paragraphs.map { $0.text.prefix(20) })")
+        if let heading = paragraphs.first(where: { $0.text == "Chapter One" }) {
+            click(viewer, page: 0, at: CGPoint(x: heading.rect.maxX - 1, y: heading.rect.midY))
+            say("editing after a click: \(viewer.pagesView.textEditor != nil)")
+            viewer.pagesView.textEditor?.debugType(", edited Ω")
             viewer.pagesView.textEditor?.finish()
-            say("after editing: \(viewer.model.content(page: 0)?.runs.first { $0.op == heading.op }?.text ?? "?")")
-            do {
-                try viewer.content.setText(.text(page: 0, op: heading.op), "Chapter Ω")
-                try viewer.content.setColor(.text(page: 0, op: heading.op), PDFColor(red: 0.8, green: 0, blue: 0))
-            } catch { say("FAIL text: \(error)") }
-            say("fallback: \(viewer.model.content(page: 0)?.runs.first { $0.op == heading.op }?.text ?? "?"); page text has it: \(viewer.model.text(page: 0).string.contains("Chapter Ω"))")
-            viewer.pagesView.selectedContent = .text(page: 0, op: heading.op)
+            say("heading now: \(viewer.model.paragraphs(page: 0)?.paragraphs.first { $0.text.hasPrefix("Chapter One") }?.text ?? "?")")
+        }
+        if let body = viewer.model.paragraphs(page: 0)?.paragraphs.first(where: { $0.text.hasPrefix("The quick brown fox") }),
+           let next = viewer.model.paragraphs(page: 0)?.paragraphs.first(where: { $0.text.hasPrefix("Go to page three") }) {
+            let dog = viewer.model.text(page: 0)
+            if let range = dog.search("lazy dog.").first, let r = dog.rects(for: range).first {
+                click(viewer, page: 0, at: CGPoint(x: r.maxX, y: r.midY))
+                viewer.pagesView.textEditor?.debugType(" A sentence added here is long enough to make the paragraph wrap onto one more line than it had.")
+                viewer.pagesView.textEditor?.finish()
+            }
+            let after = viewer.model.paragraphs(page: 0)?.paragraphs ?? []
+            let grown = after.first { $0.text.hasPrefix("The quick brown fox") }
+            let moved = after.first { $0.text.hasPrefix("Go to page three") }
+            say("paragraph lines \(body.lines.count) -> \(grown?.lines.count ?? -1); text has the sentence: \(viewer.model.text(page: 0).string.split(whereSeparator: \.isWhitespace).joined(separator: " ").contains("one more line than it had")); next paragraph moved: \(moved.map { abs($0.rect.minY - next.rect.minY) > 0.01 } ?? true)")
+            // The editor is still over the page here; the page itself, as drawn:
+            snapshot(window, "content-0-paragraph")
+            if let image = try? viewer.model.engine.renderPage(0, bounds: viewer.model.pageBounds[0], scale: 1.5),
+               let destination = CGImageDestinationCreateWithURL(out.appendingPathComponent("content-0-engine.png") as CFURL, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(destination, image, nil)
+                CGImageDestinationFinalize(destination)
+            }
+            document.undoManager?.undo()
+            say("after undo: \(viewer.model.paragraphs(page: 0)?.paragraphs.first { $0.text.hasPrefix("The quick brown fox") }?.lines.count ?? -1) lines")
+            document.undoManager?.redo()
         }
         // Page numbers and a watermark, through the sheets.
         controller.addPageNumbers(nil)

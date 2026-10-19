@@ -95,6 +95,59 @@ final class ContentController {
         items(page: page, text: text).last { $0.rect.insetBy(dx: -tolerance / 2, dy: -tolerance / 2).contains(point) }
     }
 
+    // MARK: Paragraphs
+
+    func paragraphs(page: Int) -> PageParagraphs? { model.paragraphs(page: page) }
+
+    /// The paragraph at a point (page space), editable or not.
+    func paragraph(at point: CGPoint, page: Int) -> Paragraph? {
+        model.paragraphs(page: page)?.paragraph(at: point)
+    }
+
+    /// Why a paragraph can't be edited, for people.
+    static func restriction(_ p: Paragraph) -> String? {
+        switch p.restriction {
+        case .none: nil
+        case .type3: "This text is drawn with a Type 3 font, whose letters are pictures, so it can't be edited."
+        case .vertical: "Vertical text can't be edited."
+        case .rotated: "Text at an angle can't be edited."
+        case .invisible: "This text is invisible (it's there for searching and copying, such as recognised text), so it isn't edited here."
+        case .clipping: "This text is used as a mask for what's drawn after it, so it can't be edited."
+        case .unmatched: "This text is part of a graphic used elsewhere in the document, so it can't be edited here."
+        case .rightToLeft: "Right-to-left text can't be edited yet."
+        case .tooLong: "This paragraph is too long to edit."
+        }
+    }
+
+    /// An editor for the paragraph; `toView` maps page space to the pages view.
+    func editor(for paragraph: Paragraph, toView: CGAffineTransform) -> ParagraphEditor {
+        let page = paragraph.page
+        let engine = model.engine
+        return ParagraphEditor(paragraph: paragraph, fonts: model.paragraphs(page: page)?.fonts ?? [],
+                               pageBounds: model.pageBounds[page], toView: toView) { scalars, resource in
+            (try? engine.encode(scalars, inFont: resource, page: page)) ?? []
+        }
+    }
+
+    private var fontData: [String: Data] = [:]
+
+    /// Writes what the editor changed into the page: one undoable step.
+    /// False when nothing changed.
+    func commit(_ editor: ParagraphEditor) throws -> Bool {
+        guard let change = try editor.change(fontData: { font in
+            let name = CTFontCopyPostScriptName(font) as String
+            if let data = fontData[name] { return data }
+            let data = try FontFile.data(for: font)
+            fontData[name] = data
+            return data
+        }) else { return false }
+        let page = editor.page
+        try model.edit("Edit Text", pages: [page], needs: .edit) {
+            try $0.replaceText(page: page, dropping: change.dropping, fonts: change.fonts, runs: change.runs, actionName: "Edit Text")
+        }
+        return true
+    }
+
     // MARK: Text
 
     /// Why a run can't be edited, for people.

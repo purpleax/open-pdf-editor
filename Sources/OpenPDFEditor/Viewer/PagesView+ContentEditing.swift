@@ -16,12 +16,9 @@ extension PagesView {
             return
         }
         if contentTool == .text {
-            guard let item = content.hit(point, page: page, tolerance: tolerance, text: true) else {
-                selectedContent = nil
-                return
-            }
-            selectedContent = item.ref
-            if event.clickCount == 2 { beginTextEdit() }
+            selectedContent = nil
+            guard let paragraph = content.paragraph(at: point, page: page) else { return }
+            beginParagraphEdit(paragraph, at: point)
             return
         }
         if contentTool == .link || contentTool == .image {
@@ -135,36 +132,56 @@ extension PagesView {
                                     transform: model.pageToView(page: page, rotation: rotation), zoom: zoom)
     }
 
-    /// Edits the selected text run in place.
+    /// Edits the paragraph of the selected text run (the inspector's Edit
+    /// Text, Return).
     func beginTextEdit() {
+        guard let ref = selectedContent, case .text = ref, let content, let item = content.item(ref),
+              let paragraph = content.paragraph(at: CGPoint(x: item.rect.midX, y: item.rect.midY), page: ref.page) else { return }
+        beginParagraphEdit(paragraph, at: nil)
+    }
+
+    /// Edits a paragraph in place, with the caret at the point (page space),
+    /// or at its end.
+    func beginParagraphEdit(_ paragraph: Paragraph, at point: CGPoint?) {
         textEditor?.finish()
-        guard let ref = selectedContent, case .text = ref, let content, let item = content.item(ref), let run = item.run,
-              let frame = convert(item.rect, fromPage: ref.page) else { return }
-        if let reason = ContentController.restriction(run) {
+        guard let content, model.allows(.edit) else { return }
+        if let reason = ContentController.restriction(paragraph) {
             delegate?.pagesView(self, contentProblem: reason)
             return
         }
-        let editor = TextRunEditor(ref: ref, run: run, frame: frame)
-        editor.onEnd = { [weak self, weak editor] text in
-            guard let self else { return }
+        guard rotation == 0, let toView = transform(forPage: paragraph.page) else {
+            delegate?.pagesView(self, contentProblem: "Turn the view back upright (View › Rotate) to edit text.")
+            return
+        }
+        let editor = content.editor(for: paragraph, toView: toView)
+        editor.onEnd = { [weak self] editor, commit in
+            guard let self else { return editor.remove() }
             if self.textEditor === editor { self.textEditor = nil }
-            self.window?.makeFirstResponder(self)
-            guard let text else { return }
-            do {
-                try content.setText(ref, text)
-            } catch {
-                self.delegate?.pagesView(self, contentProblem: "\(error)")
+            if self.window?.firstResponder === editor.textView { self.window?.makeFirstResponder(self) }
+            var changed = false
+            if commit {
+                do {
+                    changed = try content.commit(editor)
+                } catch {
+                    self.delegate?.pagesView(self, contentProblem: "\(error)")
+                }
+            }
+            // Kept up until the page has been drawn again, so nothing flickers.
+            if changed {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { editor.remove() }
+            } else {
+                editor.remove()
             }
         }
         textEditor = editor
-        editor.show(in: self)
+        editor.show(in: self, caretAt: point)
     }
 
     func contentCursor(at location: NSPoint) -> NSCursor {
         guard let content, let (page, point) = pageAndPoint(at: location), layout.frames[page]?.contains(location) == true else {
             return .arrow
         }
-        if contentTool == .text { return content.hit(point, page: page, tolerance: tolerance, text: true) != nil ? .iBeam : .arrow }
+        if contentTool == .text { return content.paragraph(at: point, page: page) != nil ? .iBeam : .arrow }
         if contentTool != .select { return .crosshair }
         if let ref = selectedContent, ref.page == page, let item = content.item(ref), contentHandle(at: point, of: item.rect) != nil {
             return .crosshair

@@ -33,6 +33,8 @@ final class DocumentModel: @unchecked Sendable {
     private var linkCache: [Int: [PageLink]] = [:]
     private var contentCache: [Int: PageContent] = [:]
     private var contentOrder: [Int] = []
+    private var paragraphCache: [Int: PageParagraphs] = [:]
+    private var paragraphOrder: [Int] = []
     private var annotationCache: [Int: [Annotation]] = [:]
     private var fieldCache: [Int: [FormField]] = [:]
     private var fieldOrder: [Int] = []
@@ -152,6 +154,22 @@ final class DocumentModel: @unchecked Sendable {
         return content
     }
 
+    /// The page's paragraphs (editing text), cached for a few pages; nil if
+    /// the page's content can't be read.
+    func paragraphs(page: Int) -> PageParagraphs? {
+        if let cached = lock.withLock({ paragraphCache[page] }) { return cached }
+        let before = revision(page: page)
+        guard let paragraphs = try? engine.paragraphs(page: page) else { return nil }
+        lock.withLock {
+            if paragraphCache[page] == nil, unchanged(page, since: before) {
+                paragraphCache[page] = paragraphs
+                paragraphOrder.append(page)
+                if paragraphOrder.count > 10 { paragraphCache[paragraphOrder.removeFirst()] = nil }
+            }
+        }
+        return paragraphs
+    }
+
     func links(page: Int) -> [PageLink] {
         if let links = lock.withLock({ linkCache[page] }) { return links }
         let before = revision(page: page)
@@ -254,6 +272,8 @@ final class DocumentModel: @unchecked Sendable {
             linkCache.removeAll()
             contentCache.removeAll()
             contentOrder.removeAll()
+            paragraphCache.removeAll()
+            paragraphOrder.removeAll()
             annotationCache.removeAll()
             fieldCache.removeAll()
             fieldOrder.removeAll()
@@ -274,6 +294,7 @@ final class DocumentModel: @unchecked Sendable {
                 texts[page] = nil
                 linkCache[page] = nil
                 contentCache[page] = nil
+                paragraphCache[page] = nil
                 annotationCache[page] = nil
                 fieldCache[page] = nil
                 pageRevisions[page, default: 0] += 1
@@ -282,6 +303,7 @@ final class DocumentModel: @unchecked Sendable {
             textOrder.removeAll { all.contains($0) }
             fieldOrder.removeAll { all.contains($0) }
             contentOrder.removeAll { all.contains($0) }
+            paragraphOrder.removeAll { all.contains($0) }
         }
         NotificationCenter.default.post(name: Self.pagesDidChange, object: self,
                                         userInfo: pages.map { ["pages": $0] })
@@ -299,6 +321,8 @@ final class DocumentModel: @unchecked Sendable {
             linkCache.removeAll()
             contentCache.removeAll()
             contentOrder.removeAll()
+            paragraphCache.removeAll()
+            paragraphOrder.removeAll()
             annotationCache.removeAll()
             fieldCache.removeAll()
             fieldOrder.removeAll()

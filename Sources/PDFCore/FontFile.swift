@@ -80,6 +80,21 @@ public enum FontFile {
         return covers(other, text) ? other : nil
     }
 
+    /// The Mac font that best matches one of a page's fonts: the font itself
+    /// if it is installed, else one of the same style.
+    public static func match(_ font: ParagraphFont, size: CGFloat) -> CTFont {
+        let size = max(size, 1)
+        let installed = CTFontCreateWithName(font.name as CFString, size, nil)
+        if !font.name.isEmpty, (CTFontCopyPostScriptName(installed) as String).caseInsensitiveCompare(font.name) == .orderedSame { return installed }
+        let family = font.isMonospaced ? "Menlo" : font.isSerif ? "Times New Roman" : "Helvetica Neue"
+        var match = CTFontCreateWithName(family as CFString, size, nil)
+        var traits = CTFontSymbolicTraits()
+        if font.isBold { traits.insert(.traitBold) }
+        if font.isItalic { traits.insert(.traitItalic) }
+        if !traits.isEmpty, let styled = CTFontCreateCopyWithSymbolicTraits(match, size, nil, traits, traits) { match = styled }
+        return match
+    }
+
     /// The font has a glyph for every character of the text.
     public static func covers(_ font: CTFont, _ text: String) -> Bool {
         let units = Array(text.utf16)
