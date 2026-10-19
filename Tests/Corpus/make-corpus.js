@@ -85,6 +85,8 @@ function makeText() {
 	doc.save(out + "/text.pdf", "compress,garbage")
 	// The same document locked with a password.
 	doc.save(out + "/encrypted.pdf", "compress,garbage,encrypt=aes-256,user-password=secret,owner-password=owner")
+	// Opens without a password, but only printing is allowed.
+	doc.save(out + "/restricted.pdf", "compress,garbage,encrypt=aes-256,owner-password=owner,permissions=-3900")
 }
 
 // --- mixed.pdf: page sizes, rotation and box origins ------------------------

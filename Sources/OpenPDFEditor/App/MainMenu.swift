@@ -49,6 +49,7 @@ enum MainMenu {
         file.addItem(.separator())
         file.addItem(withTitle: "Create PDF from Files…", action: #selector(AppDelegate.createPDFFromFiles(_:)), keyEquivalent: "n")
             .keyEquivalentModifierMask = [.command, .option]
+        file.addItem(withTitle: "Export…", action: #selector(DocumentWindowController.exportDocument(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Reduce File Size…", action: #selector(DocumentWindowController.reduceFileSize(_:)), keyEquivalent: "")
         file.addItem(withTitle: "Security…", action: #selector(DocumentWindowController.showSecurity(_:)), keyEquivalent: "")
         file.addItem(.separator())

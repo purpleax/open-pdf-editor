@@ -680,6 +680,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(addHeadersAndFooters(_:)), #selector(addPageNumbers(_:)), #selector(addWatermark(_:)),
              #selector(removeHeadersAndFooters(_:)), #selector(removeWatermarks(_:)):
             return viewer.model.allows(.edit)
+        case #selector(exportDocument(_:)):
+            return viewer.model.allowed.contains(.copy) && viewer.model.engine.isPDF
         case #selector(recognizeText(_:)):
             return viewer.model.allows(.edit) && viewer.model.engine.isPDF
         case #selector(applyRedactions(_:)):

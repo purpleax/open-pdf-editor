@@ -291,15 +291,17 @@ final class PageEditor {
     }
 
     /// Writes a new file in `folder` named `name.ext`, or `name (2).ext` and
-    /// so on: never over an existing file.
+    /// so on: never over an existing file. With `ext` empty, no extension
+    /// (for a folder made by `write`).
     nonisolated static func writeNew(in folder: URL, name: String, ext: String, _ write: (URL) throws -> Void) throws -> URL {
         let scratch = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask,
                                                   appropriateFor: folder, create: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
-        let temporary = scratch.appendingPathComponent("part.\(ext)")
+        let suffix = ext.isEmpty ? "" : ".\(ext)"
+        let temporary = scratch.appendingPathComponent("part\(suffix)")
         try write(temporary)
         for attempt in 1...1000 {
-            let target = folder.appendingPathComponent(attempt == 1 ? "\(name).\(ext)" : "\(name) (\(attempt)).\(ext)")
+            let target = folder.appendingPathComponent(attempt == 1 ? "\(name)\(suffix)" : "\(name) (\(attempt))\(suffix)")
             // Only ever directly in the chosen folder.
             guard target.deletingLastPathComponent().standardizedFileURL == folder.standardizedFileURL else {
                 throw CocoaError(.fileWriteInvalidFileName)

@@ -54,6 +54,8 @@ enum SelfTest {
                     contentSteps(document)
                 } else if environment["OPDF_SELFTEST_OCR"] != nil {
                     ocrSteps(document)
+                } else if environment["OPDF_SELFTEST_EXPORT"] != nil {
+                    exportSteps(document)
                 } else {
                     steps(document)
                 }
@@ -856,6 +858,75 @@ enum SelfTest {
         }
     }
 
+    /// File › Export… to each format (through the same code as the panel),
+    /// numbered images into new folders, never over earlier ones, and the
+    /// menu item on a document that doesn't allow copying.
+    static func exportSteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let viewer = controller.viewer, let window = controller.window else {
+            say("FAIL no viewer")
+            return finish()
+        }
+        window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 860), display: true)
+        // An unsaved change, which the export includes.
+        _ = try? viewer.model.edit("Stamp", pages: [0]) { try $0.addStamps([Stamp(page: 0, kind: .footer, text: "Unsaved footer")]) }
+        let item = NSMenuItem(title: "", action: #selector(DocumentWindowController.exportDocument(_:)), keyEquivalent: "")
+        say("Export… enabled: \(controller.validateMenuItem(item))")
+        controller.exportDocument(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            let panel = window.attachedSheet as? NSSavePanel
+            say("panel: \(panel != nil), name \(panel?.nameFieldStringValue ?? "-")")
+            if let options = panel?.accessoryView { snapshot(view: options, "export-options") }
+            if let sheet = window.attachedSheet { window.endSheet(sheet, returnCode: .cancel) }
+            let folder = out.appendingPathComponent("exported")
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let jobs: [ExportJob] = [
+                ExportJob(format: .word, pages: 0...2, name: "doc.docx"), ExportJob(format: .html, pages: 0...2, name: "doc.html"),
+                ExportJob(format: .text, pages: 0...2, name: "doc.txt"), ExportJob(format: .png, pages: 0...0, name: "one.png"),
+                ExportJob(format: .jpeg, pages: 1...1, name: "one.jpg"), ExportJob(format: .tiff, pages: 0...2, name: "all.tiff"),
+                ExportJob(format: .png, pages: 0...2, name: "pages.png"), ExportJob(format: .png, pages: 0...2, name: "pages.png"),
+            ]
+            runExports(jobs, document, controller, viewer, folder)
+        }
+    }
+
+    struct ExportJob: Sendable {
+        var format: ExportFormat
+        var pages: ClosedRange<Int>
+        var name: String
+    }
+
+    static func runExports(_ jobs: [ExportJob], _ document: EditorDocument, _ controller: DocumentWindowController,
+                           _ viewer: ViewerController, _ folder: URL) {
+        guard let job = jobs.first else { return exportsDone(folder) }
+        let choice = ExportOptions.Choice(format: job.format, pages: job.pages, dpi: 100, quality: 0.85)
+        controller.export(document, viewer: viewer, choice, to: folder.appendingPathComponent(job.name)) { result in
+            switch result {
+            case let .success(url): say("\(job.format.rawValue) \(job.pages): \(url.lastPathComponent)")
+            case let .failure(error): say("FAIL \(job.format.rawValue): \(error)")
+            }
+            runExports(Array(jobs.dropFirst()), document, controller, viewer, folder)
+        }
+    }
+
+    static func exportsDone(_ folder: URL) {
+        let names = ((try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []).sorted()
+        say("files: \(names)")
+        let inner = ((try? FileManager.default.contentsOfDirectory(atPath: folder.appendingPathComponent("pages").path)) ?? []).sorted()
+        say("in pages: \(inner)")
+        let text = (try? String(contentsOf: folder.appendingPathComponent("doc.txt"), encoding: .utf8)) ?? ""
+        say("text: fox \(text.contains("quick brown fox")), unsaved footer \(text.contains("Unsaved footer"))")
+        let corpus = URL(fileURLWithPath: ProcessInfo.processInfo.environment["OPDF_SELFTEST"]!).deletingLastPathComponent()
+        NSDocumentController.shared.openDocument(withContentsOf: corpus.appendingPathComponent("restricted.pdf"), display: true) { other, _, _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                let item = NSMenuItem(title: "", action: #selector(DocumentWindowController.exportDocument(_:)), keyEquivalent: "")
+                let restricted = (other as? EditorDocument)?.windowControllers.first as? DocumentWindowController
+                say("restricted: Export… enabled \(restricted?.validateMenuItem(item) ?? true)")
+                finish()
+            }
+        }
+    }
+
     /// The welcome window, then New PDF from it.
     static func welcomeSteps() {
         WelcomeWindowController.show()
@@ -923,6 +994,16 @@ enum SelfTest {
         layer.render(in: context)
         guard let image = context.makeImage() else { return }
         let rep = NSBitmapImageRep(cgImage: image)
+        try? rep.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent(name + ".png"))
+        say("snapshot \(name)")
+    }
+
+    /// One view drawn to a PNG (for views in windows that can't be captured,
+    /// like a save panel's).
+    static func snapshot(view: NSView, _ name: String) {
+        view.layoutSubtreeIfNeeded()
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
         try? rep.representation(using: .png, properties: [:])?.write(to: out.appendingPathComponent(name + ".png"))
         say("snapshot \(name)")
     }
