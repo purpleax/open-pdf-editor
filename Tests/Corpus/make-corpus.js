@@ -457,6 +457,22 @@ function makeContent() {
 	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, ops.join("\n"))
 	doc.insertPage(-1, page)
 	doc.save(out + "/contentbomb.pdf", "compress")
+
+	// From the 0.5.0 review: an inline image an edit can't keep (an indexed
+	// colour space), stray EMCs before a stamp-like mark, and a font set
+	// through an ExtGState.
+	doc = newDocument()
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } },
+		"BT /F1 24 Tf 72 700 Td (Hello) Tj ET\nq 20 0 0 20 300 300 cm BI /W 1 /H 1 /CS [/I /RGB 1 <ff000000ff00>] /BPC 8 ID \x01 EI Q\n")
+	doc.insertPage(-1, page)
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } },
+		"EMC EMC /Artifact <</OPDFStamp /Watermark>> BDC BT /F1 12 Tf 72 700 Td (mark) Tj ET EMC BT /F1 12 Tf 72 600 Td (after) Tj ET\n")
+	doc.insertPage(-1, page)
+	var gs = doc.addObject({ Type: doc.newName("ExtGState"), Font: [doc.font, 24] })
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font }, ExtGState: { GS0: gs } },
+		"/GS0 gs BT 72 700 Td (gsfont) Tj ET\n")
+	doc.insertPage(-1, page)
+	doc.save(out + "/contentodd.pdf", "compress")
 }
 
 // --- Hostile files, for the security tests ----------------------------------

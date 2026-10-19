@@ -1,5 +1,6 @@
 import CoreGraphics
 import CoreText
+import ImageIO
 import Foundation
 import PDFCore
 import Testing
@@ -450,5 +451,77 @@ import Testing
         defer { try? FileManager.default.removeItem(at: out) }
         try doc.save(to: out)
         #expect(try Data(contentsOf: out).prefix(original.count) == original)
+    }
+}
+
+@Suite struct ContentSecurityTests {
+    private func temporaryURL(_ name: String) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-\(name)")
+    }
+
+    /// A second stamping with an embedded font leaves the first one's alone.
+    @Test func stampFontsDontReplaceEachOther() throws {
+        let doc = try Corpus.open("text.pdf")
+        let font = try FontFile.data(for: CTFontCreateWithName("Helvetica Neue" as CFString, 10, nil))
+        try doc.addStamps([Stamp(page: 0, kind: .watermark, text: "WATERMARK éœΣ", size: 40)], font: font)
+        try doc.addStamps([Stamp(page: 0, kind: .footer, text: "Σελίδα 1")], font: font)
+        let text = try doc.text(page: 0).string
+        #expect(text.contains("WATERMARK éœΣ") && text.contains("Σελίδα 1"))
+        try doc.addStamps([Stamp(page: 0, kind: .header, text: "plain")])
+        try doc.addStamps([Stamp(page: 0, kind: .header, alignment: .right, text: "plain too")])
+        #expect(try doc.text(page: 0).string.contains("WATERMARK éœΣ"))
+    }
+
+    /// Inline images an edit couldn't keep stop the edit instead.
+    @Test func awkwardInlineImagesRefuseEdits() throws {
+        let doc = try Corpus.open("contentodd.pdf")
+        let hello = try #require(try doc.content(page: 0).runs.first { $0.text == "Hello" })
+        #expect(throws: EngineError.self) { try doc.editText(page: 0, op: hello.op, text: "Bye") }
+        #expect(!doc.canUndo)
+        // The plain inline image in content.pdf goes through edits.
+        let plain = try Corpus.open("content.pdf")
+        try plain.rewritePageContent(page: 0)
+    }
+
+    @Test func strayEMCsDontSwallowContent() throws {
+        let doc = try Corpus.open("contentodd.pdf")
+        try doc.removeStamps(headersAndFooters: false, watermarks: true)
+        let text = try doc.text(page: 1).string
+        #expect(text.contains("after") && !text.contains("mark"))
+    }
+
+    @Test func extGStateFontsArentRewritten() throws {
+        let doc = try Corpus.open("contentodd.pdf")
+        let run = try #require(try doc.content(page: 2).runs.first { $0.text == "gsfont" })
+        #expect(throws: EngineError.self) { try doc.editText(page: 2, op: run.op, text: "other") }
+    }
+
+    @Test func inflatingContentIsRefusedQuickly() throws {
+        let doc = try Corpus.open("contentzip.pdf")
+        let start = Date()
+        #expect(throws: EngineError.self) { try doc.content(page: 0) }
+        #expect(Date().timeIntervalSince(start) < 3)
+    }
+
+    /// Added images carry no camera metadata.
+    @Test func imageMetadataIsLeftBehind() throws {
+        let jpeg = temporaryURL("photo.jpg")
+        defer { try? FileManager.default.removeItem(at: jpeg) }
+        let context = try #require(CGContext(data: nil, width: 32, height: 16, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+        context.setFillColor(CGColor(red: 1, green: 0.5, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 32, height: 16))
+        let destination = try #require(CGImageDestinationCreateWithURL(jpeg as CFURL, "public.jpeg" as CFString, 1, nil))
+        let gps: [CFString: Any] = [kCGImagePropertyGPSLatitude: 51.5, kCGImagePropertyGPSLatitudeRef: "N",
+                                    kCGImagePropertyGPSLongitude: 0.12, kCGImagePropertyGPSLongitudeRef: "W"]
+        CGImageDestinationAddImage(destination, try #require(context.makeImage()), [kCGImagePropertyGPSDictionary: gps] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        let original = try #require(CGImageSourceCreateWithURL(jpeg as CFURL, nil))
+        #expect((CGImageSourceCopyPropertiesAtIndex(original, 0, nil) as? [CFString: Any])?[kCGImagePropertyGPSDictionary] != nil)
+        let prepared = try ImageImport.prepare(contentsOf: jpeg)
+        let source = try #require(CGImageSourceCreateWithData(prepared.data as CFData, nil))
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:]
+        #expect(properties[kCGImagePropertyGPSDictionary] == nil)
+        #expect(prepared.data.prefix(2) == Data([0xFF, 0xD8]))   // still a JPEG
     }
 }

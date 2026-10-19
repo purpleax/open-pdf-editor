@@ -1604,6 +1604,7 @@ typedef struct content_proc content_proc;
 struct content_proc {
     pdf_processor super;
     pdf_processor *out;           // the buffer processor when rewriting
+    pdf_processor *real_out;      // the same, kept while `out` is switched off
     pdf_document *doc;
     fz_matrix page_ctm;
     content_gstate gs[OPDF_MAX_GSTATE_DEPTH];
@@ -2056,6 +2057,24 @@ static void cp_Do_image(fz_context *ctx, pdf_processor *proc, const char *name, 
     p->image_ops++;
 }
 
+// Inline images: MuPDF's buffer processor writes back only the simple
+// kinds faithfully, so a page with any other kind isn't rewritten.
+static void cp_BI(fz_context *ctx, pdf_processor *proc, fz_image *image, const char *colorspace_name) {
+    content_proc *p = (content_proc *)proc;
+    if (CHAIN(p)) {
+        // A colour space by name (a device abbreviation or a resource) is
+        // written back as it was; one given inline (an array) only when it
+        // is a plain device space.
+        bool named = colorspace_name && colorspace_name[0];
+        enum fz_colorspace_type type = image && image->colorspace ? fz_colorspace_type(ctx, image->colorspace) : FZ_COLORSPACE_NONE;
+        bool device = image && image->colorspace && fz_colorspace_is_device(ctx, image->colorspace) &&
+                      (type == FZ_COLORSPACE_GRAY || type == FZ_COLORSPACE_RGB || type == FZ_COLORSPACE_CMYK);
+        bool simple = image && (image->imagemask || ((named || device) && !image->use_colorkey && !image->mask));
+        if (!simple) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This page has a small picture stored in its content that couldn't be kept through the change");
+        CHAIN(p)->op_BI(ctx, CHAIN(p), image, colorspace_name);
+    }
+}
+
 static void cp_drop(fz_context *ctx, pdf_processor *proc) {
     content_proc *p = (content_proc *)proc;
     for (int i = 0; i <= p->top; i++) {
@@ -2069,6 +2088,7 @@ static content_proc *new_content_proc(fz_context *ctx, pdf_document *doc, pdf_pa
     content_proc *p = pdf_new_processor(ctx, sizeof *p);
     p->super.chain = out;
     p->out = out;
+    p->real_out = out;
     p->doc = doc;
     p->super.drop_processor = cp_drop;
     p->super.op_q = cp_q;
@@ -2098,6 +2118,7 @@ static content_proc *new_content_proc(fz_context *ctx, pdf_document *doc, pdf_pa
     p->super.op_sc_pattern = cp_sc_pattern;
     p->super.op_sc_shade = cp_sc_shade;
     p->super.op_Do_image = cp_Do_image;
+    p->super.op_BI = cp_BI;
     p->gs[0].ctm = fz_identity;
     p->gs[0].text.scale = 1;
     p->gs[0].text.size = -1;
@@ -2117,16 +2138,32 @@ static content_proc *new_content_proc(fz_context *ctx, pdf_document *doc, pdf_pa
 // decoded content is over OPDF_MAX_CONTENT_BYTES).
 static void process_page_content(fz_context *ctx, pdf_document *doc, pdf_page *page, content_proc *p) {
     pdf_obj *contents = pdf_page_contents(ctx, page);
+    // The decoded content is measured first (read, not kept), so a small
+    // stream that inflates enormously is refused before it is interpreted.
     size_t total = 0;
-    if (pdf_is_array(ctx, contents)) {
-        for (int i = 0, n = pdf_array_len(ctx, contents); i < n; i++) total += (size_t)pdf_dict_get_int64(ctx, pdf_array_get(ctx, contents, i), PDF_NAME(Length));
-    } else {
-        total = (size_t)pdf_dict_get_int64(ctx, contents, PDF_NAME(Length));
+    int n = pdf_is_array(ctx, contents) ? pdf_array_len(ctx, contents) : 1;
+    if (n > 10000) fz_throw(ctx, FZ_ERROR_LIMIT, "This page's content is too large to edit");
+    unsigned char chunk[65536];
+    for (int i = 0; i < n; i++) {
+        pdf_obj *obj = pdf_is_array(ctx, contents) ? pdf_array_get(ctx, contents, i) : contents;
+        if (!pdf_is_stream(ctx, obj)) continue;
+        fz_stream *stm = pdf_open_stream(ctx, obj);
+        fz_try(ctx) {
+            size_t got;
+            while ((got = fz_read(ctx, stm, chunk, sizeof chunk)) > 0) {
+                total += got;
+                if (total > OPDF_MAX_CONTENT_BYTES) fz_throw(ctx, FZ_ERROR_LIMIT, "This page's content is too large to edit");
+            }
+        }
+        fz_always(ctx)
+            fz_drop_stream(ctx, stm);
+        fz_catch(ctx)
+            fz_rethrow(ctx);
     }
-    // /Length is the encoded size: decoded content is checked as it is read
-    // by stopping at the operation limit; this refuses the plainly huge.
-    if (total > OPDF_MAX_CONTENT_BYTES) fz_throw(ctx, FZ_ERROR_LIMIT, "This page's content is too large to edit");
     pdf_process_contents(ctx, &p->super, doc, pdf_page_resources(ctx, page), contents, NULL, NULL);
+    // Output switched off (an unclosed stamp being removed) is switched back on.
+    p->super.chain = p->real_out;
+    p->out = p->real_out;
     if (p->emit_end && CHAIN(p)) {
         // Whatever the content left open is closed first.
         for (int i = p->top + p->overflow; i > 0; i--) CHAIN(p)->op_Q(ctx, CHAIN(p));
@@ -2618,7 +2655,10 @@ static void emit_edited_text(fz_context *ctx, content_proc *p, pdf_obj *array, c
     e->found = true;
     content_gstate *g = G(p);
     if (edit->color_n && !g->fill_n) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text's colour can't be changed here");
-    if (!g->font_name[0]) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text's font can't be found");
+    // A font set by an ExtGState has no resource name of its own, and a
+    // name cut short wouldn't be found: neither can be written back.
+    if (!g->font_name[0] || !strcmp(g->font_name, "ExtGState") || strlen(g->font_name) >= sizeof g->font_name - 1)
+        fz_throw(ctx, FZ_ERROR_ARGUMENT, "This text's font can't be named, so the text can't be changed here");
     float size = g->text.size * (edit->size_scale > 0 ? edit->size_scale : 1);
     if (edit->color_n) emit_color(ctx, p, edit->color_n, edit->color);
     if (size != g->text.size) CHAIN(p)->op_Tf(ctx, CHAIN(p), g->font_name, NULL, size);
@@ -4064,8 +4104,18 @@ static void stamp_page(fz_context *ctx, pdf_document *pdf, pdf_page *page, const
     fz_var(post);
     fz_var(gs);
     fz_try(ctx) {
+        // The font's name on this page: the one it already has there, or a
+        // new one (never replacing another font of the same name).
         pdf_obj *fonts = own_resources(ctx, pdf, page, PDF_NAME(Font));
-        pdf_dict_puts(ctx, fonts, font_name, font_obj);
+        char name[32] = "";
+        for (int i = 0, n = pdf_dict_len(ctx, fonts); i < n && !name[0]; i++)
+            if (!pdf_objcmp(ctx, pdf_dict_get_val(ctx, fonts, i), font_obj) && pdf_is_indirect(ctx, pdf_dict_get_val(ctx, fonts, i)))
+                fz_strlcpy(name, pdf_to_name(ctx, pdf_dict_get_key(ctx, fonts, i)), sizeof name);
+        if (!name[0]) {
+            new_resource_name(ctx, fonts, font_name, name);
+            pdf_dict_puts(ctx, fonts, name, font_obj);
+        }
+        font_name = name;
         pdf_obj *states = own_resources(ctx, pdf, page, PDF_NAME(ExtGState));
         fz_rect mediabox;
         fz_matrix ctm;
@@ -4272,8 +4322,9 @@ bool opdf_stamp_pages(opdf_doc *d, const opdf_stamp *stamps, int count, const un
 // with everything inside it.
 typedef struct {
     int kinds;
-    int depth;         // marked-content nesting
-    int skip_from;     // the depth whose EMC ends the stamp being dropped, or -1
+    int depth;         // marked-content nesting (never below 0)
+    bool skipping;     // dropping a stamp...
+    int skip_from;     // ...until the EMC at this depth
     bool removed;
     pdf_processor *out;
 } stamp_removal;
@@ -4290,7 +4341,8 @@ static void sr_BDC(fz_context *ctx, pdf_processor *proc, const char *tag, pdf_ob
     content_proc *p = (content_proc *)proc;
     stamp_removal *r = p->arg;
     r->depth++;
-    if (r->skip_from < 0 && stamp_kind_matches(ctx, raw, r->kinds)) {
+    if (!r->skipping && stamp_kind_matches(ctx, raw, r->kinds)) {
+        r->skipping = true;
         r->skip_from = r->depth;
         r->removed = true;
         // Everything until the matching EMC goes nowhere.
@@ -4311,14 +4363,15 @@ static void sr_BMC(fz_context *ctx, pdf_processor *proc, const char *tag) {
 static void sr_EMC(fz_context *ctx, pdf_processor *proc) {
     content_proc *p = (content_proc *)proc;
     stamp_removal *r = p->arg;
-    if (r->skip_from >= 0 && r->depth == r->skip_from) {
-        r->skip_from = -1;
+    if (r->skipping && r->depth == r->skip_from) {
+        r->skipping = false;
         p->super.chain = r->out;
         p->out = r->out;
         r->depth--;
         return;
     }
-    r->depth--;
+    // A stray EMC (with no BDC) is passed on but doesn't count.
+    if (r->depth > 0) r->depth--;
     if (CHAIN(p)) CHAIN(p)->op_EMC(ctx, CHAIN(p));
 }
 
@@ -4355,7 +4408,7 @@ bool opdf_stamps_remove(opdf_doc *d, int kinds, int *pages_changed, opdf_error *
                     fz_drop_buffer(ctx, b);
                 }
                 if (mentions) {
-                    stamp_removal r = { .kinds = kinds, .skip_from = -1 };
+                    stamp_removal r = { .kinds = kinds };
                     rewrite_page_content(ctx, pdf, page, configure_stamp_removal, &r);
                     if (r.removed && pages_changed) (*pages_changed)++;
                 }

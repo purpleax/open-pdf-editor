@@ -30,3 +30,25 @@ data[offset:offset + 10] = b"%010d" % 5   # points into the header
 open(sys.argv[2], "wb").write(data)
 PY
 rm -f build/corpus/lazy-source.pdf
+
+# contentzip.pdf: a page whose content is a small deflated stream that
+# inflates to 80 MB (over the 64 MB the editor reads).
+python3 -I - build/corpus/contentzip.pdf <<'PY'
+import sys, zlib
+data = zlib.compress(b" " * (80 << 20), 9)
+objs = [b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+        b"<< /Length %d /Filter /FlateDecode >>\nstream\n" % len(data) + data + b"\nendstream"]
+out = bytearray(b"%PDF-1.7\n")
+offsets = []
+for i, body in enumerate(objs, 1):
+    offsets.append(len(out))
+    out += b"%d 0 obj\n" % i + body + b"\nendobj\n"
+xref = len(out)
+out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1)
+for o in offsets:
+    out += b"%010d 00000 n \n" % o
+out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref)
+open(sys.argv[1], "wb").write(out)
+PY

@@ -4,9 +4,10 @@ import ImageIO
 import MuPDFBridge
 import UniformTypeIdentifiers
 
-/// Image files for adding to pages: read with ImageIO (so MuPDF's own
-/// decoders never see the file), turned upright, and handed over as JPEG
-/// (unchanged, when it already is one and needs no turning) or PNG.
+/// Image files for adding to pages: read with ImageIO, turned upright, and
+/// written again (JPEG as JPEG, anything else as PNG) with none of the
+/// file's metadata, so camera details and locations don't end up in the PDF
+/// and MuPDF only ever decodes what ImageIO wrote.
 public enum ImageImport {
     public static let maxBytes = 100 << 20
     public static let maxPixels = 40_000_000
@@ -32,12 +33,7 @@ public enum ImageImport {
             throw failure("That file isn't an image this app can read.")
         }
         guard width * height <= maxPixels else { throw failure("That image has more than 40 megapixels.") }
-        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
-        let turned = orientation >= 5
-        let size = CGSize(width: turned ? height : width, height: turned ? width : height)
-        if let type = CGImageSourceGetType(source), UTType(type as String) == .jpeg, orientation == 1 {
-            return Prepared(data: try Data(contentsOf: url), size: size)
-        }
+        let isJPEG = CGImageSourceGetType(source).flatMap { UTType($0 as String) } == .jpeg
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
@@ -47,10 +43,12 @@ public enum ImageImport {
             throw failure("That image couldn't be read.")
         }
         let data = NSMutableData()
-        guard let destination = CGImageDestinationCreateWithData(data, UTType.png.identifier as CFString, 1, nil) else {
+        let type = isJPEG ? UTType.jpeg : UTType.png
+        guard let destination = CGImageDestinationCreateWithData(data, type.identifier as CFString, 1, nil) else {
             throw failure("That image couldn't be converted.")
         }
-        CGImageDestinationAddImage(destination, image, nil)
+        let quality: [CFString: Any] = isJPEG ? [kCGImageDestinationLossyCompressionQuality: 0.92] : [:]
+        CGImageDestinationAddImage(destination, image, quality as CFDictionary)
         guard CGImageDestinationFinalize(destination) else { throw failure("That image couldn't be converted.") }
         return Prepared(data: data as Data, size: CGSize(width: image.width, height: image.height))
     }
