@@ -282,6 +282,78 @@ int opdf_annot_reply(opdf_doc *doc, int page, int parent, const char *author, co
 // reply with State/StateModel, as other PDF apps write it. NULL state removes it.
 bool opdf_annot_set_status(opdf_doc *doc, int page, int parent, const char *author, const char *state, opdf_error *err);
 
+// --- Form fields -----------------------------------------------------------
+//
+// Each form field widget on a page, identified like annotations by its PDF
+// object number. Form JavaScript never runs: values are set as given, and
+// calculated fields aren't recalculated.
+
+// MuPDF's pdf_widget_type.
+enum {
+    OPDF_FIELD_UNKNOWN = 0,
+    OPDF_FIELD_BUTTON = 1,      // push button
+    OPDF_FIELD_CHECKBOX = 2,
+    OPDF_FIELD_COMBOBOX = 3,    // dropdown
+    OPDF_FIELD_LISTBOX = 4,
+    OPDF_FIELD_RADIO = 5,
+    OPDF_FIELD_SIGNATURE = 6,
+    OPDF_FIELD_TEXT = 7,
+};
+
+typedef struct {
+    int id;              // the widget's PDF object number
+    int type;            // OPDF_FIELD_*
+    opdf_rect rect;
+    char *name;          // full name ("address.street")
+    char *tooltip;       // /TU, or NULL
+    char *value;         // text, a dropdown's choice, or a checkbox or radio group's state ("Off" when off)
+    char *on_state;      // checkbox and radio: this widget's state when on
+    bool is_on;          // checkbox and radio: this widget is on
+    int flags;           // /Ff (PDF_FIELD_IS_READ_ONLY, PDF_TX_FIELD_IS_MULTILINE, ...)
+    int max_length;      // text: /MaxLen, or 0
+    int option_count;    // dropdown and list box
+    char **option_values;  // what is stored when chosen
+    char **option_labels;  // what is shown
+    int selected_count;  // list box: the chosen options' values
+    char **selected;
+    bool is_signed;      // signature: has a signature
+    // Can't be filled in here: read-only in the file, a kind that isn't
+    // filled in (push buttons, signatures, file selection, rich text), over
+    // a limit, or no object number of its own (id 0).
+    bool read_only;
+} opdf_field;
+
+// Limits on what is read, as for annotations: fields over a limit are cut
+// short and marked read-only.
+#define OPDF_MAX_FIELDS_PER_PAGE 2000
+#define OPDF_MAX_FIELD_OPTIONS 1000
+#define OPDF_MAX_FIELD_TEXT 100000   // bytes of a value, name or option
+
+// What the document's form holds: fields at all, XFA data, and a signed
+// signature field (looked for among the first 10,000 fields).
+typedef struct {
+    bool has_fields;
+    bool has_xfa;
+    bool is_signed;
+} opdf_form_info;
+bool opdf_form_get_info(opdf_doc *doc, opdf_form_info *info, opdf_error *err);
+
+// Every form field widget on a page (at most OPDF_MAX_FIELDS_PER_PAGE, each
+// listed once).
+opdf_field *opdf_fields_load(opdf_doc *doc, int page, int *count, opdf_error *err);
+void opdf_fields_free(opdf_field *items, int count);
+
+// Each is one undoable step named "Fill In Field". They refuse read-only
+// fields. Filling in a field removes /XFA (other apps would show its old
+// data instead of the values typed here).
+// Text field or dropdown: the new text (a dropdown takes one of its option values).
+bool opdf_field_set_text(opdf_doc *doc, int page, int id, const char *text, opdf_error *err);
+// List box: the chosen option values (more than one only if it allows that).
+bool opdf_field_set_choices(opdf_doc *doc, int page, int id, const char *const *values, int count, opdf_error *err);
+// Checkbox or radio button: turns it on, or a checkbox off (a radio
+// button stays on unless its group allows none).
+bool opdf_field_toggle(opdf_doc *doc, int page, int id, opdf_error *err);
+
 // --- Undo, saving, flattening ---------------------------------------------
 
 // Call once the document is unlocked and before any change. Loads every

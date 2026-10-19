@@ -196,6 +196,113 @@ function makeSigned() {
 	doc.save(out + "/signed.pdf", "compress")
 }
 
+// --- forms.pdf: one of each kind of form field ------------------------------
+// Checkboxes and radio buttons carry appearances for their states; text
+// fields rely on /NeedAppearances. "total" has a calculate script that
+// would fill it in if form JavaScript ran (it must not), and the form has
+// XFA data, which filling in a field removes.
+function formDocument() {
+	var doc = newDocument()
+	addTextPage(doc, LETTER, [[72, 60, 24, "Form"]])
+	var helv = doc.addObject({ Type: doc.newName("Font"), Subtype: doc.newName("Type1"),
+		BaseFont: doc.newName("Helvetica"), Encoding: doc.newName("WinAnsiEncoding") })
+	var form = doc.newDictionary()
+	form.put("Fields", doc.newArray())
+	form.put("DA", doc.newString("/Helv 0 Tf 0 g"))
+	form.put("DR", { Font: { Helv: helv } })
+	form.put("NeedAppearances", true)
+	doc.getTrailer().get("Root").put("AcroForm", form)
+	return doc
+}
+
+function stateAppearances(doc, size, onState) {
+	function look(content) {
+		return doc.addStream(content, { Type: doc.newName("XObject"), Subtype: doc.newName("Form"), BBox: [0, 0, size, size] })
+	}
+	var n = doc.newDictionary()
+	n.put(onState, look("0 0 1 rg 3 3 " + (size - 6) + " " + (size - 6) + " re f"))
+	n.put("Off", look("0 g 0.5 w 0.5 0.5 " + (size - 1) + " " + (size - 1) + " re S"))
+	var ap = doc.newDictionary()
+	ap.put("N", n)
+	return ap
+}
+
+// A widget on page 0, in /Annots; also in /AcroForm/Fields unless it has a parent.
+function addField(doc, fields, rect) {
+	var widget = doc.newDictionary()
+	widget.put("Type", doc.newName("Annot"))
+	widget.put("Subtype", doc.newName("Widget"))
+	widget.put("Rect", rect)
+	widget.put("F", 4)
+	for (var k in fields) widget.put(k, fields[k])
+	var w = doc.addObject(widget)
+	var page = doc.findPage(0)
+	w.put("P", page)
+	var annots = page.get("Annots")
+	if (!annots || annots.isNull()) { annots = doc.newArray(); page.put("Annots", annots) }
+	annots.push(w)
+	if (!fields.Parent) doc.getTrailer().get("Root").get("AcroForm").get("Fields").push(w)
+	return w
+}
+
+function makeForms() {
+	var doc = formDocument()
+	var Tx = doc.newName("Tx"), Btn = doc.newName("Btn"), Ch = doc.newName("Ch")
+	var da = doc.newString("/Helv 12 Tf 0 g")
+	addField(doc, { FT: Tx, T: doc.newString("name"), V: doc.newString("Ada"), DA: da, TU: doc.newString("Your name") }, [72, 700, 300, 720])
+	addField(doc, { FT: Tx, T: doc.newString("notes"), Ff: 1 << 12, DA: da }, [72, 620, 300, 690])
+	addField(doc, { FT: Tx, T: doc.newString("zip"), MaxLen: 5, DA: da }, [72, 590, 150, 610])
+	addField(doc, { FT: Tx, T: doc.newString("pin"), Ff: 1 << 13, DA: da }, [200, 590, 300, 610])
+	addField(doc, { FT: Tx, T: doc.newString("code"), Ff: 1 << 24, MaxLen: 6, DA: da }, [320, 590, 440, 610])
+	addField(doc, { FT: Btn, T: doc.newString("agree"), V: doc.newName("Off"), AS: doc.newName("Off"),
+		AP: stateAppearances(doc, 14, "Yes") }, [72, 550, 86, 564])
+
+	// A radio group: a parent field with three buttons, none off once chosen.
+	var group = doc.addObject({ FT: Btn, T: doc.newString("size"), Ff: (1 << 15) | (1 << 14), V: doc.newName("Off"), Kids: [] })
+	doc.getTrailer().get("Root").get("AcroForm").get("Fields").push(group)
+	var states = ["S", "M", "L"]
+	for (var i = 0; i < 3; i++) {
+		var kid = addField(doc, { Parent: group, AS: doc.newName("Off"), AP: stateAppearances(doc, 14, states[i]) },
+			[72 + i * 40, 510, 86 + i * 40, 524])
+		group.get("Kids").push(kid)
+	}
+
+	addField(doc, { FT: Ch, T: doc.newString("colour"), Ff: 1 << 17, V: doc.newString("g"), DA: da,
+		Opt: [[doc.newString("r"), doc.newString("Red")], [doc.newString("g"), doc.newString("Green")], [doc.newString("b"), doc.newString("Blue")]] }, [72, 460, 200, 480])
+	addField(doc, { FT: Ch, T: doc.newString("fruits"), Ff: 1 << 21, DA: da,
+		Opt: [doc.newString("Apple"), doc.newString("Banana"), doc.newString("Cherry")] }, [72, 380, 200, 440])
+	addField(doc, { FT: Tx, T: doc.newString("locked"), Ff: 1, V: doc.newString("Fixed"), DA: da }, [72, 340, 300, 360])
+	addField(doc, { FT: doc.newName("Sig"), T: doc.newString("signature") }, [72, 260, 300, 320])
+	var calculate = doc.addObject({ S: doc.newName("JavaScript"), JS: doc.newString("event.value = 'calculated';") })
+	var total = addField(doc, { FT: Tx, T: doc.newString("total"), DA: da, AA: { C: calculate } }, [320, 700, 440, 720])
+	var form = doc.getTrailer().get("Root").get("AcroForm")
+	form.put("CO", [total])
+	form.put("XFA", doc.addStream("<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"/>", {}))
+	doc.save(out + "/forms.pdf", "compress")
+}
+
+// --- formbomb.pdf: more fields and choices than the limits, a name over
+// MuPDF's 16 KB, and fields that are their own parents.
+function makeFormBomb() {
+	var doc = formDocument()
+	var Tx = doc.newName("Tx")
+	for (var i = 0; i < 2500; i++)
+		addField(doc, { FT: Tx, T: doc.newString("f" + i) }, [10 + (i % 50) * 11, 10 + Math.floor(i / 50) * 11, 20 + (i % 50) * 11, 20 + Math.floor(i / 50) * 11])
+	doc.save(out + "/formbomb.pdf", "compress")
+
+	doc = formDocument()
+	var options = []
+	for (var j = 0; j < 5000; j++) options.push(doc.newString("Option " + j))
+	addField(doc, { FT: doc.newName("Ch"), T: doc.newString("many"), Ff: 1 << 17, Opt: options }, [72, 700, 300, 720])
+	var long = ""
+	while (long.length < 20000) long += "long name "
+	addField(doc, { FT: Tx, T: doc.newString(long) }, [72, 650, 300, 670])
+	var a = addField(doc, { FT: Tx, T: doc.newString("loop") }, [72, 600, 300, 620])
+	var b = doc.addObject({ T: doc.newString("back"), Kids: [a], Parent: a })
+	a.put("Parent", b)
+	doc.save(out + "/formloop.pdf", "compress")
+}
+
 // --- Hostile files, for the security tests ----------------------------------
 
 // Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
@@ -350,4 +457,6 @@ makeMixed()
 makeAttachments()
 makeLayers()
 makeLong()
+makeForms()
+makeFormBomb()
 print("corpus: wrote the test PDFs to " + out)

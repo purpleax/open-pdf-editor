@@ -1473,6 +1473,330 @@ bool opdf_annot_set_status(opdf_doc *d, int page_number, int parent, const char 
     return !(err && err->code);
 }
 
+// --- Form fields ---------------------------------------------------------------
+
+// Bytes of names, values and options listed for one page, so a crafted file
+// can't make the app copy without bound.
+#define OPDF_MAX_PAGE_FIELD_BYTES (32 << 20)
+
+static pdf_annot *find_widget(fz_context *ctx, pdf_page *page, int id) {
+    if (id <= 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This field can't be changed");
+    int n = 0;
+    for (pdf_annot *w = pdf_first_widget(ctx, page); w && n < OPDF_MAX_FIELDS_PER_PAGE; w = pdf_next_widget(ctx, w), n++)
+        if (annot_id(ctx, w) == id) return w;
+    fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such field");
+}
+
+// A copy of s of at most OPDF_MAX_FIELD_TEXT bytes, counted against
+// *budget; cut short (at a character boundary) sets *cut. NULL stays NULL.
+static char *dup_field_text(fz_context *ctx, const char *s, int *budget, bool *cut) {
+    if (!s) return NULL;
+    size_t limit = OPDF_MAX_FIELD_TEXT;
+    if (*budget < 0) *budget = 0;
+    if ((size_t)*budget < limit) limit = (size_t)*budget;
+    size_t n = strnlen(s, limit + 1);
+    if (n > limit) {
+        n = limit;
+        while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80) n--;
+        *cut = true;
+    }
+    char *copy = checked_calloc(ctx, n + 1, 1);
+    memcpy(copy, s, n);
+    *budget -= (int)n;
+    return copy;
+}
+
+// A field's value as text, without changing the document (MuPDF's
+// pdf_field_value rewrites stream values in place). The first of several
+// list box choices.
+static const char *field_value(fz_context *ctx, pdf_obj *field) {
+    pdf_obj *v = pdf_dict_get_inheritable(ctx, field, PDF_NAME(V));
+    if (pdf_is_array(ctx, v)) v = pdf_array_get(ctx, v, 0);
+    if (pdf_is_array(ctx, v)) v = pdf_array_get(ctx, v, 1);
+    if (pdf_is_name(ctx, v)) return pdf_to_name(ctx, v);
+    if (pdf_is_string(ctx, v)) return pdf_to_text_string(ctx, v);
+    return "";
+}
+
+// Fields filled in here: text (not file selection or rich text), checkboxes,
+// radio buttons, dropdowns and list boxes, unless the file makes them
+// read-only.
+static bool fillable(fz_context *ctx, pdf_annot *w) {
+    pdf_obj *obj = pdf_annot_obj(ctx, w);
+    int flags = pdf_field_flags(ctx, obj);
+    if (flags & PDF_FIELD_IS_READ_ONLY) return false;
+    switch (pdf_widget_type(ctx, w)) {
+    case PDF_WIDGET_TYPE_TEXT:
+        return !(flags & (PDF_TX_FIELD_IS_FILE_SELECT | PDF_TX_FIELD_IS_RICH_TEXT));
+    case PDF_WIDGET_TYPE_CHECKBOX:
+    case PDF_WIDGET_TYPE_RADIOBUTTON:
+    case PDF_WIDGET_TYPE_COMBOBOX:
+    case PDF_WIDGET_TYPE_LISTBOX:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static void fill_field(fz_context *ctx, pdf_annot *w, opdf_field *o, int *budget) {
+    pdf_obj *obj = pdf_annot_obj(ctx, w);
+    bool cut = false;
+    o->id = annot_id(ctx, w);
+    o->type = (int)pdf_widget_type(ctx, w);
+    o->rect = rect_to(pdf_bound_widget(ctx, w));
+    o->flags = pdf_field_flags(ctx, obj);
+    // MuPDF refuses names over 16 KB: such a field is listed without one.
+    char *name = NULL;
+    fz_var(name);
+    fz_try(ctx) {
+        name = pdf_load_field_name(ctx, obj);
+        o->name = dup_field_text(ctx, name, budget, &cut);
+    }
+    fz_always(ctx)
+        fz_free(ctx, name);
+    fz_catch(ctx) {
+        if (fz_caught(ctx) != FZ_ERROR_LIMIT) fz_rethrow(ctx);
+        cut = true;
+    }
+    pdf_obj *tu = pdf_dict_get_inheritable(ctx, obj, PDF_NAME(TU));
+    if (tu) o->tooltip = dup_field_text(ctx, pdf_to_text_string(ctx, tu), budget, &cut);
+    o->value = dup_field_text(ctx, field_value(ctx, obj), budget, &cut);
+    if (o->type == PDF_WIDGET_TYPE_CHECKBOX || o->type == PDF_WIDGET_TYPE_RADIOBUTTON) {
+        o->on_state = dup_field_text(ctx, pdf_to_name(ctx, pdf_button_field_on_state(ctx, obj)), budget, &cut);
+        pdf_obj *as = pdf_dict_get(ctx, obj, PDF_NAME(AS));
+        o->is_on = pdf_is_name(ctx, as) && !pdf_name_eq(ctx, as, PDF_NAME(Off));
+    }
+    if (o->type == PDF_WIDGET_TYPE_TEXT) o->max_length = pdf_text_widget_max_len(ctx, w);
+    if (o->type == PDF_WIDGET_TYPE_COMBOBOX || o->type == PDF_WIDGET_TYPE_LISTBOX) {
+        int n = pdf_choice_field_option_count(ctx, obj);
+        if (n > OPDF_MAX_FIELD_OPTIONS) {
+            n = OPDF_MAX_FIELD_OPTIONS;
+            cut = true;
+        }
+        if (n > 0) {
+            o->option_values = checked_calloc(ctx, (size_t)n, sizeof(char *));
+            o->option_labels = checked_calloc(ctx, (size_t)n, sizeof(char *));
+            o->option_count = n;
+            for (int i = 0; i < n; i++) {
+                o->option_values[i] = dup_field_text(ctx, pdf_choice_field_option(ctx, obj, 1, i), budget, &cut);
+                o->option_labels[i] = dup_field_text(ctx, pdf_choice_field_option(ctx, obj, 0, i), budget, &cut);
+            }
+        }
+        pdf_obj *v = pdf_dict_get_inheritable(ctx, obj, PDF_NAME(V));
+        if (o->type == PDF_WIDGET_TYPE_LISTBOX && pdf_is_array(ctx, v)) {
+            int k = pdf_array_len(ctx, v);
+            if (k > OPDF_MAX_FIELD_OPTIONS) {
+                k = OPDF_MAX_FIELD_OPTIONS;
+                cut = true;
+            }
+            if (k > 0) {
+                o->selected = checked_calloc(ctx, (size_t)k, sizeof(char *));
+                o->selected_count = k;
+                for (int i = 0; i < k; i++) {
+                    pdf_obj *e = pdf_array_get(ctx, v, i);
+                    if (pdf_is_array(ctx, e)) e = pdf_array_get(ctx, e, 0);
+                    o->selected[i] = dup_field_text(ctx, pdf_to_text_string(ctx, e), budget, &cut);
+                }
+            }
+        } else if (o->type == PDF_WIDGET_TYPE_LISTBOX && o->value && o->value[0]) {
+            o->selected = checked_calloc(ctx, 1, sizeof(char *));
+            o->selected_count = 1;
+            o->selected[0] = dup_field_text(ctx, o->value, budget, &cut);
+        }
+    }
+    if (o->type == PDF_WIDGET_TYPE_SIGNATURE) o->is_signed = pdf_widget_is_signed(ctx, w) != 0;
+    o->read_only = o->id == 0 || cut || !fillable(ctx, w);
+}
+
+opdf_field *opdf_fields_load(opdf_doc *d, int page_number, int *count, opdf_error *err) {
+    clear_error(err);
+    *count = 0;
+    fz_context *ctx = d->ctx;
+    fz_page *page = NULL;
+    opdf_field *items = NULL;
+    int n = 0, capacity = 0;
+    fz_var(page);
+    fz_var(items);
+    fz_var(n);
+    fz_var(capacity);
+    lock_doc(d);
+    fz_try(ctx) {
+        page = fz_load_page(ctx, d->doc, page_number);
+        pdf_page *pp = pdf_page_from_fz_page(ctx, page);
+        int budget = OPDF_MAX_PAGE_FIELD_BYTES;
+        int walked = 0;
+        for (pdf_annot *w = pp ? pdf_first_widget(ctx, pp) : NULL; w && walked < OPDF_MAX_FIELDS_PER_PAGE;
+             w = pdf_next_widget(ctx, w), walked++) {
+            // An object listed twice in /Annots is listed here once.
+            int id = annot_id(ctx, w);
+            bool seen = false;
+            for (int i = 0; i < n && id != 0 && !seen; i++) seen = items[i].id == id;
+            if (seen) continue;
+            if (n == capacity) {
+                int grown = capacity ? capacity * 2 : 16;
+                opdf_field *bigger = realloc(items, (size_t)grown * sizeof *items);
+                if (!bigger) fz_throw(ctx, FZ_ERROR_SYSTEM, "Out of memory");
+                items = bigger;
+                capacity = grown;
+            }
+            memset(&items[n], 0, sizeof items[n]);
+            n++;
+            // A malformed field is listed read-only with what could be read,
+            // rather than hiding the page's other fields.
+            fz_try(ctx)
+                fill_field(ctx, w, &items[n - 1], &budget);
+            fz_catch(ctx) {
+                if (fz_caught(ctx) == FZ_ERROR_SYSTEM) fz_rethrow(ctx);
+                items[n - 1].read_only = true;
+            }
+        }
+    }
+    fz_always(ctx)
+        fz_drop_page(ctx, page);
+    fz_catch(ctx) {
+        set_error(err, ctx);
+        opdf_fields_free(items, n);
+        items = NULL;
+        n = 0;
+    }
+    unlock_doc(d);
+    *count = n;
+    return items;
+}
+
+static void free_strings(char **strings, int count) {
+    if (!strings) return;
+    for (int i = 0; i < count; i++) free(strings[i]);
+    free(strings);
+}
+
+void opdf_fields_free(opdf_field *items, int count) {
+    if (!items) return;
+    for (int i = 0; i < count; i++) {
+        opdf_field *o = &items[i];
+        free(o->name);
+        free(o->tooltip);
+        free(o->value);
+        free(o->on_state);
+        free_strings(o->option_values, o->option_count);
+        free_strings(o->option_labels, o->option_count);
+        free_strings(o->selected, o->selected_count);
+    }
+    free(items);
+}
+
+// Looks through the field tree, breadth first, for a signed signature
+// field; *budget bounds the fields visited (and so any cycle).
+static bool has_signed_field(fz_context *ctx, pdf_obj *fields, int *budget) {
+    int n = pdf_array_len(ctx, fields);
+    for (int i = 0; i < n && *budget > 0; i++, (*budget)--) {
+        pdf_obj *field = pdf_array_get(ctx, fields, i);
+        if (pdf_name_eq(ctx, pdf_dict_get_inheritable(ctx, field, PDF_NAME(FT)), PDF_NAME(Sig)) &&
+            pdf_is_dict(ctx, pdf_dict_get(ctx, field, PDF_NAME(V))))
+            return true;
+    }
+    for (int i = 0; i < n && *budget > 0; i++) {
+        pdf_obj *kids = pdf_dict_get(ctx, pdf_array_get(ctx, fields, i), PDF_NAME(Kids));
+        if (kids && has_signed_field(ctx, kids, budget)) return true;
+    }
+    return false;
+}
+
+bool opdf_form_get_info(opdf_doc *d, opdf_form_info *info, opdf_error *err) {
+    clear_error(err);
+    memset(info, 0, sizeof *info);
+    fz_context *ctx = d->ctx;
+    lock_doc(d);
+    fz_try(ctx) {
+        pdf_document *pdf = pdf_specifics(ctx, d->doc);
+        pdf_obj *form = pdf ? pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/AcroForm") : NULL;
+        pdf_obj *fields = pdf_dict_get(ctx, form, PDF_NAME(Fields));
+        int budget = 10000;
+        info->has_fields = pdf_array_len(ctx, fields) > 0;
+        info->has_xfa = pdf_dict_get(ctx, form, PDF_NAME(XFA)) != NULL;
+        info->is_signed = has_signed_field(ctx, fields, &budget);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    unlock_doc(d);
+    return !(err && err->code);
+}
+
+// Other apps prefer a form's XFA data to its fields, so once a field is
+// filled in here the XFA (now out of date) goes.
+static void remove_xfa(fz_context *ctx, pdf_document *pdf) {
+    pdf_obj *form = pdf_dict_getp(ctx, pdf_trailer(ctx, pdf), "Root/AcroForm");
+    if (pdf_dict_get(ctx, form, PDF_NAME(XFA))) pdf_dict_del(ctx, form, PDF_NAME(XFA));
+}
+
+// The field to fill in, checked against the kinds given.
+static pdf_annot *fillable_widget(fz_context *ctx, pdf_page *page, int id, int type_a, int type_b) {
+    pdf_annot *w = find_widget(ctx, page, id);
+    int type = pdf_widget_type(ctx, w);
+    if (!fillable(ctx, w)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This field can't be filled in");
+    if (type != type_a && type != type_b) fz_throw(ctx, FZ_ERROR_ARGUMENT, "This field doesn't take that kind of value");
+    return w;
+}
+
+static bool is_option(fz_context *ctx, pdf_obj *field, const char *value) {
+    int n = pdf_choice_field_option_count(ctx, field);
+    for (int i = 0; i < n; i++)
+        if (!strcmp(pdf_choice_field_option(ctx, field, 1, i), value)) return true;
+    return false;
+}
+
+bool opdf_field_set_text(opdf_doc *d, int page_number, int id, const char *text, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Fill In Field", err, {
+        pdf_annot *w = fillable_widget(ctx, pp, id, PDF_WIDGET_TYPE_TEXT, PDF_WIDGET_TYPE_COMBOBOX);
+        pdf_obj *obj = pdf_annot_obj(ctx, w);
+        if (!text) text = "";
+        if (strlen(text) > OPDF_MAX_FIELD_TEXT) fz_throw(ctx, FZ_ERROR_LIMIT, "The text is too long for a form field");
+        if (pdf_widget_type(ctx, w) == PDF_WIDGET_TYPE_TEXT) {
+            int max = pdf_text_widget_max_len(ctx, w);
+            if (max > 0 && (int)fz_utflen(text) > max) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The text is longer than this field allows");
+        } else if (!(pdf_field_flags(ctx, obj) & PDF_CH_FIELD_IS_EDIT) && text[0] && !is_option(ctx, obj, text)) {
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "That isn't one of this field's choices");
+        }
+        if (!pdf_set_annot_field_value(ctx, pdf, w, text, 1)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The field didn't take the text");
+        remove_xfa(ctx, pdf);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_field_set_choices(opdf_doc *d, int page_number, int id, const char *const *values, int count, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Fill In Field", err, {
+        pdf_annot *w = fillable_widget(ctx, pp, id, PDF_WIDGET_TYPE_LISTBOX, PDF_WIDGET_TYPE_LISTBOX);
+        pdf_obj *obj = pdf_annot_obj(ctx, w);
+        if (count < 0 || count > OPDF_MAX_FIELD_OPTIONS || (count > 0 && !values))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Too many choices");
+        if (count > 1 && !pdf_choice_widget_is_multiselect(ctx, w))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "This list takes one choice");
+        for (int i = 0; i < count; i++)
+            if (!values[i] || !is_option(ctx, obj, values[i])) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That isn't one of this field's choices");
+        if (count == 0) {
+            pdf_dict_del(ctx, obj, PDF_NAME(V));
+            pdf_dict_del(ctx, obj, PDF_NAME(I));
+            pdf_annot_request_synthesis(ctx, w);
+        } else {
+            pdf_choice_widget_set_value(ctx, w, count, (const char **)values);
+        }
+        remove_xfa(ctx, pdf);
+    });
+    return !(err && err->code);
+}
+
+bool opdf_field_toggle(opdf_doc *d, int page_number, int id, opdf_error *err) {
+    clear_error(err);
+    WITH_PAGE_OPERATION(d, page_number, "Fill In Field", err, {
+        pdf_annot *w = fillable_widget(ctx, pp, id, PDF_WIDGET_TYPE_CHECKBOX, PDF_WIDGET_TYPE_RADIOBUTTON);
+        pdf_toggle_widget(ctx, w);
+        remove_xfa(ctx, pdf);
+    });
+    return !(err && err->code);
+}
+
 // --- Undo, saving, flattening -----------------------------------------------
 
 static bool journal_query(opdf_doc *d, int (*query)(fz_context *, pdf_document *)) {
