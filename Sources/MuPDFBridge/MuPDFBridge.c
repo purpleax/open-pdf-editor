@@ -778,19 +778,11 @@ static void info_fill_image_mask(fz_context *ctx, fz_device *dev, fz_image *imag
     info_cover((text_info_device *)dev, ctm);
 }
 
-bool opdf_page_text_info(opdf_doc *d, int page_number, opdf_text_info *info, opdf_error *err) {
-    clear_error(err);
-    memset(info, 0, sizeof *info);
-    fz_context *ctx = d->ctx;
-    fz_page *page = NULL;
+// What the page's contents draw (throws on failure).
+static void page_text_info(fz_context *ctx, fz_page *page, opdf_text_info *info) {
     text_info_device *dev = NULL;
-    bool ok = false;
-    fz_var(page);
     fz_var(dev);
-    fz_var(ok);
-    lock_doc(d);
     fz_try(ctx) {
-        page = fz_load_page(ctx, d->doc, page_number);
         dev = fz_new_derived_device(ctx, text_info_device);
         dev->super.fill_text = info_fill_text;
         dev->super.stroke_text = info_stroke_text;
@@ -805,12 +797,29 @@ bool opdf_page_text_info(opdf_doc *d, int page_number, opdf_text_info *info, opd
         info->visible = dev->visible;
         info->invisible = dev->invisible;
         info->image_coverage = (float)dev->covered / (TEXT_INFO_GRID * TEXT_INFO_GRID);
+    }
+    fz_always(ctx)
+        fz_drop_device(ctx, dev ? &dev->super : NULL);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_page_text_info(opdf_doc *d, int page_number, opdf_text_info *info, opdf_error *err) {
+    clear_error(err);
+    memset(info, 0, sizeof *info);
+    fz_context *ctx = d->ctx;
+    fz_page *page = NULL;
+    bool ok = false;
+    fz_var(page);
+    fz_var(ok);
+    lock_doc(d);
+    fz_try(ctx) {
+        page = fz_load_page(ctx, d->doc, page_number);
+        page_text_info(ctx, page, info);
         ok = true;
     }
-    fz_always(ctx) {
-        fz_drop_device(ctx, dev ? &dev->super : NULL);
+    fz_always(ctx)
         fz_drop_page(ctx, page);
-    }
     fz_catch(ctx)
         set_error(err, ctx);
     unlock_doc(d);
@@ -7058,6 +7067,569 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
         set_capped_error(err, ctx, &allocator);
     fz_drop_context(ctx);
     release_budget(&allocator);
+    return ok;
+}
+
+// --- Export ------------------------------------------------------------------
+//
+// A copy of the document is opened in a capped context of its own and its
+// pages drawn into one of MuPDF's writers (Word, HTML, text) or rendered as
+// images. Pages pass through a filter device first:
+// - for Word, text drawn invisibly (as recognised text is) is drawn as text,
+//   since the Word writer leaves invisible text out; and images are given to
+//   it as PNG (it copies an image's compressed data as it is, which Word
+//   can't show for most kinds, and takes the data away from images drawn
+//   more than once);
+// - for Word and HTML, on a page with invisible text, images covering more
+//   than half the page (the scan under recognised text) are left out;
+// - drawing with absurd matrices, and text past a limit per page, is left out.
+
+#define OPDF_MAX_EXPORT_CHARS_PER_PAGE 1000000
+#define OPDF_MAX_EXPORT_IMAGE_PIXELS (40 * 1024 * 1024)
+
+struct opdf_export {
+    allocator_owner allocator;
+    fz_alloc_context alloc;
+    fz_context *ctx;
+    fz_document *doc;
+};
+
+typedef struct {
+    fz_device super;
+    fz_device *target;
+    bool docx;
+    bool drop_page_images;
+    fz_rect page;
+    int chars;
+} export_filter;
+
+#define TARGET(dev) (((export_filter *)(dev))->target)
+
+static bool sane_matrix(fz_matrix m) {
+    float v[6] = { m.a, m.b, m.c, m.d, m.e, m.f };
+    for (int i = 0; i < 6; i++)
+        if (!isfinite(v[i]) || fabsf(v[i]) > 1e7f) return false;
+    return true;
+}
+
+static bool take_chars(export_filter *f, const fz_text *text) {
+    int n = text_glyphs(text);
+    if (n > OPDF_MAX_EXPORT_CHARS_PER_PAGE - f->chars) return false;
+    f->chars += n;
+    return true;
+}
+
+static void ef_fill_path(fz_context *ctx, fz_device *dev, const fz_path *path, int even_odd, fz_matrix ctm,
+                         fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
+    if (sane_matrix(ctm)) fz_fill_path(ctx, TARGET(dev), path, even_odd, ctm, cs, color, alpha, params);
+}
+
+static void ef_stroke_path(fz_context *ctx, fz_device *dev, const fz_path *path, const fz_stroke_state *stroke,
+                           fz_matrix ctm, fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
+    if (sane_matrix(ctm)) fz_stroke_path(ctx, TARGET(dev), path, stroke, ctm, cs, color, alpha, params);
+}
+
+static void ef_clip_path(fz_context *ctx, fz_device *dev, const fz_path *path, int even_odd, fz_matrix ctm, fz_rect scissor) {
+    fz_clip_path(ctx, TARGET(dev), path, even_odd, ctm, scissor);
+}
+
+static void ef_clip_stroke_path(fz_context *ctx, fz_device *dev, const fz_path *path, const fz_stroke_state *stroke,
+                                fz_matrix ctm, fz_rect scissor) {
+    fz_clip_stroke_path(ctx, TARGET(dev), path, stroke, ctm, scissor);
+}
+
+static void ef_fill_text(fz_context *ctx, fz_device *dev, const fz_text *text, fz_matrix ctm, fz_colorspace *cs,
+                         const float *color, float alpha, fz_color_params params) {
+    if (sane_matrix(ctm) && take_chars((export_filter *)dev, text))
+        fz_fill_text(ctx, TARGET(dev), text, ctm, cs, color, alpha, params);
+}
+
+static void ef_stroke_text(fz_context *ctx, fz_device *dev, const fz_text *text, const fz_stroke_state *stroke,
+                           fz_matrix ctm, fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
+    if (sane_matrix(ctm) && take_chars((export_filter *)dev, text))
+        fz_stroke_text(ctx, TARGET(dev), text, stroke, ctm, cs, color, alpha, params);
+}
+
+static void ef_clip_text(fz_context *ctx, fz_device *dev, const fz_text *text, fz_matrix ctm, fz_rect scissor) {
+    fz_clip_text(ctx, TARGET(dev), text, ctm, scissor);
+}
+
+static void ef_clip_stroke_text(fz_context *ctx, fz_device *dev, const fz_text *text, const fz_stroke_state *stroke,
+                                fz_matrix ctm, fz_rect scissor) {
+    fz_clip_stroke_text(ctx, TARGET(dev), text, stroke, ctm, scissor);
+}
+
+static void ef_ignore_text(fz_context *ctx, fz_device *dev, const fz_text *text, fz_matrix ctm) {
+    export_filter *f = (export_filter *)dev;
+    if (!sane_matrix(ctm) || !take_chars(f, text)) return;
+    if (f->docx) {
+        float black = 0;
+        fz_fill_text(ctx, f->target, text, ctm, fz_device_gray(ctx), &black, 1, fz_default_color_params);
+    } else {
+        fz_ignore_text(ctx, f->target, text, ctm);
+    }
+}
+
+static void ef_fill_shade(fz_context *ctx, fz_device *dev, fz_shade *shade, fz_matrix ctm, float alpha, fz_color_params params) {
+    if (sane_matrix(ctm)) fz_fill_shade(ctx, TARGET(dev), shade, ctm, alpha, params);
+}
+
+// True for an image covering more than half the page, on a page whose
+// recognised text stands in for it.
+static bool is_page_image(export_filter *f, fz_matrix ctm) {
+    if (!f->drop_page_images) return false;
+    fz_rect r = fz_intersect_rect(fz_transform_rect(fz_unit_rect, ctm), f->page);
+    float page = (f->page.x1 - f->page.x0) * (f->page.y1 - f->page.y0);
+    return !fz_is_empty_rect(r) && page > 0 && (r.x1 - r.x0) * (r.y1 - r.y0) > page / 2;
+}
+
+static void ef_fill_image(fz_context *ctx, fz_device *dev, fz_image *image, fz_matrix ctm, float alpha, fz_color_params params) {
+    export_filter *f = (export_filter *)dev;
+    if (!sane_matrix(ctm) || is_page_image(f, ctm)) return;
+    if (!f->docx) {
+        fz_fill_image(ctx, f->target, image, ctm, alpha, params);
+        return;
+    }
+    if (image->w <= 0 || image->h <= 0 || (int64_t)image->w * image->h > OPDF_MAX_EXPORT_IMAGE_PIXELS) return;
+    fz_buffer *png = NULL;
+    fz_image *copy = NULL;
+    fz_var(png);
+    fz_var(copy);
+    fz_try(ctx) {
+        png = fz_new_buffer_from_image_as_png(ctx, image, fz_default_color_params);
+        copy = fz_new_image_from_buffer(ctx, png);
+        fz_fill_image(ctx, f->target, copy, ctm, alpha, params);
+    }
+    fz_always(ctx) {
+        fz_drop_image(ctx, copy);
+        fz_drop_buffer(ctx, png);
+    }
+    fz_catch(ctx) {
+        // An image that can't be decoded is left out; running out of memory
+        // or being cancelled stops the export.
+        if (fz_caught(ctx) == FZ_ERROR_SYSTEM || fz_caught(ctx) == FZ_ERROR_LIMIT) fz_rethrow(ctx);
+        fz_ignore_error(ctx);
+    }
+}
+
+static void ef_fill_image_mask(fz_context *ctx, fz_device *dev, fz_image *image, fz_matrix ctm, fz_colorspace *cs,
+                               const float *color, float alpha, fz_color_params params) {
+    if (sane_matrix(ctm) && !is_page_image((export_filter *)dev, ctm))
+        fz_fill_image_mask(ctx, TARGET(dev), image, ctm, cs, color, alpha, params);
+}
+
+static void ef_clip_image_mask(fz_context *ctx, fz_device *dev, fz_image *image, fz_matrix ctm, fz_rect scissor) {
+    fz_clip_image_mask(ctx, TARGET(dev), image, ctm, scissor);
+}
+
+static void ef_pop_clip(fz_context *ctx, fz_device *dev) { fz_pop_clip(ctx, TARGET(dev)); }
+
+static void ef_begin_mask(fz_context *ctx, fz_device *dev, fz_rect area, int luminosity, fz_colorspace *cs,
+                          const float *bc, fz_color_params params) {
+    fz_begin_mask(ctx, TARGET(dev), area, luminosity, cs, bc, params);
+}
+
+static void ef_end_mask(fz_context *ctx, fz_device *dev, fz_function *fn) { fz_end_mask_tr(ctx, TARGET(dev), fn); }
+
+static void ef_begin_group(fz_context *ctx, fz_device *dev, fz_rect area, fz_colorspace *cs, int isolated, int knockout,
+                           int blendmode, float alpha) {
+    fz_begin_group(ctx, TARGET(dev), area, cs, isolated, knockout, blendmode, alpha);
+}
+
+static void ef_end_group(fz_context *ctx, fz_device *dev) { fz_end_group(ctx, TARGET(dev)); }
+
+static int ef_begin_tile(fz_context *ctx, fz_device *dev, fz_rect area, fz_rect view, float xstep, float ystep,
+                         fz_matrix ctm, int id, int doc_id) {
+    return fz_begin_tile_tid(ctx, TARGET(dev), area, view, xstep, ystep, ctm, id, doc_id);
+}
+
+static void ef_end_tile(fz_context *ctx, fz_device *dev) { fz_end_tile(ctx, TARGET(dev)); }
+
+static void ef_render_flags(fz_context *ctx, fz_device *dev, int set, int clear) { fz_render_flags(ctx, TARGET(dev), set, clear); }
+
+static void ef_set_default_colorspaces(fz_context *ctx, fz_device *dev, fz_default_colorspaces *cs) {
+    fz_set_default_colorspaces(ctx, TARGET(dev), cs);
+}
+
+static void ef_begin_layer(fz_context *ctx, fz_device *dev, const char *name) { fz_begin_layer(ctx, TARGET(dev), name); }
+static void ef_end_layer(fz_context *ctx, fz_device *dev) { fz_end_layer(ctx, TARGET(dev)); }
+
+static void ef_begin_structure(fz_context *ctx, fz_device *dev, fz_structure standard, const char *raw, int idx) {
+    fz_begin_structure(ctx, TARGET(dev), standard, raw, idx);
+}
+
+static void ef_end_structure(fz_context *ctx, fz_device *dev) { fz_end_structure(ctx, TARGET(dev)); }
+
+static void ef_begin_metatext(fz_context *ctx, fz_device *dev, fz_metatext meta, const char *text) {
+    fz_begin_metatext(ctx, TARGET(dev), meta, text);
+}
+
+static void ef_end_metatext(fz_context *ctx, fz_device *dev) { fz_end_metatext(ctx, TARGET(dev)); }
+
+static export_filter *new_export_filter(fz_context *ctx, fz_device *target, bool docx, fz_rect page, bool drop_page_images) {
+    export_filter *f = fz_new_derived_device(ctx, export_filter);
+    f->target = target;
+    f->docx = docx;
+    f->page = page;
+    f->drop_page_images = drop_page_images;
+    fz_device *d = &f->super;
+    d->fill_path = ef_fill_path;
+    d->stroke_path = ef_stroke_path;
+    d->clip_path = ef_clip_path;
+    d->clip_stroke_path = ef_clip_stroke_path;
+    d->fill_text = ef_fill_text;
+    d->stroke_text = ef_stroke_text;
+    d->clip_text = ef_clip_text;
+    d->clip_stroke_text = ef_clip_stroke_text;
+    d->ignore_text = ef_ignore_text;
+    d->fill_shade = ef_fill_shade;
+    d->fill_image = ef_fill_image;
+    d->fill_image_mask = ef_fill_image_mask;
+    d->clip_image_mask = ef_clip_image_mask;
+    d->pop_clip = ef_pop_clip;
+    d->begin_mask = ef_begin_mask;
+    d->end_mask = ef_end_mask;
+    d->begin_group = ef_begin_group;
+    d->end_group = ef_end_group;
+    d->begin_tile = ef_begin_tile;
+    d->end_tile = ef_end_tile;
+    d->render_flags = ef_render_flags;
+    d->set_default_colorspaces = ef_set_default_colorspaces;
+    d->begin_layer = ef_begin_layer;
+    d->end_layer = ef_end_layer;
+    d->begin_structure = ef_begin_structure;
+    d->end_structure = ef_end_structure;
+    d->begin_metatext = ef_begin_metatext;
+    d->end_metatext = ef_end_metatext;
+    return f;
+}
+
+opdf_export *opdf_export_open(const char *path, const char *password, opdf_cancel *cancel, opdf_error *err) {
+    clear_error(err);
+    opdf_export *e = calloc(1, sizeof *e);
+    if (!e) {
+        set_message(err, "Out of memory");
+        return NULL;
+    }
+    e->ctx = new_capped_context(&e->allocator, &e->alloc, cancel, NO_HANDLERS);
+    if (!e->ctx) {
+        set_no_context_error(err, &e->allocator);
+        release_budget(&e->allocator);
+        free(e);
+        return NULL;
+    }
+    fz_context *ctx = e->ctx;
+    pdf_document *pdf = NULL;
+    fz_var(pdf);
+    fz_try(ctx) {
+        pdf = pdf_open_document(ctx, path);
+        if (pdf_needs_password(ctx, pdf) && !(password && pdf_authenticate_password(ctx, pdf, password)))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "The file is password protected");
+        e->doc = (fz_document *)pdf;
+        pdf = NULL;
+    }
+    fz_catch(ctx) {
+        set_capped_error(err, ctx, &e->allocator);
+        pdf_drop_document(ctx, pdf);
+        opdf_export_close(e);
+        return NULL;
+    }
+    return e;
+}
+
+void opdf_export_close(opdf_export *e) {
+    if (!e) return;
+    if (e->ctx) {
+        fz_drop_document(e->ctx, e->doc);
+        fz_drop_context(e->ctx);
+    }
+    release_budget(&e->allocator);
+    free(e);
+}
+
+int opdf_export_page_count(opdf_export *e, opdf_error *err) {
+    clear_error(err);
+    int n = -1;
+    fz_var(n);
+    fz_try(e->ctx)
+        n = fz_count_pages(e->ctx, e->doc);
+    fz_catch(e->ctx)
+        set_capped_error(err, e->ctx, &e->allocator);
+    return n;
+}
+
+static void check_cancel(fz_context *ctx, allocator_owner *owner) {
+    if (owner_cancelled(owner)) fz_throw(ctx, FZ_ERROR_ABORT, "Cancelled");
+}
+
+bool opdf_export_document(opdf_export *e, const char *format, int first, int last, const char *out_path,
+                          opdf_progress progress, void *info, opdf_error *err) {
+    clear_error(err);
+    fz_context *ctx = e->ctx;
+    bool docx = format && !strcmp(format, "docx");
+    bool html = format && !strcmp(format, "html");
+    bool text = format && !strcmp(format, "text");
+    if (!docx && !html && !text) {
+        set_message(err, "Unknown export format");
+        return false;
+    }
+    fz_document_writer *writer = NULL;
+    fz_page *page = NULL;
+    fz_display_list *list = NULL;
+    export_filter *filter = NULL;
+    fz_device *dev = NULL;
+    bool ok = false;
+    fz_var(writer);
+    fz_var(page);
+    fz_var(list);
+    fz_var(filter);
+    fz_var(dev);
+    fz_var(ok);
+    fz_try(ctx) {
+        int count = fz_count_pages(ctx, e->doc);
+        if (first < 0 || last >= count || first > last) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such pages");
+        writer = fz_new_document_writer(ctx, out_path, format, html ? "preserve-images" : "");
+        for (int i = first; i <= last; i++) {
+            check_cancel(ctx, &e->allocator);
+            page = fz_load_page(ctx, e->doc, i);
+            fz_rect bounds = fz_bound_page(ctx, page);
+            opdf_text_info ti = { 0 };
+            page_text_info(ctx, page, &ti);
+            list = new_display_list(ctx, page, false);
+            dev = fz_begin_page(ctx, writer, bounds);
+            filter = new_export_filter(ctx, dev, docx, bounds, (docx || html) && ti.invisible > 0);
+            fz_run_display_list(ctx, list, &filter->super, fz_identity, fz_infinite_rect, NULL);
+            fz_close_device(ctx, &filter->super);
+            fz_drop_device(ctx, &filter->super);
+            filter = NULL;
+            dev = NULL;     // the writer owns it
+            fz_end_page(ctx, writer);
+            fz_drop_display_list(ctx, list);
+            list = NULL;
+            fz_drop_page(ctx, page);
+            page = NULL;
+            if (progress) progress(info, i - first + 1);
+        }
+        check_cancel(ctx, &e->allocator);
+        fz_close_document_writer(ctx, writer);
+        ok = true;
+    }
+    fz_always(ctx) {
+        fz_drop_device(ctx, filter ? &filter->super : NULL);
+        fz_drop_display_list(ctx, list);
+        fz_drop_page(ctx, page);
+        fz_drop_document_writer(ctx, writer);
+    }
+    fz_catch(ctx)
+        set_capped_error(err, ctx, &e->allocator);
+    return ok;
+}
+
+// A page drawn for export at dpi, lowered to fit the renderer's limits
+// (16,384 pixels a side, 64 megapixels); *used is set to the dpi used.
+static fz_pixmap *render_export_page(fz_context *ctx, fz_document *doc, int page_number, float dpi, float *used) {
+    fz_page *page = NULL;
+    fz_display_list *list = NULL;
+    fz_pixmap *pix = NULL;
+    fz_var(page);
+    fz_var(list);
+    fz_try(ctx) {
+        if (!(dpi >= 1 && dpi <= 2400)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That resolution is out of range");
+        page = fz_load_page(ctx, doc, page_number);
+        fz_rect bounds = fz_bound_page(ctx, page);
+        float w = bounds.x1 - bounds.x0, h = bounds.y1 - bounds.y0;
+        if (!(w >= 1 && h >= 1 && w <= 200000 && h <= 200000)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The page’s size is out of range");
+        float scale = dpi / 72;
+        scale = fminf(scale, 16382 / w);
+        scale = fminf(scale, 16382 / h);
+        scale = fminf(scale, sqrtf(64.0f * 1024 * 1024 * 0.98f / (w * h)));
+        list = new_display_list(ctx, page, false);
+        pix = fz_new_pixmap_from_display_list(ctx, list, fz_scale(scale, scale), fz_device_rgb(ctx), 0);
+        int res = (int)lroundf(scale * 72);
+        fz_set_pixmap_resolution(ctx, pix, res, res);
+        *used = scale * 72;
+    }
+    fz_always(ctx) {
+        fz_drop_display_list(ctx, list);
+        fz_drop_page(ctx, page);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+    return pix;
+}
+
+bool opdf_export_page_image(opdf_export *e, int page_number, float dpi, bool jpeg, int quality, const char *out_path,
+                            float *used_dpi, opdf_error *err) {
+    clear_error(err);
+    if (used_dpi) *used_dpi = 0;
+    fz_context *ctx = e->ctx;
+    fz_pixmap *pix = NULL;
+    bool ok = false;
+    fz_var(pix);
+    fz_var(ok);
+    fz_try(ctx) {
+        check_cancel(ctx, &e->allocator);
+        float used = 0;
+        pix = render_export_page(ctx, e->doc, page_number, dpi, &used);
+        if (jpeg) fz_save_pixmap_as_jpeg(ctx, pix, out_path, quality < 1 ? 1 : quality > 100 ? 100 : quality);
+        else fz_save_pixmap_as_png(ctx, pix, out_path);
+        if (used_dpi) *used_dpi = used;
+        ok = true;
+    }
+    fz_always(ctx)
+        fz_drop_pixmap(ctx, pix);
+    fz_catch(ctx)
+        set_capped_error(err, ctx, &e->allocator);
+    return ok;
+}
+
+// A multipage TIFF, written a page at a time: baseline RGB, 8 bits a
+// sample, in Deflate-compressed strips with horizontal differencing, with
+// each page's resolution. Each page's IFD comes before its strips, so the
+// file is written straight through.
+#define TIFF_TAGS 15
+
+static void tiff_entry(fz_context *ctx, fz_output *out, int tag, int type, unsigned count, unsigned value) {
+    fz_write_uint16_le(ctx, out, tag);
+    fz_write_uint16_le(ctx, out, type);
+    fz_write_uint32_le(ctx, out, count);
+    if (type == 3 && count == 1) {
+        fz_write_uint16_le(ctx, out, value);
+        fz_write_uint16_le(ctx, out, 0);
+    } else {
+        fz_write_uint32_le(ctx, out, value);
+    }
+}
+
+static void write_tiff_page(fz_context *ctx, fz_output *out, fz_pixmap *pix, bool last, int page, int pages) {
+    int w = fz_pixmap_width(ctx, pix), h = fz_pixmap_height(ctx, pix);
+    size_t row = (size_t)w * 3;
+    int rows_per_strip = (int)fz_maxi(1, (int)(262144 / row));
+    int strips = (h + rows_per_strip - 1) / rows_per_strip;
+    unsigned char **data = NULL;
+    size_t *sizes = NULL;
+    unsigned char *raw = NULL;
+    fz_var(data);
+    fz_var(sizes);
+    fz_var(raw);
+    fz_try(ctx) {
+        data = fz_calloc(ctx, (size_t)strips, sizeof *data);
+        sizes = fz_calloc(ctx, (size_t)strips, sizeof *sizes);
+        raw = fz_malloc(ctx, row * (size_t)rows_per_strip);
+        const unsigned char *samples = fz_pixmap_samples(ctx, pix);
+        ptrdiff_t stride = fz_pixmap_stride(ctx, pix);
+        for (int s = 0; s < strips; s++) {
+            int y0 = s * rows_per_strip, n = fz_mini(rows_per_strip, h - y0);
+            for (int y = 0; y < n; y++) {
+                const unsigned char *src = samples + (size_t)(y0 + y) * (size_t)stride;
+                unsigned char *dst = raw + (size_t)y * row;
+                // Horizontal differencing (TIFF predictor 2).
+                for (size_t x = 0; x < row; x++) dst[x] = (unsigned char)(src[x] - (x >= 3 ? src[x - 3] : 0));
+            }
+            size_t len = (size_t)n * row, bound = fz_deflate_bound(ctx, len);
+            data[s] = fz_malloc(ctx, bound);
+            sizes[s] = bound;
+            fz_deflate(ctx, data[s], &sizes[s], raw, len, FZ_DEFLATE_DEFAULT);
+        }
+        // IFD, then its values (bits per sample, resolutions, strip offsets
+        // and sizes), then the strips.
+        int64_t ifd = fz_tell_output(ctx, out);
+        int64_t values = ifd + 2 + TIFF_TAGS * 12 + 4;
+        int64_t bits = values, xres = bits + 8, yres = xres + 8, offsets = yres + 8;
+        int64_t counts = offsets + (strips > 1 ? 4 * strips : 0);
+        int64_t first = counts + (strips > 1 ? 4 * strips : 0);
+        int64_t end = first;
+        for (int s = 0; s < strips; s++) end += (int64_t)sizes[s];
+        if (end & 1) end++;
+        if (end > UINT32_MAX) fz_throw(ctx, FZ_ERROR_LIMIT, "The pages are too large for a TIFF file");
+        unsigned res = (unsigned)fz_maxi(1, pix->xres);
+        fz_write_uint16_le(ctx, out, TIFF_TAGS);
+        tiff_entry(ctx, out, 256, 4, 1, (unsigned)w);                       // ImageWidth
+        tiff_entry(ctx, out, 257, 4, 1, (unsigned)h);                       // ImageLength
+        tiff_entry(ctx, out, 258, 3, 3, (unsigned)bits);                    // BitsPerSample
+        tiff_entry(ctx, out, 259, 3, 1, 8);                                 // Compression: Deflate
+        tiff_entry(ctx, out, 262, 3, 1, 2);                                 // Photometric: RGB
+        tiff_entry(ctx, out, 273, 4, (unsigned)strips, strips > 1 ? (unsigned)offsets : (unsigned)first);  // StripOffsets
+        tiff_entry(ctx, out, 277, 3, 1, 3);                                 // SamplesPerPixel
+        tiff_entry(ctx, out, 278, 4, 1, (unsigned)rows_per_strip);          // RowsPerStrip
+        tiff_entry(ctx, out, 279, 4, (unsigned)strips, strips > 1 ? (unsigned)counts : (unsigned)sizes[0]);  // StripByteCounts
+        tiff_entry(ctx, out, 282, 5, 1, (unsigned)xres);                    // XResolution
+        tiff_entry(ctx, out, 283, 5, 1, (unsigned)yres);                    // YResolution
+        tiff_entry(ctx, out, 284, 3, 1, 1);                                 // PlanarConfiguration: chunky
+        tiff_entry(ctx, out, 296, 3, 1, 2);                                 // ResolutionUnit: inch
+        fz_write_uint16_le(ctx, out, 297);                                  // PageNumber: page, of pages
+        fz_write_uint16_le(ctx, out, 3);
+        fz_write_uint32_le(ctx, out, 2);
+        fz_write_uint16_le(ctx, out, (unsigned)page);
+        fz_write_uint16_le(ctx, out, (unsigned)pages);
+        tiff_entry(ctx, out, 317, 3, 1, 2);                                 // Predictor: horizontal differencing
+        fz_write_uint32_le(ctx, out, last ? 0 : (unsigned)end);             // next IFD
+        fz_write_uint16_le(ctx, out, 8);
+        fz_write_uint16_le(ctx, out, 8);
+        fz_write_uint16_le(ctx, out, 8);
+        fz_write_uint16_le(ctx, out, 0);
+        fz_write_uint32_le(ctx, out, res);
+        fz_write_uint32_le(ctx, out, 1);
+        fz_write_uint32_le(ctx, out, res);
+        fz_write_uint32_le(ctx, out, 1);
+        if (strips > 1) {
+            int64_t at = first;
+            for (int s = 0; s < strips; s++) {
+                fz_write_uint32_le(ctx, out, (unsigned)at);
+                at += (int64_t)sizes[s];
+            }
+            for (int s = 0; s < strips; s++) fz_write_uint32_le(ctx, out, (unsigned)sizes[s]);
+        }
+        for (int s = 0; s < strips; s++) fz_write_data(ctx, out, data[s], sizes[s]);
+        if (fz_tell_output(ctx, out) & 1) fz_write_byte(ctx, out, 0);
+    }
+    fz_always(ctx) {
+        for (int s = 0; data && s < strips; s++) fz_free(ctx, data[s]);
+        fz_free(ctx, data);
+        fz_free(ctx, sizes);
+        fz_free(ctx, raw);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_export_tiff(opdf_export *e, int first, int last, float dpi, const char *out_path,
+                      opdf_progress progress, void *info, float *used_dpi, opdf_error *err) {
+    clear_error(err);
+    if (used_dpi) *used_dpi = dpi;
+    fz_context *ctx = e->ctx;
+    fz_output *out = NULL;
+    fz_pixmap *pix = NULL;
+    bool ok = false;
+    fz_var(out);
+    fz_var(pix);
+    fz_var(ok);
+    fz_try(ctx) {
+        int count = fz_count_pages(ctx, e->doc);
+        if (first < 0 || last >= count || first > last) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such pages");
+        if (last - first >= 65535) fz_throw(ctx, FZ_ERROR_LIMIT, "Too many pages for a TIFF file");
+        out = fz_new_output_with_path(ctx, out_path, 0);
+        fz_write_data(ctx, out, "II*\0", 4);
+        fz_write_uint32_le(ctx, out, 8);
+        for (int i = first; i <= last; i++) {
+            check_cancel(ctx, &e->allocator);
+            float used = 0;
+            pix = render_export_page(ctx, e->doc, i, dpi, &used);
+            if (used_dpi && used < *used_dpi) *used_dpi = used;
+            write_tiff_page(ctx, out, pix, i == last, i - first, last - first + 1);
+            fz_drop_pixmap(ctx, pix);
+            pix = NULL;
+            if (progress) progress(info, i - first + 1);
+        }
+        fz_close_output(ctx, out);
+        ok = true;
+    }
+    fz_always(ctx) {
+        fz_drop_pixmap(ctx, pix);
+        fz_drop_output(ctx, out);
+    }
+    fz_catch(ctx)
+        set_capped_error(err, ctx, &e->allocator);
     return ok;
 }
 

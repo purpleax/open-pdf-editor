@@ -861,6 +861,30 @@ bool opdf_write_blank(const char *path, float width, float height, opdf_error *e
 bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality,
                       opdf_cancel *cancel, opdf_error *err);
 
+// Exporting: a PDF file opened on its own, with memory capped as for
+// converting (3 GB) and `cancel` stopping it. Errors read "Cancelled" when
+// cancelled.
+typedef struct opdf_export opdf_export;
+typedef void (*opdf_progress)(void *info, int done);
+
+opdf_export *opdf_export_open(const char *path, const char *password, opdf_cancel *cancel, opdf_error *err);
+void opdf_export_close(opdf_export *exporter);
+int opdf_export_page_count(opdf_export *exporter, opdf_error *err);
+// Pages first..last (from 0) as "docx" (Word), "html" or "text" (UTF-8) at
+// out_path. progress (may be NULL) is called after each page.
+bool opdf_export_document(opdf_export *exporter, const char *format, int first, int last, const char *out_path,
+                          opdf_progress progress, void *info, opdf_error *err);
+// One page as a PNG or JPEG (quality 1-100) at dpi, lowered to fit 16,384
+// pixels a side and 64 megapixels; *used_dpi (may be NULL) is set to the
+// resolution used.
+bool opdf_export_page_image(opdf_export *exporter, int page, float dpi, bool jpeg, int quality, const char *out_path,
+                            float *used_dpi, opdf_error *err);
+// Pages first..last as one multipage TIFF (RGB, Deflate), drawn as
+// opdf_export_page_image draws them, a page at a time; *used_dpi (may be
+// NULL) is set to the lowest resolution used.
+bool opdf_export_tiff(opdf_export *exporter, int first, int last, float dpi, const char *out_path,
+                      opdf_progress progress, void *info, float *used_dpi, opdf_error *err);
+
 #ifdef __cplusplus
 }
 #endif
