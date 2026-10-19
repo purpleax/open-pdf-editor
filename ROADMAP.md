@@ -15,7 +15,10 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Updates | Sparkle 2.10.0 (SwiftPM), EdDSA-signed updates. The appcast is `appcast.xml` on `main` of this repository, written by `make release`. Only when asked (Open PDF Editor › Check for Updates…): no automatic checks or installs (changed 2026-10-19). | 2026-10-18 |
 | Releases | GitHub Releases on this repository: a DMG and a zip per version, signed with the Developer ID, notarised and stapled (scripts adapted from mdview) | 2026-10-18 |
 | OCR | Apple's Vision framework on device; MuPDF writes the invisible text layer. Not MuPDF's Tesseract build. | 2026-10-18 |
-| Text editing | Within a line only: insert, replace and delete characters in one text run, change its font, size and colour, using the embedded font's glyphs or a fallback font. No reflow across lines. | 2026-10-18 |
+| Text editing | Paragraph editing, as in a word processor (changed 2026-10-19 from "within a line only"): click in text for a caret; a paragraph (MuPDF's lines and blocks, split and merged by checks of their own) is edited as a whole and re-wraps at its box's width, with Return, Delete and selection across its lines. Text doesn't flow between paragraphs or pages: a paragraph that grows can run into what's below, and the box says so. Paragraphs that fail the checks are edited a line at a time. | 2026-10-19 |
+| Fonts while editing text | Mac glyphs on screen, PDF metrics for layout, PDF font on commit: the editor draws with the matching Mac font, kerned so each character has its width in the PDF's font (so lines break where they did). On commit, characters still in a page font are written in it by its own codes; new characters it lacks, and text given another font, bold or italic, use a subset of the Mac font (TrueType or plain CFF; CID-keyed CFF and fonts without outlines are refused). The PDF's embedded font programs never reach CoreText. | 2026-10-19 |
+| What an edit changes | Lines before the first change are kept exactly as they were (when the layout still breaks them in the same places); from there the paragraph is drawn again. Its old glyphs are removed by identity (each tied to its text operation and place), each replaced by a move of its width so the rest of the page doesn't shift; copies drawn on top of them (fake bold) go too. One undoable step. | 2026-10-19 |
+| Getting into editing | Edit › Edit Content (⌥⌘E), the toolbar's Edit button, or Edit Text in the right-click menu on text. One Edit tool: click text for a caret, an image or link to select it (⌥-click for one under text). Add Text makes a new box. A formatting bar (font, size, bold, italic, underline, colour, alignment) and a Format menu (⌘B, ⌘I, ⌘U, ⌘T) apply to the text being edited. | 2026-10-19 |
 | Digital signatures | MuPDF's signer callbacks backed by Security.framework (CMS) and Keychain identities; verification against the system trust store. No bundled OpenSSL. | 2026-10-18 |
 | Printing | The saved PDF handed to PDFKit's print operation, for the native print panel | 2026-10-18 |
 | Undo | MuPDF's document journal, bridged to `NSUndoManager` | 2026-10-18 |
@@ -183,12 +186,21 @@ From the first release-time security review (all findings above Low fixed, plus 
   - The Signature tool (⌃⌘G, or the markup bar) places the chosen signature where you click, as a stamp you can move and resize; the markup bar lists saved signatures and Manage Signatures….
   - Sign… can show a saved signature beside the signer's name.
 
-## Phase 7: OCR and export (0.7.0)
+## Phase 7: Editing like a word processor (0.7.0)
+
+- [x] Paragraphs: MuPDF's text grouped into paragraphs (lines split at wide gaps, blocks split at wider spacing or an indented line, paragraphs that carry on from one another joined), each character tied to the glyph that draws it, with alignment, line spacing, indents and hard line breaks
+- [x] Editing a paragraph in place: click in text for a caret; type, delete, select across lines, Return; it re-wraps in its box. Unchanged lines stay exactly as they were; changed ones are drawn again in the PDF's own font where it has the characters, else in a matching Mac font, embedded as a subset
+- [x] Formatting bar and Format menu: font, size, bold, italic, underline, colour, alignment
+- [x] Getting into editing: one Edit tool, a toolbar Edit button, Edit Text in the right-click menu; Add Text for new boxes; a width grip; a note when a box runs into other text
+- Not editable, with a reason given: Type3 or vertical text, text at an angle, invisible or clipping text, text inside reusable graphics (Form XObjects), right-to-left text, paragraphs over the limits. Editing is off while the view is rotated.
+- Left for later: text flowing between paragraphs, columns or pages; moving a paragraph's links, highlights and underline rules with it; using the PDF's own font program in the editor; text inside Form XObjects; right-to-left and vertical text.
+
+## Phase 8: OCR and export (0.8.0)
 
 - [ ] OCR with Vision, adding a searchable text layer
 - [ ] Export to images, plain text, Word and HTML
 
-## Phase 8: 1.0 (1.0.0)
+## Phase 9: 1.0 (1.0.0)
 
 - [ ] User manual, bundled and opened from Help
 - [ ] Homebrew cask
@@ -197,6 +209,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **0.7.0**: Editing like a word processor. Click anywhere in a page's text and a cursor appears: type, delete, select across lines and press Return, and the paragraph re-wraps in its box, keeping its font where the PDF has the letters. The new formatting bar and Format menu change the font, size, bold, italic, underline (⌘B, ⌘I, ⌘U), colour and alignment, and Add Text puts a new text box anywhere. Start with the Edit button in the toolbar, Edit › Edit Content (⌥⌘E), or Edit Text when you right-click text. Lines you don't change stay exactly as they were; drag the grip on a box's right to change the width it wraps at; and a box that runs into the text below says so, since text doesn't flow from one paragraph to the next.
 
 - **0.6.0**: Security and signing. Tools › Redact marks text or areas, and Tools › Apply Redactions… removes whatever is under the marks for good (text, pictures, drawings, comments, links and form fields), draws black boxes, clears out hidden leftovers and saves; it can also delete the file's earlier versions. File › Security… sets a password to open the document and an owner password that limits printing, copying, editing, comments and filling in forms, with 256-bit AES encryption. Documents whose owner limits what you can do now show what isn't allowed, with a way to enter the owner password. Click a signature field to sign it with a certificate from your keychain, and see in the inspector who signed, whether the document has changed since and whether the certificate is trusted. Draw or import your handwritten signature in Tools › Signatures… and place it with the Signature tool. Settings has a new switch, off to begin with, for checking certificates online. Saving automatically is now a choice in Settings, also off to begin with: changes are kept when you choose File › Save, and closing a changed document asks first; turn on Save changes automatically for the previous behaviour, with File › Revert To for earlier versions.
 

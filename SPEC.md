@@ -41,7 +41,7 @@ Where this spec and ROADMAP.md disagree, the Decisions table in ROADMAP.md wins.
 
 ## Editing
 
-- Edit existing text within a line: insert, replace and delete characters in one text run, and change its font, size and colour. Text does not reflow across lines or paragraphs.
+- Edit existing text like a word processor: click in a paragraph for a caret, type, delete and select across its lines, and it re-wraps within its box. Change font, size, bold, italic, underline, colour and alignment. Add new text boxes. Text does not flow from one paragraph, column or page to the next.
 - Add, replace, move, resize and delete images.
 - Add headers, footers, watermarks, page numbers and links.
 - Edit document metadata.
@@ -66,6 +66,6 @@ Where this spec and ROADMAP.md disagree, the Decisions table in ROADMAP.md wins.
 
 ## Out of scope
 
-- Reflowing text across lines or paragraphs.
+- Text flowing from one paragraph, column or page to the next.
 - XFA forms, PDF/A conversion and document comparison.
 - Long-term signature validation and timestamp servers, until after 1.0.

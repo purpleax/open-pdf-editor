@@ -12,6 +12,7 @@ Everything needed to pick up the work on another Mac: where things stand, how th
 - **Released:** 0.4.0, forms.
 - **Released:** 0.5.0, content editing.
 - **Released:** 0.6.0, security and signing, with saving automatically as a setting.
+- **Ready to release:** Phase 7, editing like a word processor (0.7.0).
 - **Known Lows** (accepted, not yet fixed) are listed under each phase's "Security review" item in ROADMAP.md. They are the backlog to pick from when a phase touches the same code.
 - **Version:** `Resources/Info.plist` (`CFBundleShortVersionString`, `CFBundleVersion`), set only by `make release`.
 
@@ -167,6 +168,14 @@ These come from real bugs and review findings. Break one and something crashes o
 - **Where values live:** a field's value is on its field dictionary, which for a radio button is the group (the widget's parent). `field_holder` finds it. MuPDF's `pdf_field_value` rewrites stream values in place, so the bridge reads values itself (`field_value`).
 - **App:** `FormController` (finding, filling, editing), `FieldEditor` (typing in place), `PagesView+Forms.swift` (filling with the Select tool), `PagesView+FieldEditing.swift` (Forms › Edit Fields), `FieldInspectorViewController`.
 - **Not yet:** Insert, Extract, Split and Create PDF don't carry form fields across (grafting drops `/Annots`).
+
+## Editing like a word processor (0.7.0)
+
+- **Paragraphs** (`opdf_paragraphs_load`, `Paragraphs.swift`): MuPDF's stext (SEGMENT, COLLECT_STYLES; not PARAGRAPH_BREAK, which over-splits, nor PRESERVE_SPANS, which splits lines at font changes), lines split at gaps over 3 em, blocks that don't stack demoted to one paragraph per line, blocks split at wider spacing or an indented line after a short one, and paragraphs that carry on from one another merged (rewritten lines land at the end of the content, so this isn't just adjacent blocks). Each character is matched by origin to a glyph in `content_proc`'s glyph log, so it is known as (text operation, glyph index). Hard breaks: the next line's first word would have fitted.
+- **Writing** (`opdf_paragraph_replace`): dropped glyphs become TJ moves of their width inside `content_proc` (`array_without_drops`; its glyph counting must stay in step with `show_string`); runs are appended under `q <inverse page_ctm> cm` with `Tm [1 0 0 -1 x y]`, TJ adjustments placing each glyph where TextKit put it, in a page font by its codes or an embedded subset (`embed_subset_gids`, which refuses CID-keyed CFF and outline-less fonts).
+- **The editor** (`ParagraphEditor`): TextKit 1 in page points over the paragraph (the pages view is in page points; rotated views can't edit); `.pdfFont`/`.pdfFill` mark characters still in a page font and fill, kept up to date in the storage delegate (kerning to the PDF widths; removed when the family, bold/italic or colour changes, by whatever means). Commit keeps original lines before the first change when TextKit breaks them alike.
+- **App:** `ContentController.editor/newTextBox/commit`, `TextFormatBarViewController` (in the content bar), the Format menu, `PagesView+ContentEditing` (Edit tool's hit order, Add Text), `PagesView.menu(for:)` (Edit Text).
+- **Tests:** `paragraphs.pdf` in the corpus; `ParagraphTests`, `ParagraphEditingTests`; the self-test content run (with a real screen capture, `content-2-screen.png`).
 
 ## Security and signing (0.6.0)
 

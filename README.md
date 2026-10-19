@@ -2,7 +2,7 @@
 
 A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.com) engine. It aims to cover what commercial editors such as Foxit PDF Editor do: viewing, annotation, forms, page management, editing, redaction, signing and OCR, in a native macOS app.
 
-**Status:** version 0.5.0 views, annotates and edits PDFs, manages their pages, and fills in and edits forms. Security, signing and OCR follow phase by phase: see [ROADMAP.md](ROADMAP.md) for the plan and [SPEC.md](SPEC.md) for the full feature list.
+**Status:** version 0.7.0 views and annotates PDFs, edits their text like a word processor, manages their pages, fills in and edits forms, redacts, protects with passwords and signs. OCR and export follow: see [ROADMAP.md](ROADMAP.md) for the plan and [SPEC.md](SPEC.md) for the full feature list.
 
 ## What it does today
 
@@ -11,7 +11,7 @@ A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.c
 - Find with highlighted matches, text selection and copy, links, Back and Forward
 - Highlights, underlines, strikethroughs, notes, text boxes, shapes, arrows, freehand drawing and stamps, with a Comments list for replies and review status
 - Rotate, delete, insert, move, crop and extract pages; merge and split PDFs; make a PDF from images and other documents; reduce file size
-- Edit text in place (characters, font, size, colour); add, move, resize, replace and delete images; make and change links
+- Edit text like a word processor: click in a paragraph and type, and it re-wraps; font, size, bold, italic, underline, colour and alignment; new text boxes. Add, move, resize, replace and delete images; make and change links
 - Headers, footers, page numbers and watermarks; edit the document's title, author, subject and keywords
 - Fill in forms; add, move and set up text fields, checkboxes, radio buttons, dropdowns, list boxes and signature fields; flatten forms
 - Redaction that removes what's under the marks for good, and scrubs hidden leftovers
