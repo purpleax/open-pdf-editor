@@ -197,8 +197,8 @@ import Testing
         let docx = temporaryURL("crowded.docx")
         defer { try? FileManager.default.removeItem(at: docx) }
         let started = Date()
-        try PDFExporter(url: corpus("exportbomb.pdf")).export(.word, pages: 1...2, to: docx)
-        #expect(Date().timeIntervalSince(started) < 12)
+        try PDFExporter(url: corpus("exportbomb.pdf")).export(.word, pages: 1...3, to: docx)
+        #expect(Date().timeIntervalSince(started) < 20)
     }
 
     /// Every corpus file through every format: errors are fine, crashes and

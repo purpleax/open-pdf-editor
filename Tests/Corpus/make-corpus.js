@@ -720,6 +720,17 @@ function makeReviewFiles() {
 	ops.push("ET")
 	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, ops.join("\n"))
 	doc.insertPage(-1, page)
+	// Page 3: the same, with every rule in one path.
+	var one = []
+	for (var r2 = 0; r2 < 1000; r2++) {
+		one.push("10 " + (10 + r2 * 0.77).toFixed(2) + " 590 0.02 re")
+		one.push((10 + r2 * 0.59).toFixed(2) + " 10 0.02 770 re")
+	}
+	ops = [one.join("\n") + " f", "BT /F1 4 Tf"]
+	for (var c2 = 0; c2 < 20000; c2++) ops.push("1 0 0 1 " + (10 + (c2 * 37) % 590) + " " + (10 + (c2 * 53) % 770) + " Tm (a) Tj")
+	ops.push("ET")
+	page = doc.addPage(LETTER, 0, { Font: { F1: doc.font } }, ops.join("\n"))
+	doc.insertPage(-1, page)
 	doc.save(out + "/exportbomb.pdf", "compress")
 
 	doc = newDocument()

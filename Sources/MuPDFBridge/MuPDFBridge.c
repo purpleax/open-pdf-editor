@@ -7133,9 +7133,10 @@ bool opdf_reduce_file(const char *in_path, const char *password, const char *out
 // Word's layout (extract) takes time growing with the square of a page's
 // characters, and can't be cancelled inside a page: 20,000 take ~3 s.
 #define OPDF_MAX_DOCX_CHARS_PER_PAGE 20000
-// Its table finding grows with characters times lines and boxes drawn: past
-// this many a page, Word gets the text without the rest of the drawing.
-#define OPDF_MAX_DOCX_PATHS_PER_PAGE 200
+// Its table finding grows with characters times the lines and boxes drawn,
+// counted by path segment (a rectangle is one, a line two): past this many
+// a page, Word gets the text without the rest of the drawing.
+#define OPDF_MAX_DOCX_SEGMENTS_PER_PAGE 200
 #define OPDF_MAX_EXPORT_IMAGE_PIXELS (40 * 1024 * 1024)
 
 struct opdf_export {
@@ -7152,7 +7153,7 @@ typedef struct {
     bool drop_page_images;
     fz_rect page;
     int chars;
-    int paths;
+    int paths;         // path segments given to Word
     bool failed;       // the writer failed partway through the page
 } export_filter;
 
@@ -7185,20 +7186,33 @@ static bool take_chars(export_filter *f, const fz_text *text) {
     return true;
 }
 
-static bool take_path(export_filter *f) {
-    if (f->docx && f->paths >= OPDF_MAX_DOCX_PATHS_PER_PAGE) return false;
-    f->paths++;
+static void count_point(fz_context *ctx, void *arg, float x, float y) { (*(int *)arg)++; }
+static void count_curve(fz_context *ctx, void *arg, float x1, float y1, float x2, float y2, float x3, float y3) { (*(int *)arg)++; }
+static void count_close(fz_context *ctx, void *arg) {}
+static void count_quad(fz_context *ctx, void *arg, float x1, float y1, float x2, float y2) { (*(int *)arg)++; }
+
+// Takes the path's segments from the page's allowance (Word only); false
+// when they don't fit.
+static bool take_path(fz_context *ctx, export_filter *f, const fz_path *path) {
+    if (!f->docx) return true;
+    static const fz_path_walker counter = {
+        count_point, count_point, count_curve, count_close, count_quad, count_quad, count_quad, count_quad
+    };
+    int segments = 0;
+    fz_walk_path(ctx, path, &counter, &segments);
+    if (segments > OPDF_MAX_DOCX_SEGMENTS_PER_PAGE - f->paths) return false;
+    f->paths += segments;
     return true;
 }
 
 static void ef_fill_path(fz_context *ctx, fz_device *dev, const fz_path *path, int even_odd, fz_matrix ctm,
                          fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
-    if (sane_matrix(ctm) && take_path((export_filter *)dev)) fz_fill_path(ctx, TARGET(dev), path, even_odd, ctm, cs, color, alpha, params);
+    if (sane_matrix(ctm) && take_path(ctx, (export_filter *)dev, path)) fz_fill_path(ctx, TARGET(dev), path, even_odd, ctm, cs, color, alpha, params);
 }
 
 static void ef_stroke_path(fz_context *ctx, fz_device *dev, const fz_path *path, const fz_stroke_state *stroke,
                            fz_matrix ctm, fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
-    if (sane_matrix(ctm) && take_path((export_filter *)dev)) fz_stroke_path(ctx, TARGET(dev), path, stroke, ctm, cs, color, alpha, params);
+    if (sane_matrix(ctm) && take_path(ctx, (export_filter *)dev, path)) fz_stroke_path(ctx, TARGET(dev), path, stroke, ctm, cs, color, alpha, params);
 }
 
 static void ef_clip_path(fz_context *ctx, fz_device *dev, const fz_path *path, int even_odd, fz_matrix ctm, fz_rect scissor) {

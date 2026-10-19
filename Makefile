@@ -48,7 +48,10 @@ corpus: mupdf
 TESTING_MACROS := $(shell xcode-select -p)/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib
 test: corpus
 	swift build --arch arm64 --build-tests -Xswiftc -load-plugin-library -Xswiftc "$(TESTING_MACROS)"
-	$(if $(UPDATE_GOLDEN),UPDATE_GOLDEN=1) swift test --arch arm64 --skip-build
+	$(if $(UPDATE_GOLDEN),UPDATE_GOLDEN=1) swift test --arch arm64 --skip-build --skip ExportTests
+	# Export's hostile-file runs are heavy, and every MuPDF context shares one
+	# memory lock, so they run on their own rather than slow the timing tests.
+	swift test --arch arm64 --skip-build --filter ExportTests
 
 # Scripted annotation and form runs in a separate build (never released):
 # snapshots and logs in build/selftest and build/selftest/forms.
