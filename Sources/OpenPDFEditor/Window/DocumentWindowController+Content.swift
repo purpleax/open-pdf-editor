@@ -18,6 +18,7 @@ extension DocumentWindowController {
         viewer.onMakeLink = { [weak self] rect, page in self?.makeLink(in: rect, onPage: page) }
         viewer.onMakeImage = { [weak self] rect, page in self?.makeImage(in: rect, onPage: page) }
         viewer.pagesView.onTextEditorChange = { [weak self] editor in self?.formatBar.editor = editor }
+        viewer.pagesView.onStartEditing = { [weak self] in self?.setEditingContent(true, showInspector: false) }
         viewer.pagesView.onEditText = { [weak self] paragraph, point in
             guard let self, let viewer = self.viewer else { return }
             self.setEditingContent(true)
@@ -25,13 +26,13 @@ extension DocumentWindowController {
         }
     }
 
-    func setEditingContent(_ editing: Bool) {
+    func setEditingContent(_ editing: Bool, showInspector: Bool = true) {
         guard let viewer else { return }
         if editing, viewer.pagesView.editingFields { setEditingFields(false) }
         viewer.pagesView.editingContent = editing
         contentBar.setTool(.edit)
         contentAccessory?.animator().isHidden = !editing
-        if editing, inspectorItem?.isCollapsed == true { inspectorItem?.animator().isCollapsed = false }
+        if editing, showInspector, inspectorItem?.isCollapsed == true { inspectorItem?.animator().isCollapsed = false }
     }
 
     @objc func toggleEditContent(_ sender: Any?) {

@@ -389,6 +389,38 @@ enum SelfTest {
             try viewer.model.edit("Change Title", pages: []) { try $0.setMetadata(title: "Self test title") }
         } catch { say("FAIL metadata: \(error)") }
         say("title: \(viewer.model.engine.metadata("info:Title") ?? "none")")
+        // Select and type, in plain viewing: no mode to turn on first.
+        func rect(_ words: String) -> CGRect? {
+            let text = viewer.model.text(page: 0)
+            return text.search(words).first.flatMap { text.rects(for: $0).first }
+        }
+        window.makeFirstResponder(viewer.pagesView)
+        if let brown = rect("brown") {
+            drag(viewer, page: 0, from: CGPoint(x: brown.minX + 0.5, y: brown.midY), to: CGPoint(x: brown.maxX - 0.5, y: brown.midY))
+            say("selected before typing: \(viewer.pagesView.selectedText ?? "nothing")")
+            viewer.pagesView.insertText("red")
+            say("typing over it: editing \(viewer.pagesView.textEditor != nil), Edit Content on \(viewer.pagesView.editingContent)")
+            viewer.pagesView.textEditor?.finish()
+        }
+        controller.setEditingContent(false)
+        if let lazy = rect("lazy") {
+            click(viewer, page: 0, at: CGPoint(x: lazy.maxX - 0.3, y: lazy.midY))
+            say("caret after a click: \(viewer.pagesView.selection?.isEmpty == true)")
+            viewer.pagesView.insertText(" old")
+            viewer.pagesView.textEditor?.finish()
+        }
+        controller.setEditingContent(false)
+        if let search = rect("Search") {
+            drag(viewer, page: 0, from: CGPoint(x: search.minX + 0.5, y: search.midY), to: CGPoint(x: search.maxX - 0.5, y: search.midY))
+            viewer.pagesView.deleteBackward(nil)
+            viewer.pagesView.textEditor?.finish()
+        }
+        controller.setEditingContent(false)
+        let flat = viewer.model.text(page: 0).string.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        say("still left-aligned after editing: \(viewer.model.paragraphs(page: 0)?.paragraphs.first { $0.text.hasPrefix("The quick") }?.alignment == .left)")
+        say("after typing: 'quick red fox' \(flat.contains("quick red fox")), 'lazy old dog' \(flat.contains("lazy old dog")), 'Search' gone \(!flat.contains("Search"))")
+        viewer.pagesView.selection = nil
+        say("with nothing selected, typing goes nowhere (Space scrolls): \(!viewer.pagesView.typeIntoSelection { _ in })")
         controller.setEditingContent(true)
         let before = viewer.model.links(page: 0).count
         viewer.pagesView.contentTool = .link
@@ -527,6 +559,20 @@ enum SelfTest {
         let marked = pressSheetButton(window, "Add")
         let texts = (0..<viewer.model.pageCount).map { viewer.model.text(page: $0).string }
         say("stamps: sheets \(numbered) \(marked); page 2 has \"Page 2 of 3\": \(texts[1].contains("Page 2 of 3")); DRAFT on every page: \(texts.allSatisfy { $0.contains("DRAFT") })")
+        // A caret after a click in plain viewing, as people see it.
+        controller.setEditingContent(false)
+        if let fox = viewer.model.text(page: 0).search("jumps").first.flatMap({ viewer.model.text(page: 0).rects(for: $0).first }) {
+            click(viewer, page: 0, at: CGPoint(x: fox.minX, y: fox.midY))
+        }
+        window.makeFirstResponder(viewer.pagesView)
+        // Before the caret's first blink (every 0.55 s) hides it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+        let caretCapture = Process()
+        caretCapture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        caretCapture.arguments = ["-x", "-o", "-l", "\(window.windowNumber)", out.appendingPathComponent("content-3-caret.png").path]
+        try? caretCapture.run()
+        caretCapture.waitUntilExit()
+        say("caret on screen: \(viewer.pagesView.selection?.isEmpty == true)")
         // The window as people see it while editing: the bar, a box with a selection.
         controller.setEditingContent(true)
         if let heading = viewer.model.paragraphs(page: 0)?.paragraphs.first(where: { $0.text.hasPrefix("Chapter One") }) {
@@ -551,6 +597,7 @@ enum SelfTest {
                 }
                 finish()
             }
+        }
         }
     }
 

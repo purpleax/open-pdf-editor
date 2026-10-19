@@ -81,11 +81,20 @@ final class PagesView: NSView, NSMenuItemValidation {
     var selection: TextSelection? {
         didSet {
             if selection != oldValue {
+                caretShown = true
+                updateCaretTimer()
                 refreshSelection()
                 delegate?.pagesViewSelectionDidChange(self)
             }
         }
     }
+    /// A click in editable text leaves an insertion point (an empty
+    /// selection), drawn as a blinking caret: typing edits there.
+    private var caretShown = true
+    private var caretTimer: Timer?
+    private var lastClick: (page: Int, point: CGPoint)?
+    /// Typing over a selection starts editing: the window turns Edit Content on.
+    var onStartEditing: (() -> Void)?
 
     private enum Granularity { case character, word, block }
     private var dragGranularity = Granularity.character
@@ -410,6 +419,7 @@ final class PagesView: NSView, NSMenuItemValidation {
             rects = text.rects(for: range)
         }
         view.setSelection(rects, transform: model.pageToView(page: page, rotation: rotation))
+        view.setCaret(caretRect(page: page), transform: model.pageToView(page: page, rotation: rotation))
     }
 
     private func textIfSelected(page: Int) -> PageText? {
@@ -476,6 +486,7 @@ final class PagesView: NSView, NSMenuItemValidation {
             pendingLink = (link, page, location)
         }
         let text = model.text(page: page)
+        lastClick = (page, point)
         guard let caret = text.caret(at: point) else {
             if !event.modifierFlags.contains(.shift) { selection = nil }
             dragOrigin = nil
@@ -538,7 +549,135 @@ final class PagesView: NSView, NSMenuItemValidation {
             delegate?.pagesView(self, activate: pending.link, onPage: pending.page)
             return
         }
-        if selection?.isEmpty == true { selection = nil }
+        // A click in text that can be edited leaves the caret there.
+        if selection?.isEmpty == true, !(lastClick.map { canEdit(at: $0.point, page: $0.page) } ?? false) { selection = nil }
+    }
+
+    /// Whether typing at this point (page space) would edit a paragraph.
+    private func canEdit(at point: CGPoint, page: Int) -> Bool {
+        guard !editingFields, model.isEditable, model.allows(.edit), rotation == 0 else { return false }
+        return model.paragraphs(page: page)?.paragraph(at: point)?.isEditable == true
+    }
+
+    private func updateCaretTimer() {
+        let wanted = selection?.isEmpty == true
+        if wanted, caretTimer == nil {
+            caretTimer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.caretShown.toggle()
+                    self.refreshSelection()
+                }
+            }
+        } else if !wanted {
+            caretTimer?.invalidate()
+            caretTimer = nil
+        }
+    }
+
+    /// The insertion point's bar, for an empty selection on this page.
+    private func caretRect(page: Int) -> CGRect? {
+        guard let selection, selection.isEmpty, selection.start.page == page, caretShown,
+              window?.firstResponder === self else { return nil }
+        let text = model.text(page: page)
+        let c = selection.start.caret
+        guard !text.chars.isEmpty else { return nil }
+        let index = min(max(c < text.chars.count ? c : c - 1, 0), text.chars.count - 1)
+        let quad = text.chars[index].quad.bounds
+        let x = c < text.chars.count ? quad.minX : quad.maxX
+        let line = text.lines.first { $0.range.contains(index) }?.bounds ?? quad
+        return CGRect(x: x - 0.5, y: line.minY, width: 1, height: line.height)
+    }
+
+    // MARK: Typing over a selection
+
+    /// Where the selection starts and ends (page space, mid-line), on its first page.
+    private func selectionPoints() -> (page: Int, start: CGPoint, end: CGPoint?)? {
+        guard let selection else { return nil }
+        let page = selection.start.page
+        let text = model.text(page: page)
+        let chars = text.chars
+        guard !chars.isEmpty else { return nil }
+        func point(_ caret: Int, preferBefore: Bool) -> CGPoint {
+            let c = min(max(caret, 0), chars.count)
+            if (preferBefore && c > 0) || c == chars.count {
+                let q = chars[c - 1].quad.bounds
+                return CGPoint(x: q.maxX, y: q.midY)
+            }
+            let q = chars[c].quad.bounds
+            return CGPoint(x: q.minX, y: q.midY)
+        }
+        let start = point(selection.start.caret, preferBefore: false)
+        if selection.isEmpty { return (page, lastClick.map { $0.page == page ? $0.point : start } ?? start, nil) }
+        let endCaret = selection.end.page == page ? selection.end.caret : chars.count
+        return (page, start, point(endCaret, preferBefore: true))
+    }
+
+    /// Opens the selection's paragraph for editing, the selection kept, and
+    /// does what was typed there. False if there's nothing to type into.
+    @discardableResult
+    func typeIntoSelection(_ action: (ParagraphEditor) -> Void) -> Bool {
+        guard textEditor == nil, selection != nil, let (page, start, end) = selectionPoints() else { return false }
+        guard model.isEditable, model.allows(.edit), !editingFields else { return false }
+        guard let paragraph = model.paragraphs(page: page)?.paragraph(at: start) else {
+            NSSound.beep()
+            return true
+        }
+        // The selection in the paragraph's own characters: the page's text and
+        // the paragraph come from the same glyphs, so each selected character
+        // is the paragraph's character at the same spot.
+        let range = paragraphRange(of: paragraph, page: page)
+        if !editingContent { onStartEditing?() }
+        beginParagraphEdit(paragraph, at: start)
+        guard let editor = textEditor else { return true }
+        if let range { editor.select(characters: range) } else if let end { editor.select(from: start, to: end) }
+        action(editor)
+        return true
+    }
+
+    /// The selection as a range of the paragraph's characters (empty: a caret).
+    private func paragraphRange(of paragraph: Paragraph, page: Int) -> Range<Int>? {
+        guard let selection else { return nil }
+        let chars = model.text(page: page).chars
+        func paragraphIndex(ofPageChar i: Int) -> Int? {
+            guard chars.indices.contains(i) else { return nil }
+            // Same pen position: the character starts where the paragraph's
+            // does, and its baseline is within the character's box.
+            let q = chars[i].quad.bounds
+            var best: (Int, CGFloat)?
+            for (j, c) in paragraph.characters.enumerated() where c.scalar == chars[i].scalar || c.scalar == " " {
+                guard c.origin.y >= q.minY - 1, c.origin.y <= q.maxY + 1 else { continue }
+                let d = abs(c.origin.x - q.minX)
+                if d < 1, d < (best?.1 ?? .infinity) { best = (j, d) }
+            }
+            return best?.0
+        }
+        let startCaret = selection.start.caret
+        if selection.isEmpty {
+            // A caret: after the character before it, or before the one after it.
+            if let before = paragraphIndex(ofPageChar: startCaret - 1) { return (before + 1)..<(before + 1) }
+            return paragraphIndex(ofPageChar: startCaret).map { $0..<$0 }
+        }
+        guard let first = paragraphIndex(ofPageChar: startCaret) else { return nil }
+        let endCaret = selection.end.page == page ? selection.end.caret : chars.count
+        // The last selected character in this paragraph (the selection may run on past it).
+        var last: Int?
+        var i = endCaret - 1
+        while i >= startCaret, last == nil {
+            last = paragraphIndex(ofPageChar: i)
+            i -= 1
+        }
+        return first..<((last ?? first) + 1)
+    }
+
+    override func insertText(_ insertString: Any) {
+        let string = (insertString as? String) ?? (insertString as? NSAttributedString)?.string ?? ""
+        guard !string.isEmpty else { return }
+        if !typeIntoSelection({ $0.textView.insertText(string, replacementRange: $0.textView.selectedRange()) }) { NSSound.beep() }
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        typeIntoSelection { $0.textView.insertNewline(nil) }
     }
 
     override func updateTrackingAreas() {
@@ -638,6 +777,8 @@ final class PagesView: NSView, NSMenuItemValidation {
 
     override func keyDown(with event: NSEvent) {
         if event.charactersIgnoringModifiers == " " && event.modifierFlags.intersection([.command, .control, .option]).isEmpty {
+            // With a caret or selection in text, Space types; otherwise it scrolls.
+            if selection != nil, typeIntoSelection({ $0.textView.insertText(" ", replacementRange: $0.textView.selectedRange()) }) { return }
             delegate?.pagesView(self, scrollByPages: event.modifierFlags.contains(.shift) ? -1 : 1)
             return
         }
@@ -688,8 +829,14 @@ final class PagesView: NSView, NSMenuItemValidation {
         if selectedAnnotation != nil { selectedAnnotation = nil } else { selection = nil }
     }
 
-    override func deleteBackward(_ sender: Any?) { deleteSelectedAnnotation() }
-    override func deleteForward(_ sender: Any?) { deleteSelectedAnnotation() }
+    override func deleteBackward(_ sender: Any?) {
+        if selectedAnnotation == nil, selection != nil, typeIntoSelection({ $0.textView.deleteBackward(nil) }) { return }
+        deleteSelectedAnnotation()
+    }
+    override func deleteForward(_ sender: Any?) {
+        if selectedAnnotation == nil, selection != nil, typeIntoSelection({ $0.textView.deleteForward(nil) }) { return }
+        deleteSelectedAnnotation()
+    }
     @objc func delete(_ sender: Any?) { deleteSelectedAnnotation() }
 
     // MARK: Accessibility

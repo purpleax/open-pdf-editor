@@ -2709,7 +2709,28 @@ static void add_paragraph(fz_context *ctx, para_builder *b, line_piece *pieces, 
             if (i < lc - 1 && fabsf(r.x1 - x1) > tol) full = false;
             if (fabsf((r.x0 + r.x1) / 2 - mid) > tol) centre = false;
         }
-        if (left && full && lc >= 2 && (lc > 2 || right)) para->align = OPDF_ALIGN_JUSTIFIED;
+        // Justified text also has its spaces stretched: lines that just
+        // happen to end together (as re-wrapped ones can) aren't justified.
+        bool stretched = false;
+        for (int i = 0; i < lc - 1 && !stretched; i++) {
+            const opdf_para_line *l = &para->lines[i];
+            float gaps = 0;
+            int count = 0;
+            for (int j = l->first + 1; j < l->first + l->count; j++) {
+                const opdf_para_char *a = &para->chars[j - 1], *b = &para->chars[j];
+                if (a->c != ' ' && b->c == ' ') {
+                    // From the end of a word to the start of the next.
+                    int k = j;
+                    while (k < l->first + l->count && para->chars[k].c == ' ') k++;
+                    if (k < l->first + l->count) {
+                        gaps += para->chars[k].x - (a->x + a->advance);
+                        count++;
+                    }
+                }
+            }
+            stretched = count > 0 && gaps / count > 0.34f * size;
+        }
+        if (left && full && lc >= 2 && (lc > 2 || right) && stretched) para->align = OPDF_ALIGN_JUSTIFIED;
         else if (left) para->align = OPDF_ALIGN_LEFT;
         else if (right) para->align = OPDF_ALIGN_RIGHT;
         else if (centre) para->align = OPDF_ALIGN_CENTER;

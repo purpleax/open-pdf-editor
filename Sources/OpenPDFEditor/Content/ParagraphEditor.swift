@@ -42,6 +42,8 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
     private var original = NSAttributedString()
     /// Where each original line starts in the text.
     private var lineStarts: [Int] = []
+    /// Where each of the paragraph's characters is in the text (UTF-16).
+    private var characterOffsets: [Int] = []
     /// The text view's top-left in page space.
     private(set) var origin: CGPoint
     /// Page space to the pages view's coordinates (a translation: editing
@@ -155,6 +157,7 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
         for (i, line) in p.lines.enumerated() {
             lineStarts.append(text.length)
             for c in p.characters[line.range] {
+                characterOffsets.append(text.length)
                 var attributes = last
                 if let f = c.font {
                     let font = FontFile.match(fonts[f], size: c.size) as NSFont
@@ -244,6 +247,31 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
         } else {
             textView.setSelectedRange(NSRange(location: storage.length, length: 0))
         }
+    }
+
+    /// Selects the paragraph's characters `range` (a caret before
+    /// `range.lowerBound` when it's empty): a selection made on the page,
+    /// carried over exactly.
+    func select(characters range: Range<Int>) {
+        func offset(_ i: Int) -> Int {
+            if i < characterOffsets.count { return characterOffsets[max(0, i)] }
+            return storage.length
+        }
+        let a = offset(range.lowerBound), b = range.isEmpty ? a : offset(range.upperBound - 1) + 1
+        textView.setSelectedRange(NSRange(location: min(a, storage.length), length: max(0, min(b, storage.length) - a)))
+    }
+
+    /// Selects the text between two points (page space), as a selection made
+    /// on the page carries over into the editor.
+    func select(from start: CGPoint, to end: CGPoint) {
+        func index(_ p: CGPoint) -> Int {
+            var fraction: CGFloat = 0
+            let local = CGPoint(x: p.x - origin.x, y: p.y - origin.y)
+            let i = layoutManager.characterIndex(for: local, in: container, fractionOfDistanceBetweenInsertionPoints: &fraction)
+            return min(storage.length, i + (fraction > 0.5 ? 1 : 0))
+        }
+        let a = index(start), b = index(end)
+        textView.setSelectedRange(NSRange(location: min(a, b), length: abs(b - a)))
     }
 
     /// The page colour under the text and over the paragraph it replaces;

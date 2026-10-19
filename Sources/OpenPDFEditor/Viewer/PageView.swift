@@ -25,6 +25,8 @@ final class PageView: NSView {
     private let searchLayer = CAShapeLayer()
     private let currentMatchLayer = CAShapeLayer()
     private let selectionLayer = CAShapeLayer()
+    /// The insertion point after a click in text: black, as on paper.
+    private let caretLayer = CAShapeLayer()
     private let draftLayer = CAShapeLayer()
     private let outlineLayer = CAShapeLayer()
     private let handleLayer = CAShapeLayer()
@@ -62,6 +64,9 @@ final class PageView: NSView {
             if multiply { shape.compositingFilter = "multiplyBlendMode" }
             layer.addSublayer(shape)
         }
+        caretLayer.fillColor = NSColor.black.cgColor
+        caretLayer.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        layer.addSublayer(caretLayer)
         // Edit Content: the outlines of what can be changed.
         contentLayer.fillColor = nil
         contentLayer.strokeColor = NSColor.systemGray.cgColor
@@ -93,7 +98,7 @@ final class PageView: NSView {
         super.layout()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for sub in [previewLayer, tileContainer, fieldLayer, contentLayer, searchLayer, currentMatchLayer, selectionLayer, draftLayer, outlineLayer, handleLayer] {
+        for sub in [previewLayer, tileContainer, fieldLayer, contentLayer, searchLayer, currentMatchLayer, selectionLayer, caretLayer, draftLayer, outlineLayer, handleLayer] {
             sub.frame = bounds
         }
         CATransaction.commit()
@@ -145,6 +150,7 @@ final class PageView: NSView {
         searchLayer.path = nil
         currentMatchLayer.path = nil
         selectionLayer.path = nil
+        caretLayer.path = nil
         draftLayer.path = nil
         outlineLayer.path = nil
         handleLayer.path = nil
@@ -279,6 +285,11 @@ final class PageView: NSView {
     /// The text selection, in page space.
     func setSelection(_ rects: [CGRect], transform: CGAffineTransform) {
         selectionLayer.path = path(rects, transform)
+    }
+
+    /// The insertion point (page space), or none.
+    func setCaret(_ rect: CGRect?, transform: CGAffineTransform) {
+        caretLayer.path = rect.map { CGPath(rect: $0.applying(transform), transform: nil) }
     }
 
     private func path(_ rects: [CGRect], _ transform: CGAffineTransform) -> CGPath? {
