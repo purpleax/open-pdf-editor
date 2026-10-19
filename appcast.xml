@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 0.4.0</title>
-      <pubDate>Mon, 19 Oct 2026 05:24:26 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.4.0</link>
-      <sparkle:version>5</sparkle:version>
-      <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+      <title>Open PDF Editor 0.5.0</title>
+      <pubDate>Mon, 19 Oct 2026 06:58:42 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.5.0</link>
+      <sparkle:version>6</sparkle:version>
+      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.4.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Forms. Click a form field to fill it in: type into text fields in place (Tab moves to the next one), tick checkboxes and radio buttons, and choose from dropdowns and lists. View › Highlight Form Fields tints the fields you can fill in. Forms › Edit Fields lets you add text fields, checkboxes, radio buttons, dropdowns, list boxes and signature fields, move and resize them, and set their name, tooltip, choices and options in the inspector. Forms › Flatten Form makes what you filled in part of the pages. Every change can be undone. Scripts in forms never run. The new Settings window (⌘,) has switches for opening web and email links and for converting documents other than PDFs and images; both are off until you turn them on, and pointing at a link shows where it goes. The app no longer checks for updates by itself: use Check for Updates… when you want to.</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.4.0/Open-PDF-Editor-0.4.0.zip" sparkle:edSignature="g1oQA8uRlzawmDCgOohj1XvGCWtN3qc8FPzvtUONhvaXTX+UvK38GvPTecmWu+jURumvnySnraBN3EiqFTgBAw==" length="32009150" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.5.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Editing. Edit › Edit Content (⌥⌘E) lets you change what's on the page: click text with the Text tool and double-click to retype it, or change its font, size and colour in the inspector (when a character isn't in the PDF's own font, a matching Mac font is embedded with just the letters used); add, move, resize, replace and delete images; and draw links to web pages, email addresses or other pages. Pages › Add Headers &amp; Footers, Add Page Numbers and Add Watermark stamp text on all or some pages, and can be removed again. Change the document's title, author, subject and keywords in the inspector. When no document is open, a new welcome window offers New PDF or Open…, and File › New makes a blank PDF. Every change can be undone.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.5.0/Open-PDF-Editor-0.5.0.zip" sparkle:edSignature="RgqUKkAGhZn6THC4VWFQoosbJJXO3Pv13bc/cLXGTgcFAHfO2HAzkzhnVkdTK1bcPgIAa4IOJNG+UlgIYgjBAw==" length="32156785" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
