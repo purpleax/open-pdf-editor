@@ -1,5 +1,7 @@
 # Developing Open PDF Editor
 
+The latest snapshot of where the work stands, and how the user wants it run, is in [HANDOVER.md](HANDOVER.md).
+
 Everything needed to pick up the work on another Mac: where things stand, how the project is run, how to set up a machine (including the release secrets), how the code fits together, the rules that keep it safe, and how to test and release.
 
 [SPEC.md](SPEC.md) is the feature list. [ROADMAP.md](ROADMAP.md) is the plan, the Decisions table (which wins over everything else) and the release notes.
