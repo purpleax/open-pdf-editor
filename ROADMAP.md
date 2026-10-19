@@ -26,6 +26,11 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Markup tools | A markup bar under the toolbar (View › Show Markup Toolbar, ⇧⌘A) with the tools, colour and line width, as in Preview; the inspector edits the selected annotation | 2026-10-19 |
 | Risky features | Any feature that adds a security risk (for example form JavaScript) gets a switch in a Settings window (⌘,) and is off until turned on. The phase that adds the first such feature adds the Settings window. Each one is named in its roadmap item, with what it exposes. Features already in the app that get a switch: opening web and email links, and converting non-PDF, non-image documents in Create PDF from Files. Saving attachments has none (it already warns and quarantines). | 2026-10-19 |
 | Welcome window | With no documents open (at launch, or reopened from the Dock), a welcome window shows the app's icon and name, with New PDF and Open… under them, instead of going straight to the Open panel. File › New (⌘N) makes an untitled PDF of one blank page (Letter in the US and Canada, A4 elsewhere). | 2026-10-19 |
+| Edit Content | Edit › Edit Content (⌥⌘E), a mode with its own bar (Select, Text, Image, Link), exclusive with Edit Fields, cropping and the markup tools. A bridge content processor lists and rewrites the page's own content stream: text operations and image drawings are identified by their order on the page. | 2026-10-19 |
+| Editing text | One text operation is one run. New characters use the run's font when its glyphs are there; otherwise the whole run is drawn in a matching system font, embedded as a Type0 Identity-H font subset to the glyphs used, with its own ToUnicode. Colour changes only where the fill is grey, RGB or CMYK. Text inside Form XObjects, Type3, vertical and invisible text isn't edited. | 2026-10-19 |
+| Images from files | Read with ImageIO (MuPDF's decoders never see the file), turned upright, handed over as JPEG (unchanged when it needs no turning) or PNG; at most 100 MB and 40 megapixels. | 2026-10-19 |
+| Stamps | Headers, footers, page numbers and watermarks are drawn after the page's content as /Artifact marked content with an /OPDFStamp tag, so this app removes exactly what it added. | 2026-10-19 |
+| Metadata | Title, Author, Subject and Keywords edited in the inspector; ModDate set; XMP rewritten to match when present, keeping PDF/A identification. | 2026-10-19 |
 | Form JavaScript | Off, with no switch: values are set as typed, and calculated fields don't recalculate. Revisit only if asked. | 2026-10-19 |
 | Filling and editing forms | Filling is always on: with the Select tool, click a field to fill it in. Editing fields is a mode (Forms › Edit Fields, ⌥⌘F) with its own bar of field tools; fields are selected, moved, resized and deleted like annotations and set up in the inspector. | 2026-10-19 |
 | XFA | Not supported. Filling in a hybrid AcroForm/XFA form removes /XFA, so other apps show the values typed here. | 2026-10-19 |
@@ -144,6 +149,7 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] Welcome window with New PDF and Open…, and File › New (asked for during the phase)
 - [x] Edit metadata
   - Title, Author, Subject and Keywords are edited in the inspector (one undoable step each), and ModDate is set. A file with XMP metadata gets a new XMP packet to match, keeping its PDF/A identification.
+- [ ] Security review before release
 
 ## Phase 6: Security and signing (0.6.0)
 
@@ -166,6 +172,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **0.5.0**: Editing. Edit › Edit Content (⌥⌘E) lets you change what's on the page: click text with the Text tool and double-click to retype it, or change its font, size and colour in the inspector (when a character isn't in the PDF's own font, a matching Mac font is embedded with just the letters used); add, move, resize, replace and delete images; and draw links to web pages, email addresses or other pages. Pages › Add Headers & Footers, Add Page Numbers and Add Watermark stamp text on all or some pages, and can be removed again. Change the document's title, author, subject and keywords in the inspector. When no document is open, a new welcome window offers New PDF or Open…, and File › New makes a blank PDF. Every change can be undone.
 
 - **0.4.0**: Forms. Click a form field to fill it in: type into text fields in place (Tab moves to the next one), tick checkboxes and radio buttons, and choose from dropdowns and lists. View › Highlight Form Fields tints the fields you can fill in. Forms › Edit Fields lets you add text fields, checkboxes, radio buttons, dropdowns, list boxes and signature fields, move and resize them, and set their name, tooltip, choices and options in the inspector. Forms › Flatten Form makes what you filled in part of the pages. Every change can be undone. Scripts in forms never run. The new Settings window (⌘,) has switches for opening web and email links and for converting documents other than PDFs and images; both are off until you turn them on, and pointing at a link shows where it goes. The app no longer checks for updates by itself: use Check for Updates… when you want to.
 

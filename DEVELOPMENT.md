@@ -7,7 +7,8 @@ Everything needed to pick up the work on another Mac: where things stand, how th
 ## Where things stand
 
 - **Released:** 0.3.0 (October 19, 2026): viewer, annotations, page management. Phases 0–3 in ROADMAP.md are done.
-- **Ready to release:** Phase 4, forms (0.4.0): built, tested and security-reviewed (see ROADMAP.md).
+- **Released:** 0.4.0, forms.
+- **In progress:** Phase 5, content editing (0.5.0): built, waiting for its security review and release.
 - **Known Lows** (accepted, not yet fixed) are listed under each phase's "Security review" item in ROADMAP.md. They are the backlog to pick from when a phase touches the same code.
 - **Version:** `Resources/Info.plist` (`CFBundleShortVersionString`, `CFBundleVersion`), set only by `make release`.
 
@@ -161,3 +162,11 @@ These come from real bugs and review findings. Break one and something crashes o
 - **Where values live:** a field's value is on its field dictionary, which for a radio button is the group (the widget's parent). `field_holder` finds it. MuPDF's `pdf_field_value` rewrites stream values in place, so the bridge reads values itself (`field_value`).
 - **App:** `FormController` (finding, filling, editing), `FieldEditor` (typing in place), `PagesView+Forms.swift` (filling with the Select tool), `PagesView+FieldEditing.swift` (Forms › Edit Fields), `FieldInspectorViewController`.
 - **Not yet:** Insert, Extract, Split and Create PDF don't carry form fields across (grafting drops `/Annots`).
+
+## Content editing (0.5.0)
+
+- **The content processor** (bridge section "Page content"): one `pdf_processor` that tracks the graphics and text state and numbers text operations and image drawings. Recording, it lists them (`opdf_page_content_load`); rewriting, it is chained to MuPDF's buffer processor and passes everything through except the target, which an `emit_text`/`emit_image` hook draws instead (`rewrite_page_content` replaces /Contents with one new deflated stream). Limits: `OPDF_MAX_CONTENT_*`.
+- **Text:** `opdf_text_run_edit`: a recording pass finds the run and its font (`run_probe`), `plan_text` encodes each character in that font (`encode_in_font`, checking the glyph really exists) and `embed_subset_font` embeds a fallback (Swift's `FontFile` picks it with CoreText and rebuilds it as a one-face sfnt from its tables).
+- **Images:** `opdf_image_*`; `ImageImport` reads files with ImageIO first.
+- **Stamps:** `opdf_stamp_pages` appends a q-balanced stream per page; `opdf_stamps_remove` drops `/OPDFStamp` marked content.
+- **App:** `ContentController`, `PagesView+ContentEditing.swift`, `TextRunEditor`, `ContentInspectorViewController`, `DocumentWindowController+Content.swift` and `+Stamps.swift`.
