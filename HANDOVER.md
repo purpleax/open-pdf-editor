@@ -33,7 +33,7 @@ The state of the work and how it is run, for picking it up in a new session or o
   5. Entering editing and new text, done: content tools are now Edit (click text → caret; image/link → select; ⌥-click → item under text), Add Text (click or drag a width), Add Image, Add Link; a toolbar Edit button; Edit Text in the right-click menu (turns editing on); a width grip on the box being edited; an orange outline and "Overlaps other text" when it runs into another paragraph; a one-time note on signed documents; `ContentRef.text` and the run-editing API in the app are gone; `PageParagraphs.paragraph(at:)` also takes clicks anywhere in a paragraph's box. The font popup shows families the Mac doesn't list (Times) as an extra item. Self-test content run covers all of it, with a real screen capture (`content-2-screen.png`).
   6. Finish, done: docs (ROADMAP Phase 7, decisions, 0.7.0 notes; OCR and export are now Phase 8, 1.0 Phase 9; SPEC, README, DEVELOPMENT), security review and re-review with proofs (fixes and Lows in ROADMAP). Stext for paragraphs no longer uses COLLECT_STYLES (quadratic in MuPDF); fake bold is folded by `drop_doubled_paragraphs`. 150 tests and all self-test runs pass.
 
-  Next: release 0.7.0 once the user agrees (dry run first), then ask about installing.
+  Released as **0.7.0** (2026-10-19, `v0.7.0`, commit `0b29475`): on GitHub and in the appcast. Phase 7 is done; wait for the user before starting Phase 8 (OCR and export).
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.

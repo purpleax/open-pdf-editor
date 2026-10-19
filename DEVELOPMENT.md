@@ -12,7 +12,7 @@ Everything needed to pick up the work on another Mac: where things stand, how th
 - **Released:** 0.4.0, forms.
 - **Released:** 0.5.0, content editing.
 - **Released:** 0.6.0, security and signing, with saving automatically as a setting.
-- **Ready to release:** Phase 7, editing like a word processor (0.7.0).
+- **Released:** 0.7.0, editing like a word processor.
 - **Known Lows** (accepted, not yet fixed) are listed under each phase's "Security review" item in ROADMAP.md. They are the backlog to pick from when a phase touches the same code.
 - **Version:** `Resources/Info.plist` (`CFBundleShortVersionString`, `CFBundleVersion`), set only by `make release`.
 
