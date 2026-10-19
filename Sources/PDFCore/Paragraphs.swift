@@ -150,3 +150,105 @@ extension EngineDocument {
         }
     }
 }
+
+/// A font for new text.
+public enum TextFont: Equatable, Sendable {
+    /// One of the page's fonts, by its resource name: glyphs are its codes.
+    case page(resource: String)
+    /// An sfnt to embed (subset): glyphs are glyph ids.
+    case embedded(Data)
+}
+
+/// Text laid out already: glyphs on one baseline in one font, size and colour.
+public struct GlyphRun: Equatable, Sendable {
+    public struct Glyph: Equatable, Sendable {
+        /// The code in a page font, or the glyph id in an embedded one.
+        public var code: UInt32
+        /// Bytes of the code (page fonts).
+        public var length: Int
+        /// The glyph's origin across the page (page space).
+        public var x: CGFloat
+        /// The character it stands for.
+        public var scalar: Unicode.Scalar
+
+        public init(code: UInt32, length: Int = 2, x: CGFloat, scalar: Unicode.Scalar) {
+            self.code = code
+            self.length = length
+            self.x = x
+            self.scalar = scalar
+        }
+    }
+
+    public var font: Int
+    public var size: CGFloat
+    /// 1 (grey), 3 (RGB) or 4 (CMYK) components.
+    public var fill: [CGFloat]
+    /// The baseline, page space (y down).
+    public var baseline: CGFloat
+    public var glyphs: [Glyph]
+    public var underline: Bool
+
+    public init(font: Int, size: CGFloat, fill: [CGFloat], baseline: CGFloat, glyphs: [Glyph], underline: Bool = false) {
+        self.font = font
+        self.size = size
+        self.fill = fill
+        self.baseline = baseline
+        self.glyphs = glyphs
+        self.underline = underline
+    }
+}
+
+extension EngineDocument {
+    /// Takes the glyphs out of the page (with any copies drawn on them, such
+    /// as fake bold), leaving the rest where it was, and draws the runs: one
+    /// undoable step.
+    public func replaceText(page: Int, dropping: Set<Paragraph.Glyph>, fonts: [TextFont], runs: [GlyphRun], actionName: String) throws {
+        let drops = dropping.map { opdf_glyph_ref(op: Int32($0.op), glyph: Int32($0.index)) }
+        var codes: [UInt32] = [], lens: [UInt8] = [], xs: [Float] = [], unicode: [Int32] = []
+        var cRuns: [opdf_glyph_run] = []
+        for run in runs {
+            var r = opdf_glyph_run()
+            r.font = Int32(run.font)
+            r.size = Float(run.size)
+            r.color_n = Int32(run.fill.count)
+            let fill = run.fill.map(Float.init) + [0, 0, 0, 0]
+            r.color = (fill[0], fill[1], fill[2], fill[3])
+            r.y = Float(run.baseline)
+            r.first = Int32(codes.count)
+            r.count = Int32(run.glyphs.count)
+            r.underline = run.underline
+            for g in run.glyphs {
+                codes.append(g.code)
+                lens.append(UInt8(clamping: g.length))
+                xs.append(Float(g.x))
+                unicode.append(Int32(bitPattern: g.scalar.value))
+            }
+            cRuns.append(r)
+        }
+        // Font names and data, kept alive for the call.
+        let names: [UnsafeMutablePointer<CChar>?] = fonts.map { if case let .page(resource) = $0 { strdup(resource) } else { nil } }
+        let datas: [Data?] = fonts.map { if case let .embedded(data) = $0 { data } else { nil } }
+        defer { names.forEach { free($0) } }
+        var error = opdf_error()
+        let ok = withEmbeddedFonts(datas) { pointers in
+            var cFonts = fonts.indices.map { i in
+                opdf_text_font(resource: names[i].map { UnsafePointer($0) }, data: pointers[i].0, len: pointers[i].1)
+            }
+            return opdf_paragraph_replace(handle, Int32(page), drops, Int32(drops.count), &cFonts, Int32(cFonts.count),
+                                          cRuns, Int32(cRuns.count), codes, lens, xs, unicode, Int32(codes.count), actionName, &error)
+        }
+        guard ok else { throw EngineError(error) }
+    }
+
+    /// Pointers to each font's bytes (nil for page fonts) for the call.
+    private func withEmbeddedFonts<T>(_ datas: [Data?], _ body: ([(UnsafePointer<UInt8>?, Int)]) -> T) -> T {
+        func next(_ i: Int, _ acc: [(UnsafePointer<UInt8>?, Int)]) -> T {
+            if i == datas.count { return body(acc) }
+            guard let data = datas[i] else { return next(i + 1, acc + [(nil, 0)]) }
+            return data.withUnsafeBytes { bytes in
+                next(i + 1, acc + [(bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count)])
+            }
+        }
+        return next(0, [])
+    }
+}

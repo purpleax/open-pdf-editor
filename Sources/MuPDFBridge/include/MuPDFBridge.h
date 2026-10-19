@@ -456,6 +456,45 @@ typedef struct {
 } opdf_font_code;
 bool opdf_font_encode(opdf_doc *doc, int page, const char *resource, const int *chars, int count,
                       opdf_font_code *out, opdf_error *err);
+
+// A glyph drawn by the page's content: its text operation and its place in it.
+typedef struct {
+    int op, glyph;
+} opdf_glyph_ref;
+
+// Text to draw, laid out already: runs of glyphs on one baseline in one
+// font, size and colour. Each run's glyphs are `first` to `first + count`
+// in the arrays passed alongside: their codes (in a page font, `lens` bytes
+// each; in an embedded font, glyph ids), x origins (page space), and the
+// characters they stand for (for an embedded font's ToUnicode).
+typedef struct {
+    int font;               // into the fonts passed
+    float size;
+    int color_n;            // 1 grey, 3 RGB, 4 CMYK
+    float color[4];
+    float y;                // the baseline, page space (y down)
+    int first, count;
+    bool underline;
+} opdf_glyph_run;
+
+// Fonts for text: one of the page's fonts by resource name, or (resource
+// NULL) an sfnt to embed, subset to the glyphs used: TrueType, or CFF in
+// OpenType that isn't CID-keyed, with outlines.
+typedef struct {
+    const char *resource;
+    const unsigned char *data;
+    size_t len;
+} opdf_text_font;
+
+// One undoable step: removes the glyphs (and any copies drawn within half a
+// point of them with the same character, such as fake bold), leaving the
+// rest of the page's text where it was, then draws the runs.
+#define OPDF_MAX_TEXT_GLYPHS 100000
+bool opdf_paragraph_replace(opdf_doc *doc, int page, const opdf_glyph_ref *drop, int drop_count,
+                            const opdf_text_font *fonts, int font_count,
+                            const opdf_glyph_run *runs, int run_count,
+                            const unsigned int *codes, const unsigned char *lens, const float *xs, const int *unicode, int glyph_count,
+                            const char *operation, opdf_error *err);
 // Images. `data` is a JPEG or PNG file (other formats are converted
 // before they get here), at most OPDF_MAX_IMAGE_BYTES and
 // OPDF_MAX_IMAGE_PIXELS. Rectangles are in page space; an image is drawn

@@ -1727,6 +1727,9 @@ struct content_proc {
     int glyph_count, glyph_capacity;
     struct content_font *fonts;
     int font_count, font_capacity;
+    // Rewriting: glyphs to leave out, sorted by operation and place.
+    const opdf_glyph_ref *drops;
+    int drop_count;
 };
 
 // One glyph drawn by the page's content.
@@ -2142,11 +2145,118 @@ static void show_text(fz_context *ctx, content_proc *p, pdf_obj *array, const un
     }
 }
 
+// --- Leaving glyphs out
+
+static int compare_glyph_refs(const void *a, const void *b) {
+    const opdf_glyph_ref *x = a, *y = b;
+    if (x->op != y->op) return x->op < y->op ? -1 : 1;
+    return x->glyph < y->glyph ? -1 : x->glyph > y->glyph;
+}
+
+// Whether the current text operation loses any glyphs.
+static bool op_has_drops(content_proc *p) {
+    int lo = 0, hi = p->drop_count - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (p->drops[mid].op == p->text_ops) return true;
+        if (p->drops[mid].op < p->text_ops) lo = mid + 1; else hi = mid - 1;
+    }
+    return false;
+}
+
+static bool glyph_dropped(content_proc *p, int index) {
+    opdf_glyph_ref key = { p->text_ops, index };
+    return bsearch(&key, p->drops, (size_t)p->drop_count, sizeof key, compare_glyph_refs) != NULL;
+}
+
+// The operation's text as a TJ array with the dropped glyphs taken out, each
+// replaced by a move of exactly its width, so what follows stays put. Run
+// before the operation is shown (it reads the state it is shown with).
+static pdf_obj *array_without_drops(fz_context *ctx, content_proc *p, pdf_obj *array, const unsigned char *s, size_t len) {
+    pdf_font_desc *font = G(p)->text.font;
+    pdf_obj *out = pdf_new_array(ctx, p->doc, 8);
+    fz_buffer *seg = NULL;
+    fz_var(seg);
+    fz_try(ctx) {
+        seg = fz_new_buffer(ctx, 64);
+        int index = 0;
+        float size = G(p)->text.size;
+        int items = array ? pdf_array_len(ctx, array) : 1;
+        for (int i = 0; i < items; i++) {
+            const unsigned char *str = s, *end;
+            if (array) {
+                pdf_obj *item = pdf_array_get(ctx, array, i);
+                if (!pdf_is_string(ctx, item)) {
+                    pdf_array_push_real(ctx, out, pdf_to_real(ctx, item));
+                    continue;
+                }
+                str = (const unsigned char *)pdf_to_str_buf(ctx, item);
+                end = str + pdf_to_str_len(ctx, item);
+            } else {
+                end = s + len;
+            }
+            while (str < end) {
+                unsigned int code;
+                int inc = pdf_decode_cmap(font->encoding, (unsigned char *)str, (unsigned char *)end, &code);
+                if (inc <= 0) {
+                    // Undecodable bytes are kept as they were.
+                    fz_append_data(ctx, seg, str, (size_t)(end - str));
+                    break;
+                }
+                if (glyph_dropped(p, index)) {
+                    if (seg->len) {
+                        pdf_array_push_string(ctx, out, (char *)seg->data, seg->len);
+                        fz_clear_buffer(ctx, seg);
+                    }
+                    int cid = pdf_lookup_cmap(font->encoding, code);
+                    float w0 = (font->wmode ? 0 : pdf_lookup_hmtx(ctx, font, cid < 0 ? 0 : cid).w * 0.001f);
+                    float move = w0 * size + G(p)->text.char_space + (code == 32 && inc == 1 ? G(p)->text.word_space : 0);
+                    if (size != 0) pdf_array_push_real(ctx, out, -move * 1000 / size);
+                } else {
+                    fz_append_data(ctx, seg, str, (size_t)inc);
+                }
+                str += inc;
+                index++;
+            }
+            if (seg->len) {
+                pdf_array_push_string(ctx, out, (char *)seg->data, seg->len);
+                fz_clear_buffer(ctx, seg);
+            }
+        }
+    }
+    fz_always(ctx)
+        fz_drop_buffer(ctx, seg);
+    fz_catch(ctx) {
+        pdf_drop_obj(ctx, out);
+        fz_rethrow(ctx);
+    }
+    return out;
+}
+
+// Shows the operation with its dropped glyphs taken out, as a TJ.
+static void show_without_drops(fz_context *ctx, content_proc *p, pdf_obj *array, const unsigned char *s, size_t len) {
+    pdf_obj *without = array_without_drops(ctx, p, array, s, len);
+    fz_try(ctx) {
+        show_text(ctx, p, array, s, len);
+        CHAIN(p)->op_TJ(ctx, CHAIN(p), without);
+    }
+    fz_always(ctx)
+        pdf_drop_obj(ctx, without);
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+static bool dropping(content_proc *p) {
+    return p->drop_count > 0 && CHAIN(p) && G(p)->text.font && op_has_drops(p);
+}
+
 static void cp_TJ(fz_context *ctx, pdf_processor *proc, pdf_obj *array) {
     content_proc *p = (content_proc *)proc;
     probe_text_op(ctx, p);
     if (text_op_is_target(p)) {
         p->emit_text(ctx, p, array, NULL, 0, p->arg);
+    } else if (dropping(p)) {
+        show_without_drops(ctx, p, array, NULL, 0);
     } else {
         show_text(ctx, p, array, NULL, 0);
         if (CHAIN(p)) CHAIN(p)->op_TJ(ctx, CHAIN(p), array);
@@ -2158,6 +2268,7 @@ static void cp_Tj(fz_context *ctx, pdf_processor *proc, char *str, size_t len) {
     content_proc *p = (content_proc *)proc;
     probe_text_op(ctx, p);
     if (text_op_is_target(p)) p->emit_text(ctx, p, NULL, str, len, p->arg);
+    else if (dropping(p)) show_without_drops(ctx, p, NULL, (unsigned char *)str, len);
     else {
         show_text(ctx, p, NULL, (unsigned char *)str, len);
         if (CHAIN(p)) CHAIN(p)->op_Tj(ctx, CHAIN(p), str, len);
@@ -2172,6 +2283,9 @@ static void cp_squote(fz_context *ctx, pdf_processor *proc, char *str, size_t le
     if (text_op_is_target(p)) {
         if (CHAIN(p)) CHAIN(p)->op_Tstar(ctx, CHAIN(p));
         p->emit_text(ctx, p, NULL, str, len, p->arg);
+    } else if (dropping(p)) {
+        CHAIN(p)->op_Tstar(ctx, CHAIN(p));
+        show_without_drops(ctx, p, NULL, (unsigned char *)str, len);
     } else {
         show_text(ctx, p, NULL, (unsigned char *)str, len);
         if (CHAIN(p)) CHAIN(p)->op_squote(ctx, CHAIN(p), str, len);
@@ -2192,6 +2306,11 @@ static void cp_dquote(fz_context *ctx, pdf_processor *proc, float aw, float ac, 
             CHAIN(p)->op_Tstar(ctx, CHAIN(p));
         }
         p->emit_text(ctx, p, NULL, str, len, p->arg);
+    } else if (dropping(p)) {
+        CHAIN(p)->op_Tw(ctx, CHAIN(p), aw);
+        CHAIN(p)->op_Tc(ctx, CHAIN(p), ac);
+        CHAIN(p)->op_Tstar(ctx, CHAIN(p));
+        show_without_drops(ctx, p, NULL, (unsigned char *)str, len);
     } else {
         show_text(ctx, p, NULL, (unsigned char *)str, len);
         if (CHAIN(p)) CHAIN(p)->op_dquote(ctx, CHAIN(p), aw, ac, str, len);
@@ -3356,11 +3475,82 @@ static fz_buffer *identity_to_unicode(fz_context *ctx, const int *gids, const in
     return buf;
 }
 
-// Embeds the font in `data` for the characters the plan draws with it:
-// subset to those glyphs, with a ToUnicode for them, as a Type0
-// Identity-H font. Fills in the plan's glyph ids; returns the font (kept).
-static pdf_obj *embed_subset_font(fz_context *ctx, pdf_document *pdf, const unsigned char *data, size_t len, text_plan *t) {
-    if (!data || len < 12 || len > OPDF_MAX_FONT_BYTES) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No font was given for characters the text's own font doesn't have");
+static unsigned read_be(const unsigned char *p, int n) {
+    unsigned v = 0;
+    for (int i = 0; i < n; i++) v = (v << 8) | p[i];
+    return v;
+}
+
+// A table in an sfnt, or NULL.
+static const unsigned char *sfnt_table(const unsigned char *data, size_t len, const char tag[4], size_t *table_len) {
+    if (len < 12) return NULL;
+    unsigned tables = read_be(data + 4, 2);
+    if (12 + (size_t)tables * 16 > len) return NULL;
+    for (unsigned i = 0; i < tables; i++) {
+        const unsigned char *rec = data + 12 + i * 16;
+        if (memcmp(rec, tag, 4)) continue;
+        size_t offset = read_be(rec + 8, 4), length = read_be(rec + 12, 4);
+        if (offset > len || length > len - offset) return NULL;
+        *table_len = length;
+        return data + offset;
+    }
+    return NULL;
+}
+
+// Whether a CFF font is CID-keyed: its Top DICT has ROS (12 30).
+static bool cff_is_cid_keyed(const unsigned char *cff, size_t len) {
+    if (len < 4) return true;
+    size_t pos = cff[2];   // header size
+    // The Name INDEX, then the Top DICT INDEX.
+    for (int which = 0; which < 2; which++) {
+        if (pos + 3 > len) return true;
+        unsigned count = read_be(cff + pos, 2);
+        if (count == 0) { pos += 2; if (which == 1) return false; continue; }
+        int off_size = cff[pos + 2];
+        if (off_size < 1 || off_size > 4) return true;
+        size_t offsets = pos + 3, data = offsets + ((size_t)count + 1) * off_size - 1;
+        if (offsets + ((size_t)count + 1) * off_size > len) return true;
+        if (which == 0) {
+            pos = data + read_be(cff + offsets + (size_t)count * off_size, off_size);
+            continue;
+        }
+        size_t start = data + read_be(cff + offsets, off_size), end = data + read_be(cff + offsets + off_size, off_size);
+        if (start > end || end > len) return true;
+        // Walk the DICT's operands and operators.
+        for (size_t k = start; k < end;) {
+            unsigned char b = cff[k];
+            if (b == 12) {
+                if (k + 1 < end && cff[k + 1] == 30) return true;
+                k += 2;
+            } else if (b <= 21) k += 1;
+            else if (b == 28) k += 3;
+            else if (b == 29) k += 5;
+            else if (b == 30) { k++; while (k < end && (cff[k] & 0x0f) != 0x0f && (cff[k] >> 4) != 0x0f) k++; k++; }
+            else if (b >= 32 && b <= 246) k += 1;
+            else if (b >= 247 && b <= 254) k += 2;
+            else k += 1;
+        }
+        return false;
+    }
+    return true;
+}
+
+// Refuses a font that can't be subset and embedded by glyph id here.
+static void check_embeddable(fz_context *ctx, const unsigned char *data, size_t len) {
+    if (!data || len < 12 || len > OPDF_MAX_FONT_BYTES) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That font can't be embedded");
+    size_t n;
+    const unsigned char *cff = sfnt_table(data, len, "CFF ", &n);
+    if (cff && cff_is_cid_keyed(cff, n)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That font (CID-keyed) can't be embedded");
+    if (!cff && !sfnt_table(data, len, "glyf", &n)) fz_throw(ctx, FZ_ERROR_ARGUMENT, "That font has no outlines to embed");
+}
+
+// Embeds the sfnt in `data`, subset to the glyphs given, with a ToUnicode
+// mapping each to its character, as a Type0 Identity-H font (so text is
+// written as 2-byte glyph ids). `advances`, if given, gets each glyph's
+// advance (in em). Returns the font (kept).
+static pdf_obj *embed_subset_gids(fz_context *ctx, pdf_document *pdf, const unsigned char *data, size_t len,
+                                  const int *gids_in, const int *unicode_in, int count, float *advances) {
+    check_embeddable(ctx, data, len);
     fz_buffer *buf = NULL, *subset = NULL, *tounicode = NULL;
     fz_font *full = NULL, *small = NULL;
     pdf_obj *font = NULL;
@@ -3378,26 +3568,18 @@ static pdf_obj *embed_subset_font(fz_context *ctx, pdf_document *pdf, const unsi
         full = fz_new_font_from_buffer(ctx, NULL, buf, 0, 0);
         if (fz_font_flags(full)->never_embed) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The font's licence doesn't allow it to be embedded");
         // Distinct glyphs, with glyph 0 first (the subsetter keeps numbering).
-        gids = fz_malloc_array(ctx, t->count + 1, int);
-        unis = fz_malloc_array(ctx, t->count + 1, int);
+        gids = fz_malloc_array(ctx, count + 1, int);
+        unis = fz_malloc_array(ctx, count + 1, int);
         int n = 0;
-        gids[n++] = 0;
-        unis[0] = 0;
-        for (int i = 0; i < t->count; i++) {
-            if (t->len[i]) continue;
-            int gid = fz_encode_character(ctx, full, t->unicode[i]);
-            if (gid <= 0 && t->unicode[i] != ' ') {
-                char utf[8] = { 0 };
-                fz_runetochar(utf, t->unicode[i]);
-                fz_throw(ctx, FZ_ERROR_ARGUMENT, "No font here has the character “%s”", utf);
-            }
-            t->gid[i] = gid;
+        gids[n] = 0;
+        unis[n++] = 0;
+        for (int i = 0; i < count; i++) {
+            if (advances) advances[i] = fz_advance_glyph(ctx, full, gids_in[i], 0);
             bool seen = false;
-            for (int j = 0; j < n && !seen; j++) seen = gids[j] == gid;
+            for (int j = 0; j < n && !seen; j++) seen = gids[j] == gids_in[i];
             if (!seen) {
-                gids[n] = gid;
-                unis[n] = t->unicode[i];
-                n++;
+                gids[n] = gids_in[i];
+                unis[n++] = unicode_in[i];
             }
         }
         subset = fz_subset_ttf_for_gids(ctx, buf, gids, n, 0, 1);
@@ -3419,6 +3601,50 @@ static pdf_obj *embed_subset_font(fz_context *ctx, pdf_document *pdf, const unsi
         pdf_drop_obj(ctx, font);
         fz_rethrow(ctx);
     }
+    return font;
+}
+
+// Embeds the font in `data` for the characters the plan draws with it:
+// subset to those glyphs, with a ToUnicode for them, as a Type0
+// Identity-H font. Fills in the plan's glyph ids; returns the font (kept).
+static pdf_obj *embed_subset_font(fz_context *ctx, pdf_document *pdf, const unsigned char *data, size_t len, text_plan *t) {
+    if (!data || len < 12 || len > OPDF_MAX_FONT_BYTES) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No font was given for characters the text's own font doesn't have");
+    fz_buffer *buf = NULL;
+    fz_font *full = NULL;
+    int *gids = NULL, *unis = NULL;
+    pdf_obj *font = NULL;
+    fz_var(buf);
+    fz_var(full);
+    fz_var(gids);
+    fz_var(unis);
+    fz_try(ctx) {
+        buf = fz_new_buffer_from_copied_data(ctx, data, len);
+        full = fz_new_font_from_buffer(ctx, NULL, buf, 0, 0);
+        gids = fz_malloc_array(ctx, t->count + 1, int);
+        unis = fz_malloc_array(ctx, t->count + 1, int);
+        int n = 0;
+        for (int i = 0; i < t->count; i++) {
+            if (t->len[i]) continue;
+            int gid = fz_encode_character(ctx, full, t->unicode[i]);
+            if (gid <= 0 && t->unicode[i] != ' ') {
+                char utf[8] = { 0 };
+                fz_runetochar(utf, t->unicode[i]);
+                fz_throw(ctx, FZ_ERROR_ARGUMENT, "No font here has the character “%s”", utf);
+            }
+            t->gid[i] = gid;
+            gids[n] = gid;
+            unis[n++] = t->unicode[i];
+        }
+        font = embed_subset_gids(ctx, pdf, data, len, gids, unis, n, NULL);
+    }
+    fz_always(ctx) {
+        fz_drop_buffer(ctx, buf);
+        fz_drop_font(ctx, full);
+        fz_free(ctx, gids);
+        fz_free(ctx, unis);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
     return font;
 }
 
@@ -6495,4 +6721,281 @@ void opdf_signatures_free(opdf_signature *items, int count) {
         free(items[i].location);
     }
     free(items);
+}
+
+// --- Replacing a paragraph ----------------------------------------------------
+
+typedef struct {
+    const opdf_glyph_run *runs;
+    int run_count;
+    const unsigned int *codes;
+    const unsigned char *lens;    // NULL entries' fonts are embedded: 2-byte glyph ids
+    const float *xs;
+    float *advances;              // per glyph, in em
+    char (*names)[32];            // each font's resource name
+    bool *embedded;               // per font
+    const opdf_glyph_ref *drops;
+    int drop_count;
+} text_draw;
+
+static void configure_text_draw(content_proc *p, void *arg);
+
+// Draws the runs at the end of the page: in page space (the page's own
+// transform undone), each glyph placed exactly where the layout put it.
+static void emit_runs(fz_context *ctx, content_proc *p, void *arg) {
+    text_draw *t = arg;
+    pdf_processor *o = CHAIN(p);
+    if (t->run_count == 0) return;
+    fz_matrix inv = fz_invert_matrix(p->page_ctm);
+    o->op_q(ctx, o);
+    o->op_cm(ctx, o, inv.a, inv.b, inv.c, inv.d, inv.e, inv.f);
+    o->op_BT(ctx, o);
+    o->op_Tc(ctx, o, 0);
+    o->op_Tw(ctx, o, 0);
+    o->op_Tz(ctx, o, 100);
+    o->op_Ts(ctx, o, 0);
+    o->op_Tr(ctx, o, 0);
+    pdf_obj *array = NULL;
+    fz_buffer *seg = NULL;
+    fz_var(array);
+    fz_var(seg);
+    fz_try(ctx) {
+        seg = fz_new_buffer(ctx, 64);
+        for (int r = 0; r < t->run_count; r++) {
+            const opdf_glyph_run *run = &t->runs[r];
+            if (run->count <= 0) continue;
+            o->op_Tf(ctx, o, t->names[run->font], NULL, run->size);
+            if (run->color_n == 1 || run->color_n == 3 || run->color_n == 4) emit_color(ctx, p, run->color_n, run->color);
+            else o->op_g(ctx, o, 0);
+            o->op_Tm(ctx, o, 1, 0, 0, -1, t->xs[run->first], run->y);
+            array = pdf_new_array(ctx, p->doc, 8);
+            for (int g = run->first; g < run->first + run->count; g++) {
+                unsigned char code[4];
+                int n;
+                if (t->embedded[run->font]) {
+                    n = 2;
+                    code[0] = (unsigned char)(t->codes[g] >> 8);
+                    code[1] = (unsigned char)t->codes[g];
+                } else {
+                    n = t->lens[g];
+                    for (int i = 0; i < n; i++) code[i] = (unsigned char)(t->codes[g] >> (8 * (n - 1 - i)));
+                }
+                fz_append_data(ctx, seg, code, (size_t)n);
+                if (g + 1 < run->first + run->count) {
+                    // A move left by this much puts the next glyph where it goes.
+                    float adj = (t->xs[g] + t->advances[g] * run->size - t->xs[g + 1]) * 1000 / run->size;
+                    if (fabsf(adj) > 0.01f) {
+                        pdf_array_push_string(ctx, array, (char *)seg->data, seg->len);
+                        fz_clear_buffer(ctx, seg);
+                        pdf_array_push_real(ctx, array, adj);
+                    }
+                }
+            }
+            if (seg->len) pdf_array_push_string(ctx, array, (char *)seg->data, seg->len);
+            fz_clear_buffer(ctx, seg);
+            o->op_TJ(ctx, o, array);
+            pdf_drop_obj(ctx, array);
+            array = NULL;
+        }
+        o->op_ET(ctx, o);
+        // Underlines, as rules under the runs.
+        for (int r = 0; r < t->run_count; r++) {
+            const opdf_glyph_run *run = &t->runs[r];
+            if (!run->underline || run->count <= 0) continue;
+            int last = run->first + run->count - 1;
+            float x0 = t->xs[run->first], x1 = t->xs[last] + t->advances[last] * run->size;
+            if (run->color_n == 1 || run->color_n == 3 || run->color_n == 4) emit_color(ctx, p, run->color_n, run->color);
+            else o->op_g(ctx, o, 0);
+            o->op_re(ctx, o, x0, run->y + 0.08f * run->size, x1 - x0, 0.05f * run->size);
+            o->op_f(ctx, o);
+        }
+        o->op_Q(ctx, o);
+    }
+    fz_always(ctx) {
+        pdf_drop_obj(ctx, array);
+        fz_drop_buffer(ctx, seg);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+static void configure_text_draw(content_proc *p, void *arg) {
+    text_draw *t = arg;
+    p->drops = t->drops;
+    p->drop_count = t->drop_count;
+    p->emit_end = emit_runs;
+    p->arg = t;
+}
+
+// The glyphs to drop, with any copies drawn within half a point of them with
+// the same character (fake bold, shadows), sorted. Returns how many.
+static int glyphs_to_drop(fz_context *ctx, pdf_document *pdf, pdf_page *page, const opdf_glyph_ref *drop, int drop_count,
+                          opdf_glyph_ref **out) {
+    content_proc *p = NULL;
+    content_glyph *dropped = NULL;
+    glyph_grid grid = { 0 };
+    opdf_glyph_ref *all = NULL, *given = NULL;
+    int n = 0;
+    fz_var(p);
+    fz_var(dropped);
+    fz_var(all);
+    fz_var(given);
+    fz_try(ctx) {
+        given = fz_malloc_array(ctx, drop_count, opdf_glyph_ref);
+        memcpy(given, drop, (size_t)drop_count * sizeof *given);
+        qsort(given, (size_t)drop_count, sizeof *given, compare_glyph_refs);
+        p = new_content_proc(ctx, pdf, page, NULL);
+        p->log_glyphs = true;
+        process_page_content(ctx, pdf, page, p);
+        all = fz_malloc_array(ctx, drop_count + p->glyph_count + 1, opdf_glyph_ref);
+        dropped = fz_malloc_array(ctx, drop_count + 1, content_glyph);
+        int d = 0;
+        for (int i = 0; i < p->glyph_count; i++) {
+            opdf_glyph_ref key = { p->glyphs[i].op, p->glyphs[i].index };
+            if (bsearch(&key, given, (size_t)drop_count, sizeof key, compare_glyph_refs) && d < drop_count) dropped[d++] = p->glyphs[i];
+        }
+        memcpy(all, given, (size_t)drop_count * sizeof *all);
+        n = drop_count;
+        grid_build(ctx, &grid, dropped, d);
+        for (int i = 0; i < p->glyph_count; i++) {
+            const content_glyph *g = &p->glyphs[i];
+            opdf_glyph_ref key = { g->op, g->index };
+            if (bsearch(&key, given, (size_t)drop_count, sizeof key, compare_glyph_refs)) continue;
+            int cx = (int)floorf(g->x), cy = (int)floorf(g->y);
+            bool shadow = false;
+            for (int dx = -1; dx <= 1 && !shadow; dx++)
+                for (int dy = -1; dy <= 1 && !shadow; dy++)
+                    for (int j = grid.head[grid_key(cx + dx, cy + dy) & grid.mask]; j >= 0 && !shadow; j = grid.next[j]) {
+                        float ddx = dropped[j].x - g->x, ddy = dropped[j].y - g->y;
+                        shadow = dropped[j].ucs == g->ucs && ddx * ddx + ddy * ddy <= 0.25f;
+                    }
+            if (shadow) all[n++] = key;
+        }
+        qsort(all, (size_t)n, sizeof *all, compare_glyph_refs);
+    }
+    fz_always(ctx) {
+        grid_free(&grid);
+        pdf_drop_processor(ctx, &p->super);
+        fz_free(ctx, dropped);
+        fz_free(ctx, given);
+    }
+    fz_catch(ctx) {
+        fz_free(ctx, all);
+        fz_rethrow(ctx);
+    }
+    *out = all;
+    return n;
+}
+
+bool opdf_paragraph_replace(opdf_doc *d, int page_number, const opdf_glyph_ref *drop, int drop_count,
+                            const opdf_text_font *fonts, int font_count,
+                            const opdf_glyph_run *runs, int run_count,
+                            const unsigned int *codes, const unsigned char *lens, const float *xs, const int *unicode, int glyph_count,
+                            const char *operation, opdf_error *err) {
+    clear_error(err);
+    if (drop_count < 0 || drop_count > OPDF_MAX_PAGE_CHARS || font_count < 0 || font_count > OPDF_MAX_PARA_FONTS
+        || run_count < 0 || run_count > OPDF_MAX_TEXT_GLYPHS || glyph_count < 0 || glyph_count > OPDF_MAX_TEXT_GLYPHS
+        || (drop_count && !drop) || (font_count && !fonts) || (run_count && !runs)
+        || (glyph_count && (!codes || !lens || !xs || !unicode))) {
+        set_message(err, "The text is too long, or isn't complete");
+        return false;
+    }
+    for (int r = 0; r < run_count; r++) {
+        const opdf_glyph_run *run = &runs[r];
+        bool ok = run->font >= 0 && run->font < font_count && run->first >= 0 && run->count >= 0
+            && run->first <= glyph_count && run->count <= glyph_count - run->first
+            && run->size >= 0.5f && run->size <= 1000 && isfinite(run->y);
+        for (int g = run->first; ok && g < run->first + run->count; g++)
+            ok = isfinite(xs[g]) && (fonts[run->font].resource ? lens[g] >= 1 && lens[g] <= 4 : codes[g] <= 0xffff);
+        if (!ok) {
+            set_message(err, "The text isn't laid out properly");
+            return false;
+        }
+    }
+    text_draw t = { runs, run_count, codes, lens, xs };
+    opdf_glyph_ref *drops = NULL;
+    pdf_font_desc **descs = NULL;
+    int *gids = NULL, *unis = NULL;
+    float *adv = NULL;
+    fz_var(drops);
+    fz_var(descs);
+    fz_var(gids);
+    fz_var(unis);
+    fz_var(adv);
+    WITH_PAGE_OPERATION(d, page_number, operation, err, {
+        fz_try(ctx) {
+            t.names = fz_calloc(ctx, (size_t)font_count + 1, sizeof *t.names);
+            t.embedded = fz_calloc(ctx, (size_t)font_count + 1, sizeof *t.embedded);
+            t.advances = fz_calloc(ctx, (size_t)glyph_count + 1, sizeof *t.advances);
+            descs = fz_calloc(ctx, (size_t)font_count + 1, sizeof *descs);
+            gids = fz_calloc(ctx, (size_t)glyph_count + 1, sizeof *gids);
+            unis = fz_calloc(ctx, (size_t)glyph_count + 1, sizeof *unis);
+            adv = fz_calloc(ctx, (size_t)glyph_count + 1, sizeof *adv);
+            pdf_obj *page_fonts = pdf_dict_get(ctx, pdf_page_resources(ctx, pp), PDF_NAME(Font));
+            for (int f = 0; f < font_count; f++) {
+                if (fonts[f].resource) {
+                    // One of the page's fonts, by the name its content uses.
+                    pdf_obj *dict = pdf_dict_gets(ctx, page_fonts, fonts[f].resource);
+                    if (!pdf_is_dict(ctx, dict) || pdf_name_eq(ctx, pdf_dict_get(ctx, dict, PDF_NAME(Subtype)), PDF_NAME(Type3)))
+                        fz_throw(ctx, FZ_ERROR_ARGUMENT, "The page has no font named %s", fonts[f].resource);
+                    descs[f] = pdf_load_font(ctx, pdf, NULL, dict);
+                    fz_strlcpy(t.names[f], fonts[f].resource, sizeof t.names[f]);
+                    continue;
+                }
+                // A font to embed, subset to the glyphs its runs use.
+                int n = 0;
+                for (int r = 0; r < run_count; r++) {
+                    if (runs[r].font != f) continue;
+                    for (int g = runs[r].first; g < runs[r].first + runs[r].count; g++) {
+                        gids[n] = (int)codes[g];
+                        unis[n++] = unicode[g];
+                    }
+                }
+                if (n == 0) continue;
+                pdf_obj *font = embed_subset_gids(ctx, pdf, fonts[f].data, fonts[f].len, gids, unis, n, adv);
+                fz_try(ctx) {
+                    pdf_obj *res = own_resources(ctx, pdf, pp, PDF_NAME(Font));
+                    new_resource_name(ctx, res, "OPDFTx", t.names[f]);
+                    pdf_dict_puts(ctx, res, t.names[f], font);
+                    page_fonts = res;
+                }
+                fz_always(ctx)
+                    pdf_drop_obj(ctx, font);
+                fz_catch(ctx)
+                    fz_rethrow(ctx);
+                t.embedded[f] = true;
+                n = 0;
+                for (int r = 0; r < run_count; r++) {
+                    if (runs[r].font != f) continue;
+                    for (int g = runs[r].first; g < runs[r].first + runs[r].count; g++) t.advances[g] = adv[n++];
+                }
+            }
+            // Advances in the page's fonts, from their widths.
+            for (int r = 0; r < run_count; r++) {
+                pdf_font_desc *desc = descs[runs[r].font];
+                if (!desc) continue;
+                for (int g = runs[r].first; g < runs[r].first + runs[r].count; g++) {
+                    int cid = pdf_lookup_cmap(desc->encoding, codes[g]);
+                    t.advances[g] = pdf_lookup_hmtx(ctx, desc, cid < 0 ? 0 : cid).w * 0.001f;
+                }
+            }
+            t.drop_count = drop_count ? glyphs_to_drop(ctx, pdf, pp, drop, drop_count, &drops) : 0;
+            t.drops = drops;
+            rewrite_page_content(ctx, pdf, pp, configure_text_draw, &t);
+        }
+        fz_always(ctx) {
+            for (int f = 0; descs && f < font_count; f++) pdf_drop_font(ctx, descs[f]);
+            fz_free(ctx, descs);
+            fz_free(ctx, drops);
+            fz_free(ctx, gids);
+            fz_free(ctx, unis);
+            fz_free(ctx, adv);
+            fz_free(ctx, t.names);
+            fz_free(ctx, t.embedded);
+            fz_free(ctx, t.advances);
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    return !(err && err->code);
 }
