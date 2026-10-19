@@ -27,6 +27,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     var restrictionAccessory: NSTitlebarAccessoryViewController?
     var restrictionLabel: NSTextField?
     let contentBar = ContentBarViewController()
+    let formatBar = TextFormatBarViewController()
     var contentAccessory: NSTitlebarAccessoryViewController?
     private var split: NSSplitViewController?
     private var sidebarItem: NSSplitViewItem?

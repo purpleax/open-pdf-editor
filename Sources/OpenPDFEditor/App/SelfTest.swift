@@ -474,6 +474,21 @@ enum SelfTest {
             document.undoManager?.undo()
             say("after undo: \(viewer.model.paragraphs(page: 0)?.paragraphs.first { $0.text.hasPrefix("The quick brown fox") }?.lines.count ?? -1) lines")
             document.undoManager?.redo()
+            // Bold on one word: it leaves the page's font for a Mac one; the rest stays in it.
+            if let para = viewer.model.paragraphs(page: 0)?.paragraphs.first(where: { $0.text.hasPrefix("The quick brown fox") }) {
+                click(viewer, page: 0, at: CGPoint(x: para.rect.minX + 2, y: para.lines[0].rect.midY))
+                if let editor = viewer.pagesView.textEditor {
+                    editor.textView.setSelectedRange(NSRange(location: 4, length: 5))
+                    controller.formatBar.debugBold()
+                    say("bar shows bold: \(controller.formatBar.debugBoldShown)")
+                    editor.finish()
+                }
+                let page = viewer.model.paragraphs(page: 0)
+                if let p = page?.paragraphs.first(where: { $0.text.hasPrefix("The quick brown fox") }), let fonts = page?.fonts {
+                    let resource = { (i: Int) in p.characters[i].font.map { fonts[$0].resource } ?? "-" }
+                    say("after bold: 'q' in \(resource(4)), 'b' in \(resource(10))")
+                }
+            }
         }
         // Page numbers and a watermark, through the sheets.
         controller.addPageNumbers(nil)

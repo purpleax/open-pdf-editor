@@ -132,7 +132,11 @@ final class PagesView: NSView, NSMenuItemValidation {
         }
     }
     /// The paragraph being edited, if any.
-    var textEditor: ParagraphEditor?
+    var textEditor: ParagraphEditor? {
+        didSet { if textEditor !== oldValue { onTextEditorChange?(textEditor) } }
+    }
+    /// For the formatting bar.
+    var onTextEditorChange: ((ParagraphEditor?) -> Void)?
     var selectedContent: ContentRef? {
         didSet {
             guard selectedContent != oldValue else { return }

@@ -7,6 +7,7 @@ extension DocumentWindowController {
         guard contentAccessory == nil, let window, let viewer else { return }
         let accessory = NSTitlebarAccessoryViewController()
         accessory.layoutAttribute = .bottom
+        contentBar.formatControls = formatBar.view
         accessory.view = contentBar.view
         accessory.isHidden = true
         window.addTitlebarAccessoryViewController(accessory)
@@ -16,6 +17,7 @@ extension DocumentWindowController {
         viewer.onContentSelectionChange = { [weak self] ref in self?.inspector?.show(content: ref) }
         viewer.onMakeLink = { [weak self] rect, page in self?.makeLink(in: rect, onPage: page) }
         viewer.onMakeImage = { [weak self] rect, page in self?.makeImage(in: rect, onPage: page) }
+        viewer.pagesView.onTextEditorChange = { [weak self] editor in self?.formatBar.editor = editor }
     }
 
     func setEditingContent(_ editing: Bool) {

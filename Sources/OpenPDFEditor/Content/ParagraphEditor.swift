@@ -54,6 +54,8 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
     private var ended = false
     /// Called once: true to commit, false to drop the changes.
     var onEnd: ((ParagraphEditor, Bool) -> Void)?
+    /// The selection or its style changed (for the formatting bar).
+    var onSelectionChange: (() -> Void)?
 
     /// Editing a paragraph. `pageBounds` places a one-line paragraph's box.
     init(paragraph: Paragraph, fonts: [ParagraphFont], pageBounds: CGRect, toView: CGAffineTransform,
@@ -259,8 +261,12 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
     }
 
     /// Characters still in a page font get its width there: their kern is
-    /// the PDF width less the Mac font's.
+    /// the PDF width less the Mac font's. A character given another font
+    /// family, bold or italic (from the formatting bar, the Format menu or
+    /// the Fonts panel) is no longer in its page font; one given another
+    /// colour no longer has its fill as drawn.
     private func applyKerning(in range: NSRange) {
+        normalize(in: range)
         let text = storage.string as NSString
         guard range.length > 0, NSMaxRange(range) <= text.length else { return }
         var i = range.location
@@ -281,6 +287,101 @@ final class ParagraphEditor: NSObject, NSTextStorageDelegate, NSTextViewDelegate
             }
             storage.addAttribute(.kern, value: pdf * font.pointSize - advance.width, range: composed)
         }
+    }
+
+    private var matched: [String: NSFont] = [:]
+
+    private func normalize(in range: NSRange) {
+        guard range.length > 0, NSMaxRange(range) <= storage.length else { return }
+        storage.enumerateAttributes(in: range) { attributes, sub, _ in
+            if let f = attributes[.pdfFont] as? Int, let font = attributes[.font] as? NSFont {
+                let key = "\(f)"
+                let match = matched[key] ?? {
+                    let m = f < fonts.count ? FontFile.match(fonts[f], size: 12) as NSFont : font
+                    matched[key] = m
+                    return m
+                }()
+                let traits: NSFontTraitMask = [.boldFontMask, .italicFontMask]
+                let have = NSFontManager.shared.traits(of: font).intersection(traits)
+                let want = NSFontManager.shared.traits(of: match).intersection(traits)
+                if f >= fonts.count || font.familyName != match.familyName || have != want {
+                    storage.removeAttribute(.pdfFont, range: sub)
+                }
+            }
+            if let fill = attributes[.pdfFill] as? [CGFloat] {
+                let drawn = Self.color(fill)
+                let shown = ((attributes[.foregroundColor] as? NSColor) ?? .black).usingColorSpace(.sRGB)
+                if let shown, let drawn,
+                   abs(shown.redComponent - drawn.redComponent) + abs(shown.greenComponent - drawn.greenComponent) + abs(shown.blueComponent - drawn.blueComponent) > 0.01 {
+                    storage.removeAttribute(.pdfFill, range: sub)
+                }
+            }
+        }
+    }
+
+    static func color(_ fill: [CGFloat]) -> NSColor? {
+        switch fill.count {
+        case 1: NSColor(srgbRed: fill[0], green: fill[0], blue: fill[0], alpha: 1)
+        case 3: NSColor(srgbRed: fill[0], green: fill[1], blue: fill[2], alpha: 1)
+        case 4: NSColor(srgbRed: (1 - fill[0]) * (1 - fill[3]), green: (1 - fill[1]) * (1 - fill[3]), blue: (1 - fill[2]) * (1 - fill[3]), alpha: 1)
+        default: nil
+        }
+    }
+
+    // MARK: Formatting
+
+    /// The style at the caret, or at the start of the selection.
+    var currentAttributes: [NSAttributedString.Key: Any] {
+        let range = textView.selectedRange()
+        if range.length == 0 || storage.length == 0 { return textView.typingAttributes }
+        return storage.attributes(at: min(range.location, storage.length - 1), effectiveRange: nil)
+    }
+
+    /// Changes the selection's attributes (or what typing will use, with no
+    /// selection), as one step of the editor's undo.
+    func change(_ body: (inout [NSAttributedString.Key: Any]) -> Void) {
+        let range = textView.selectedRange()
+        if range.length == 0 {
+            var typing = textView.typingAttributes
+            body(&typing)
+            textView.typingAttributes = typing
+            onSelectionChange?()
+            return
+        }
+        guard textView.shouldChangeText(in: range, replacementString: nil) else { return }
+        storage.beginEditing()
+        storage.enumerateAttributes(in: range) { attributes, sub, _ in
+            var changed = attributes
+            body(&changed)
+            storage.setAttributes(changed, range: sub)
+        }
+        storage.endEditing()
+        textView.didChangeText()
+        onSelectionChange?()
+    }
+
+    /// The paragraph's alignment (it's one paragraph: all of it).
+    func setAlignment(_ alignment: NSTextAlignment) {
+        let all = NSRange(location: 0, length: storage.length)
+        guard textView.shouldChangeText(in: all, replacementString: nil) else { return }
+        storage.beginEditing()
+        storage.enumerateAttribute(.paragraphStyle, in: all) { value, sub, _ in
+            let style = ((value as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            style.alignment = alignment
+            storage.addAttribute(.paragraphStyle, value: style, range: sub)
+        }
+        storage.endEditing()
+        var typing = textView.typingAttributes
+        let style = ((typing[.paragraphStyle] as? NSParagraphStyle)?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+        style.alignment = alignment
+        typing[.paragraphStyle] = style
+        textView.typingAttributes = typing
+        textView.didChangeText()
+        onSelectionChange?()
+    }
+
+    nonisolated func textViewDidChangeSelection(_ notification: Notification) {
+        MainActor.assumeIsolated { onSelectionChange?() }
     }
 
     /// A character's width in a page font (in em), if the font has it.

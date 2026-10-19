@@ -188,6 +188,34 @@ enum MainMenu {
         forms.addItem(.separator())
         forms.addItem(withTitle: "Flatten Form…", action: #selector(DocumentWindowController.flattenForm(_:)), keyEquivalent: "")
 
+        // Format: for text being edited (the text view and the Fonts panel do the work).
+        let format = submenu(in: main, title: "Format")
+        let font = NSMenu(title: "Font")
+        format.addItem(withTitle: "Font", action: nil, keyEquivalent: "").submenu = font
+        font.addItem(withTitle: "Show Fonts", action: #selector(NSFontManager.orderFrontFontPanel(_:)), keyEquivalent: "t").target = NSFontManager.shared
+        let bold = font.addItem(withTitle: "Bold", action: #selector(NSFontManager.addFontTrait(_:)), keyEquivalent: "b")
+        bold.target = NSFontManager.shared
+        bold.tag = Int(NSFontTraitMask.boldFontMask.rawValue)
+        let italic = font.addItem(withTitle: "Italic", action: #selector(NSFontManager.addFontTrait(_:)), keyEquivalent: "i")
+        italic.target = NSFontManager.shared
+        italic.tag = Int(NSFontTraitMask.italicFontMask.rawValue)
+        font.addItem(withTitle: "Underline", action: #selector(NSText.underline(_:)), keyEquivalent: "u")
+        font.addItem(.separator())
+        let bigger = font.addItem(withTitle: "Bigger", action: #selector(NSFontManager.modifyFont(_:)), keyEquivalent: "")
+        bigger.target = NSFontManager.shared
+        bigger.tag = Int(NSFontAction.sizeUpFontAction.rawValue)
+        let smaller = font.addItem(withTitle: "Smaller", action: #selector(NSFontManager.modifyFont(_:)), keyEquivalent: "")
+        smaller.target = NSFontManager.shared
+        smaller.tag = Int(NSFontAction.sizeDownFontAction.rawValue)
+        font.addItem(.separator())
+        font.addItem(withTitle: "Show Colors", action: #selector(NSApplication.orderFrontColorPanel(_:)), keyEquivalent: "C")
+        let text = NSMenu(title: "Text")
+        format.addItem(withTitle: "Text", action: nil, keyEquivalent: "").submenu = text
+        text.addItem(withTitle: "Align Left", action: #selector(NSText.alignLeft(_:)), keyEquivalent: "{")
+        text.addItem(withTitle: "Center", action: #selector(NSText.alignCenter(_:)), keyEquivalent: "|")
+        text.addItem(withTitle: "Justify", action: #selector(NSTextView.alignJustified(_:)), keyEquivalent: "")
+        text.addItem(withTitle: "Align Right", action: #selector(NSText.alignRight(_:)), keyEquivalent: "}")
+
         let window = submenu(in: main, title: "Window")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         window.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")

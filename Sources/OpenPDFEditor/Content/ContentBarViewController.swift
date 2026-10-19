@@ -9,6 +9,8 @@ final class ContentBarViewController: NSViewController {
 
     var onToolChosen: ((ContentTool) -> Void)?
     var onDone: (() -> Void)?
+    /// The text formatting controls, between the tools and Done.
+    var formatControls: NSView?
 
     override func loadView() {
         tools.segmentCount = ContentTool.allCases.count
@@ -26,7 +28,7 @@ final class ContentBarViewController: NSViewController {
         done.controlSize = .small
         let label = NSTextField(labelWithString: "Editing page content")
         label.textColor = .secondaryLabelColor
-        let stack = NSStackView(views: [label, tools, done])
+        let stack = NSStackView(views: [label, tools] + (formatControls.map { [$0] } ?? []) + [done])
         stack.orientation = .horizontal
         stack.spacing = 12
         stack.edgeInsets = NSEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
