@@ -28,6 +28,7 @@ enum MainMenu {
         app.addItem(withTitle: "Quit \(name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let file = submenu(in: main, title: "File")
+        file.addItem(withTitle: "New", action: #selector(AppDelegate.newBlankPDF(_:)), keyEquivalent: "n")
         file.addItem(withTitle: "Open…", action: #selector(NSDocumentController.openDocument(_:)), keyEquivalent: "o")
         let recent = file.addItem(withTitle: "Open Recent", action: nil, keyEquivalent: "")
         let recentMenu = NSMenu(title: "Open Recent")

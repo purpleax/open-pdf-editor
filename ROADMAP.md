@@ -25,6 +25,7 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Annotation replies and status | Replies are Text annotations with /IRT, and review status a hidden reply with /State and /StateModel Review, as Acrobat writes them. They are not drawn on the page; they appear in the Comments list. | 2026-10-19 |
 | Markup tools | A markup bar under the toolbar (View › Show Markup Toolbar, ⇧⌘A) with the tools, colour and line width, as in Preview; the inspector edits the selected annotation | 2026-10-19 |
 | Risky features | Any feature that adds a security risk (for example form JavaScript) gets a switch in a Settings window (⌘,) and is off until turned on. The phase that adds the first such feature adds the Settings window. Each one is named in its roadmap item, with what it exposes. Features already in the app that get a switch: opening web and email links, and converting non-PDF, non-image documents in Create PDF from Files. Saving attachments has none (it already warns and quarantines). | 2026-10-19 |
+| Welcome window | With no documents open (at launch, or reopened from the Dock), a welcome window shows the app's icon and name, with New PDF and Open… under them, instead of going straight to the Open panel. File › New (⌘N) makes an untitled PDF of one blank page (Letter in the US and Canada, A4 elsewhere). | 2026-10-19 |
 | Form JavaScript | Off, with no switch: values are set as typed, and calculated fields don't recalculate. Revisit only if asked. | 2026-10-19 |
 | Filling and editing forms | Filling is always on: with the Select tool, click a field to fill it in. Editing fields is a mode (Forms › Edit Fields, ⌥⌘F) with its own bar of field tools; fields are selected, moved, resized and deleted like annotations and set up in the inspector. | 2026-10-19 |
 | XFA | Not supported. Filling in a hybrid AcroForm/XFA form removes /XFA, so other apps show the values typed here. | 2026-10-19 |
@@ -136,6 +137,7 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] Links
   - Edit › Edit Content (⌥⌘E) shows the content bar. With the Link tool, drag out an area and choose a web or email address (http, https, mailto) or a page; links are outlined, and are selected, moved, resized, retargeted (inspector) and deleted like annotations. Each change is one undoable step. MuPDF's pdf_set_link_rect doesn't map page space to PDF space, so the bridge writes /Rect itself.
 - [ ] Edit text within a line: characters, font, size and colour
+- [x] Welcome window with New PDF and Open…, and File › New (asked for during the phase)
 - [x] Edit metadata
   - Title, Author, Subject and Keywords are edited in the inspector (one undoable step each), and ModDate is set. A file with XMP metadata gets a new XMP packet to match, keeping its PDF/A identification.
 

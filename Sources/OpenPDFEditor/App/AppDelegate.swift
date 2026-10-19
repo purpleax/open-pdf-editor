@@ -21,11 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSWindow.allowsAutomaticWindowTabbing = true
     }
 
-    // There are no untitled PDFs: when the app starts (or is reopened from
-    // the Dock) with no documents, show the Open panel instead, as Preview does.
+    // When the app starts (or is reopened from the Dock) with no documents,
+    // the welcome window offers a new PDF or opening one.
     func applicationShouldOpenUntitledFile(_ sender: NSApplication) -> Bool {
         #if SELFTEST
-        if ProcessInfo.processInfo.environment["OPDF_SELFTEST"] != nil { return false }
+        let environment = ProcessInfo.processInfo.environment
+        if environment["OPDF_SELFTEST"] != nil || environment["OPDF_SELFTEST_WELCOME"] != nil { return false }
         #endif
         return true
     }
@@ -37,8 +38,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationOpenUntitledFile(_ sender: NSApplication) -> Bool {
-        NSDocumentController.shared.openDocument(nil)
+        WelcomeWindowController.show()
         return true
+    }
+
+    /// File › New: an untitled PDF of one blank page (Letter in the US and
+    /// Canada, A4 elsewhere), saved wherever it's first saved to.
+    @objc func newBlankPDF(_ sender: Any?) {
+        let letter = ["US", "CA"].contains(Locale.current.region?.identifier ?? "")
+        let size = letter ? CGSize(width: 612, height: 792) : CGSize(width: 595, height: 842)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("opdf-new-\(UUID().uuidString)")
+        let url = folder.appendingPathComponent("Untitled.pdf")
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            try PDFFiles.writeBlank(to: url, pageSize: size)
+            let controller = NSDocumentController.shared
+            let document = try controller.makeDocument(for: nil, withContentsOf: url, ofType: "com.adobe.pdf")
+            // Untouched, it closes without asking to be saved.
+            document.updateChangeCount(.changeCleared)
+            controller.addDocument(document)
+            document.makeWindowControllers()
+            document.showWindows()
+        } catch {
+            NSAlert(error: error).runModal()
+        }
     }
 
     /// The tab bar's + button: there are no new PDFs to make yet, so it opens one.

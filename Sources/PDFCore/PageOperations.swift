@@ -107,6 +107,15 @@ public enum PDFFiles {
         guard ok else { throw EngineError(error) }
     }
 
+    /// Writes a new PDF of one blank page of `pageSize` points to `url`.
+    public static func writeBlank(to url: URL, pageSize: CGSize) throws {
+        var error = opdf_error()
+        let ok = url.withUnsafeFileSystemRepresentation { path in
+            path.map { opdf_write_blank($0, Float(pageSize.width), Float(pageSize.height), &error) } ?? false
+        }
+        guard ok else { throw EngineError(error) }
+    }
+
     /// Writes a smaller copy of the PDF at `source` to `url`: images are
     /// downsampled and recompressed, and unused and duplicate objects removed.
     public static func reduce(_ source: URL, password: String? = nil, quality: Quality, into url: URL,

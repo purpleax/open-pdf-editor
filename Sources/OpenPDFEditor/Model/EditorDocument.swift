@@ -41,6 +41,7 @@ final class EditorDocument: NSDocument, EditRecorder {
 
     override func makeWindowControllers() {
         addWindowController(DocumentWindowController(document: self))
+        WelcomeWindowController.dismiss()
     }
 
     /// The model, made once the document is unlocked.

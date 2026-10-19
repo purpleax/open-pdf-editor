@@ -4071,6 +4071,44 @@ bool opdf_convert_files(const char *const *paths, int count, const char *out_pat
     return ok;
 }
 
+bool opdf_write_blank(const char *path, float width, float height, opdf_error *err) {
+    clear_error(err);
+    allocator_owner allocator;
+    fz_alloc_context alloc;
+    fz_context *ctx = new_capped_context(&allocator, &alloc, NULL, NO_HANDLERS);
+    if (!ctx) {
+        set_no_context_error(err, &allocator);
+        release_budget(&allocator);
+        return false;
+    }
+    pdf_document *doc = NULL;
+    pdf_obj *page = NULL;
+    bool ok = false;
+    fz_var(doc);
+    fz_var(page);
+    fz_var(ok);
+    fz_try(ctx) {
+        if (!(width >= 72 && width <= 14400 && height >= 72 && height <= 14400))
+            fz_throw(ctx, FZ_ERROR_ARGUMENT, "Page size out of range");
+        doc = pdf_create_document(ctx);
+        page = pdf_add_page(ctx, doc, fz_make_rect(0, 0, width, height), 0, NULL, NULL);
+        pdf_insert_page(ctx, doc, -1, page);
+        pdf_write_options opts = pdf_default_write_options;
+        opts.do_compress = 1;
+        pdf_save_document(ctx, doc, path, &opts);
+        ok = true;
+    }
+    fz_always(ctx) {
+        pdf_drop_obj(ctx, page);
+        pdf_drop_document(ctx, doc);
+    }
+    fz_catch(ctx)
+        set_capped_error(err, ctx, &allocator);
+    fz_drop_context(ctx);
+    release_budget(&allocator);
+    return ok;
+}
+
 bool opdf_reduce_file(const char *in_path, const char *password, const char *out_path, int quality,
                       opdf_cancel *cancel, opdf_error *err) {
     clear_error(err);

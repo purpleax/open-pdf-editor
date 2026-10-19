@@ -17,6 +17,11 @@ enum SelfTest {
     }
 
     static func run() {
+        if let outPath = ProcessInfo.processInfo.environment["OPDF_SELFTEST_WELCOME"] {
+            out = URL(fileURLWithPath: outPath)
+            try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+            return welcomeSteps()
+        }
         guard let source = ProcessInfo.processInfo.environment["OPDF_SELFTEST"],
               let outPath = ProcessInfo.processInfo.environment["OPDF_SELFTEST_OUT"] else { return }
         out = URL(fileURLWithPath: outPath)
@@ -401,6 +406,30 @@ enum SelfTest {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                 if let url = document.fileURL, let saved = try? EngineDocument(url: url) {
                     say("saved: title \(saved.metadata("info:Title") ?? "none"), links \((try? saved.links(page: 0).count) ?? -1)")
+                }
+                finish()
+            }
+        }
+    }
+
+    /// The welcome window, then New PDF from it.
+    static func welcomeSteps() {
+        WelcomeWindowController.show()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard let window = NSApp.windows.first(where: { $0.windowController is WelcomeWindowController }) else {
+                say("FAIL no welcome window")
+                return finish()
+            }
+            snapshot(window, "welcome")
+            func buttons(_ view: NSView) -> [NSButton] { (view as? NSButton).map { [$0] } ?? view.subviews.flatMap(buttons) }
+            say("welcome buttons: \(buttons(window.contentView!).map(\.title))")
+            buttons(window.contentView!).first { $0.title == "New PDF" }?.performClick(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                let documents = NSDocumentController.shared.documents.compactMap { $0 as? EditorDocument }
+                say("documents: \(documents.count); welcome open: \(NSApp.windows.contains { $0.windowController is WelcomeWindowController && $0.isVisible })")
+                if let document = documents.first, let model = document.model {
+                    say("new document: \(document.displayName ?? "") untitled \(document.fileURL == nil) pages \(model.pageCount) size \(model.pageBounds.first?.size ?? .zero) editable \(model.isEditable)")
+                    if let window = document.windowControllers.first?.window { snapshot(window, "new-pdf") }
                 }
                 finish()
             }

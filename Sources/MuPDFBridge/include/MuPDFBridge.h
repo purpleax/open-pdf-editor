@@ -552,6 +552,10 @@ void opdf_cancel_free(opdf_cancel *cancel);
 bool opdf_convert_files(const char *const *paths, int count, const char *out_path, float width, float height,
                         bool allow_documents, opdf_cancel *cancel, opdf_error *err);
 
+// Writes a new PDF of one blank page of width x height points to path,
+// for a new document.
+bool opdf_write_blank(const char *path, float width, float height, opdf_error *err);
+
 // Writes a smaller copy of the PDF at in_path to out_path: images above a
 // resolution are downsampled and recompressed (quality 0 high, 1 medium,
 // 2 small), and unused or duplicate objects are removed.
