@@ -149,8 +149,8 @@ final class AnnotationController {
         return r
     }
 
-    /// Highlights, underlines or strikes through the selected text: one
-    /// annotation per page.
+    /// Highlights, underlines, strikes through or marks for redaction the
+    /// selected text: one annotation per page.
     func markText(_ tool: AnnotationTool, selection: TextSelection) throws -> AnnotationRef? {
         var created: AnnotationRef?
         for page in selection.start.page...selection.end.page {
@@ -191,6 +191,11 @@ final class AnnotationController {
             change.font = (size: ToolSettings.textSize, color: color)
             change.color = .some(nil)
             change.borderWidth = 0
+        case .redact:
+            // A click isn't an area.
+            guard rect.width >= 2, rect.height >= 2 else { return nil }
+            change.rect = clamp(rect, page: page)
+            change.color = .some(color)
         case .rectangle, .oval:
             if rect.width < 4 || rect.height < 4 { rect = CGRect(x: start.x, y: start.y, width: 120, height: 80) }
             change.rect = clamp(rect, page: page)

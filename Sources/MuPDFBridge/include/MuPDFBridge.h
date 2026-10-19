@@ -566,8 +566,13 @@ typedef struct {
     const char *owner_password;  // AES256: for full access (required)
     int permissions;             // AES256: PDF_PERM_* bits granted to the user password
     bool scrub;                  // also remove thumbnails, PieceInfo and document JavaScript, and rebuild XMP
+    bool redact;                 // first apply every Redact annotation (see opdf_rebase)
     int64_t now;                 // for the rebuilt XMP
 } opdf_rebase_options;
+// With `redact`, each page's Redact annotations are applied first: the text
+// (however slightly touched), image pixels and line art under them are
+// removed and black boxes drawn; links, annotations (with their replies) and
+// form fields under them are deleted, and those fields' values cleared.
 bool opdf_rebase(opdf_doc *doc, const opdf_rebase_options *options, opdf_error *err);
 
 bool opdf_can_undo(opdf_doc *doc);

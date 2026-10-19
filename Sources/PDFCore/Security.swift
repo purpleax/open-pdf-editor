@@ -32,11 +32,12 @@ extension EngineDocument {
     /// `scrub` thumbnails, PieceInfo and document JavaScript go and XMP is
     /// rebuilt. Undo history is cleared.
     public func rebase(encryption: Encryption = .keep, openPassword: String? = nil, scrub: Bool = false,
-                       now: Date = Date()) throws {
+                       redact: Bool = false, now: Date = Date()) throws {
         var error = opdf_error()
         var user = "", owner = ""
         var options = opdf_rebase_options()
         options.scrub = scrub
+        options.redact = redact
         options.now = Int64(now.timeIntervalSince1970)
         switch encryption {
         case .keep: options.encryption = Int32(OPDF_ENCRYPT_KEEP)
@@ -58,6 +59,16 @@ extension EngineDocument {
             }
         }
         guard ok else { throw EngineError(error) }
+    }
+}
+
+extension EngineDocument {
+    /// Applies every redaction mark: removes what is under them (text, image
+    /// pixels, line art, links, annotations, form fields and their values),
+    /// draws black boxes, and writes the document whole, scrubbed of hidden
+    /// leftovers, as `rebase` does. Undo history goes.
+    public func applyRedactions(openPassword: String? = nil, now: Date = Date()) throws {
+        try rebase(openPassword: openPassword, scrub: true, redact: true, now: now)
     }
 }
 

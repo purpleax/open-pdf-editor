@@ -133,9 +133,22 @@ final class EditorDocument: NSDocument, EditRecorder {
     /// Writes the document whole with new encryption (or none), from then on
     /// unlocked with `unlock`. Undo history goes: the change can't be undone.
     func changeSecurity(_ encryption: Encryption, unlock: String?) throws {
+        try rewrite { engine in
+            try engine.rebase(encryption: encryption, openPassword: password)
+            password = unlock
+        }
+    }
+
+    /// Removes everything under the redaction marks and writes the document
+    /// whole (see EngineDocument.applyRedactions). Can't be undone.
+    func applyRedactions() throws {
+        try rewrite { try $0.applyRedactions(openPassword: password) }
+    }
+
+    /// A change that writes the document whole: undo history goes.
+    private func rewrite(_ body: (EngineDocument) throws -> Void) throws {
         guard let engine, let model else { return }
-        try engine.rebase(encryption: encryption, openPassword: password)
-        password = unlock
+        try body(engine)
         undoManager?.removeAllActions()
         model.refreshPermissions()
         model.structureChanged()

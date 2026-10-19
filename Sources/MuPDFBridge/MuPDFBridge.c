@@ -1433,34 +1433,25 @@ bool opdf_annot_transform(opdf_doc *d, int page_number, int id, opdf_matrix matr
     return !(err && err->code);
 }
 
-bool opdf_annot_delete(opdf_doc *d, int page_number, int id, const char *operation, opdf_error *err) {
-    clear_error(err);
-    pdf_annot **annots = NULL;
-    int *parent = NULL;
-    bool *doomed = NULL;
-    fz_var(annots);
+// Deletes the annotations marked in `doomed` (in page order, `n` of them in
+// `annots`) with their replies, their replies' replies, and so on.
+static void delete_with_replies(fz_context *ctx, pdf_page *pp, int n, pdf_annot **annots, bool *doomed) {
+    int *parent = NULL, *ids = NULL, *irt = NULL, *order = NULL;
     fz_var(parent);
-    fz_var(doomed);
-    WITH_PAGE_OPERATION(d, page_number, operation, err, {
-        (void)find_annot(ctx, pp, id);
-        // The annotation, its replies, their replies, ...: each annotation's
-        // parent is found once, then marks spread down level by level.
-        int n = 0;
-        for (pdf_annot *a = pdf_first_annot(ctx, pp); a; a = pdf_next_annot(ctx, a)) n++;
-        annots = checked_calloc(ctx, (size_t)n, sizeof *annots);
+    fz_var(ids);
+    fz_var(irt);
+    fz_var(order);
+    fz_try(ctx) {
         parent = checked_calloc(ctx, (size_t)n, sizeof *parent);
-        doomed = checked_calloc(ctx, (size_t)n, sizeof *doomed);
-        int *ids = checked_calloc(ctx, (size_t)n, sizeof *ids);
-        int *irt = checked_calloc(ctx, (size_t)n, sizeof *irt);
-        int i = 0;
-        for (pdf_annot *a = pdf_first_annot(ctx, pp); a && i < n; a = pdf_next_annot(ctx, a), i++) {
-            annots[i] = a;
-            ids[i] = annot_id(ctx, a);
-            irt[i] = pdf_to_num(ctx, pdf_dict_get(ctx, pdf_annot_obj(ctx, a), PDF_NAME(IRT)));
-            doomed[i] = ids[i] == id;
+        ids = checked_calloc(ctx, (size_t)n, sizeof *ids);
+        irt = checked_calloc(ctx, (size_t)n, sizeof *irt);
+        order = checked_calloc(ctx, (size_t)n, sizeof *order);
+        int i;
+        for (i = 0; i < n; i++) {
+            ids[i] = annot_id(ctx, annots[i]);
+            irt[i] = pdf_to_num(ctx, pdf_dict_get(ctx, pdf_annot_obj(ctx, annots[i]), PDF_NAME(IRT)));
         }
         // Parent indices through a sorted copy of the ids: O(n log n).
-        int *order = checked_calloc(ctx, (size_t)n, sizeof *order);
         for (i = 0; i < n; i++) order[i] = i;
         for (int gap = n / 2; gap > 0; gap /= 2)   // shell sort by id
             for (i = gap; i < n; i++)
@@ -1477,9 +1468,6 @@ bool opdf_annot_delete(opdf_doc *d, int page_number, int id, const char *operati
                 if (v < irt[i]) lo = mid + 1; else hi = mid - 1;
             }
         }
-        free(order);
-        free(ids);
-        free(irt);
         // Each pass marks one more level; a chain of n needs at most n passes,
         // and cycles stop when nothing changes.
         bool changed = true;
@@ -1493,9 +1481,37 @@ bool opdf_annot_delete(opdf_doc *d, int page_number, int id, const char *operati
         }
         for (i = n - 1; i >= 0; i--)
             if (doomed[i]) pdf_delete_annot(ctx, pp, annots[i]);
+    }
+    fz_always(ctx) {
+        free(parent);
+        free(ids);
+        free(irt);
+        free(order);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+bool opdf_annot_delete(opdf_doc *d, int page_number, int id, const char *operation, opdf_error *err) {
+    clear_error(err);
+    pdf_annot **annots = NULL;
+    bool *doomed = NULL;
+    fz_var(annots);
+    fz_var(doomed);
+    WITH_PAGE_OPERATION(d, page_number, operation, err, {
+        (void)find_annot(ctx, pp, id);
+        int n = 0;
+        for (pdf_annot *a = pdf_first_annot(ctx, pp); a; a = pdf_next_annot(ctx, a)) n++;
+        annots = checked_calloc(ctx, (size_t)n, sizeof *annots);
+        doomed = checked_calloc(ctx, (size_t)n, sizeof *doomed);
+        int i = 0;
+        for (pdf_annot *a = pdf_first_annot(ctx, pp); a && i < n; a = pdf_next_annot(ctx, a), i++) {
+            annots[i] = a;
+            doomed[i] = annot_id(ctx, a) == id;
+        }
+        delete_with_replies(ctx, pp, i, annots, doomed);
     });
     free(annots);
-    free(parent);
     free(doomed);
     return !(err && err->code);
 }
@@ -3885,6 +3901,106 @@ static void scrub_document(fz_context *ctx, pdf_document *pdf, int64_t now) {
     if (pdf_is_stream(ctx, xmp)) rewrite_xmp(ctx, pdf, xmp, pdf_dict_get(ctx, trailer, PDF_NAME(Info)), now);
 }
 
+// The most marked areas one page may have: past this, redaction is refused.
+#define OPDF_MAX_REDACT_AREAS 20000
+
+static bool touches_any(const fz_rect *areas, int count, fz_rect r) {
+    for (int i = 0; i < count; i++)
+        if (!fz_is_empty_rect(fz_intersect_rect(areas[i], r))) return true;
+    return false;
+}
+
+// Clears a widget's field value, and its ancestors' (shared values included):
+// what was typed there is gone even where another widget showed it.
+static void clear_field_values(fz_context *ctx, pdf_obj *widget) {
+    pdf_obj *field = widget;
+    for (int depth = 0; field && depth < 32; depth++) {
+        pdf_dict_del(ctx, field, PDF_NAME(V));
+        pdf_dict_del(ctx, field, PDF_NAME(DV));
+        pdf_dict_del(ctx, field, PDF_NAME(RV));
+        field = pdf_dict_get(ctx, field, PDF_NAME(Parent));
+    }
+}
+
+// Applies the Redact annotations on every page (see opdf_rebase).
+static void redact_document(fz_context *ctx, pdf_document *doc) {
+    int pages = pdf_count_pages(ctx, doc);
+    pdf_page *page = NULL;
+    fz_rect *areas = NULL;
+    pdf_annot **annots = NULL;
+    bool *doomed = NULL;
+    fz_var(page);
+    fz_var(areas);
+    fz_var(annots);
+    fz_var(doomed);
+    fz_try(ctx) {
+        for (int p = 0; p < pages; p++) {
+            page = pdf_load_page(ctx, doc, p);
+            // The marked areas: each quad of a mark, or its rectangle (in page
+            // space, as pdf_annot_rect gives every annotation's).
+            int count = 0, n = 0;
+            for (pdf_annot *a = pdf_first_annot(ctx, page); a; a = pdf_next_annot(ctx, a)) {
+                n++;
+                if (pdf_annot_type(ctx, a) != PDF_ANNOT_REDACT) continue;
+                int q = pdf_annot_quad_point_count(ctx, a);
+                count += q > 0 ? q : 1;
+                if (count > OPDF_MAX_REDACT_AREAS) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many redaction marks", p + 1);
+            }
+            if (count > 0) {
+                areas = checked_calloc(ctx, (size_t)count, sizeof *areas);
+                int k = 0;
+                for (pdf_annot *a = pdf_first_annot(ctx, page); a && k < count; a = pdf_next_annot(ctx, a)) {
+                    if (pdf_annot_type(ctx, a) != PDF_ANNOT_REDACT) continue;
+                    int q = pdf_annot_quad_point_count(ctx, a);
+                    if (q > 0)
+                        for (int j = 0; j < q && k < count; j++) areas[k++] = fz_rect_from_quad(pdf_annot_quad_point(ctx, a, j));
+                    else
+                        areas[k++] = pdf_annot_rect(ctx, a);
+                }
+                count = k;
+                // Annotations and fields under the marks, with replies.
+                annots = checked_calloc(ctx, (size_t)n, sizeof *annots);
+                doomed = checked_calloc(ctx, (size_t)n, sizeof *doomed);
+                int i = 0;
+                for (pdf_annot *a = pdf_first_annot(ctx, page); a && i < n; a = pdf_next_annot(ctx, a), i++) {
+                    annots[i] = a;
+                    enum pdf_annot_type type = pdf_annot_type(ctx, a);
+                    if (type == PDF_ANNOT_REDACT || type == PDF_ANNOT_POPUP) continue;
+                    if (!touches_any(areas, count, pdf_annot_rect(ctx, a))) continue;
+                    doomed[i] = true;
+                }
+                for (pdf_annot *w = pdf_first_widget(ctx, page); w; w = pdf_next_widget(ctx, w))
+                    if (touches_any(areas, count, pdf_annot_rect(ctx, w))) clear_field_values(ctx, pdf_annot_obj(ctx, w));
+                delete_with_replies(ctx, page, i, annots, doomed);
+                for (pdf_annot *w = pdf_first_widget(ctx, page); w;) {
+                    pdf_annot *next = pdf_next_widget(ctx, w);
+                    if (touches_any(areas, count, pdf_annot_rect(ctx, w))) pdf_delete_annot(ctx, page, w);
+                    w = next;
+                }
+                pdf_redact_options opts = { 1, PDF_REDACT_IMAGE_PIXELS, PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED, PDF_REDACT_TEXT_REMOVE };
+                pdf_redact_page(ctx, doc, page, &opts);
+                pdf_update_page(ctx, page);
+                free(areas);
+                free(annots);
+                free(doomed);
+                areas = NULL;
+                annots = NULL;
+                doomed = NULL;
+            }
+            fz_drop_page(ctx, (fz_page *)page);
+            page = NULL;
+        }
+    }
+    fz_always(ctx) {
+        fz_drop_page(ctx, (fz_page *)page);
+        free(areas);
+        free(annots);
+        free(doomed);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
 bool opdf_rebase(opdf_doc *d, const opdf_rebase_options *o, opdf_error *err) {
     clear_error(err);
     fz_context *ctx = d->ctx;
@@ -3927,6 +4043,17 @@ bool opdf_rebase(opdf_doc *d, const opdf_rebase_options *o, opdf_error *err) {
             if (pdf_needs_password(ctx, copy) && !(o->open_password && pdf_authenticate_password(ctx, copy, o->open_password)))
                 fz_throw(ctx, FZ_ERROR_ARGUMENT, "Could not unlock the document's copy");
             source = copy;
+        }
+        if (o->redact) {
+            pdf_begin_operation(ctx, source, "Apply Redactions");
+            fz_try(ctx) {
+                redact_document(ctx, source);
+                pdf_end_operation(ctx, source);
+            }
+            fz_catch(ctx) {
+                pdf_abandon_operation(ctx, source);
+                fz_rethrow(ctx);
+            }
         }
         if (o->scrub) {
             pdf_begin_operation(ctx, source, "Clean Up");

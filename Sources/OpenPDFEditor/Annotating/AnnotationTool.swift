@@ -3,7 +3,7 @@ import PDFCore
 
 /// The tools in the markup bar.
 enum AnnotationTool: String, CaseIterable {
-    case select, highlight, underline, strikeOut, note, textBox, rectangle, oval, line, arrow, pen, stamp
+    case select, highlight, underline, strikeOut, note, textBox, rectangle, oval, line, arrow, pen, stamp, redact
 
     var title: String {
         switch self {
@@ -19,6 +19,7 @@ enum AnnotationTool: String, CaseIterable {
         case .arrow: "Arrow"
         case .pen: "Draw"
         case .stamp: "Stamp"
+        case .redact: "Redact"
         }
     }
 
@@ -36,6 +37,7 @@ enum AnnotationTool: String, CaseIterable {
         case .arrow: "arrow.up.right"
         case .pen: "scribble.variable"
         case .stamp: "seal"
+        case .redact: "eye.slash"
         }
     }
 
@@ -52,6 +54,7 @@ enum AnnotationTool: String, CaseIterable {
         case .line, .arrow: .line
         case .pen: .ink
         case .stamp: .stamp
+        case .redact: .redact
         }
     }
 
@@ -60,15 +63,15 @@ enum AnnotationTool: String, CaseIterable {
     /// Tools drawn by dragging out a shape.
     var drawsShape: Bool { [.textBox, .rectangle, .oval, .line, .arrow, .pen].contains(self) }
     /// Tools that stay chosen after use; the others go back to Select.
-    var staysActive: Bool { marksText || self == .pen }
+    var staysActive: Bool { marksText || self == .pen || self == .redact }
     var usesLineWidth: Bool { [.rectangle, .oval, .line, .arrow, .pen].contains(self) }
-    var usesColor: Bool { self != .select && self != .stamp }
+    var usesColor: Bool { ![.select, .stamp, .redact].contains(self) }
 
     var defaultColor: PDFColor {
         switch self {
         case .highlight, .note: .yellow
         case .underline: .green
-        case .strikeOut, .rectangle, .oval, .line, .arrow: .red
+        case .strikeOut, .rectangle, .oval, .line, .arrow, .redact: .red
         case .pen: .blue
         case .textBox, .select, .stamp: .black
         }
@@ -89,6 +92,7 @@ enum AnnotationTool: String, CaseIterable {
         case .arrow: "a"
         case .pen: "d"
         case .stamp: "m"
+        case .redact: "x"
         }
     }
 }

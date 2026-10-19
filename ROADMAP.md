@@ -37,6 +37,7 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Flatten Form | `pdf_bake_document` for widgets only, as one undoable step, saved incrementally like every change. | 2026-10-19 |
 | Signature fields | Made empty in 0.4.0; signing them is Phase 6. | 2026-10-19 |
 | Full rewrite ("rebase") | Redaction and security changes write the whole document again (garbage collected; scrubbed for redaction), reopen it from the new bytes and carry on from there. Undo history is cleared, and the alert says so first. Later saves are incremental on top of the clean bytes. | 2026-10-19 |
+| Redaction | Tools › Redact marks text (drag across it) or an area (drag anywhere else). Tools › Apply Redactions… removes, for good, whatever is under the marks: text (any character touching a mark), image pixels, line art touching a mark, links, annotations with their replies, and form fields with their values. It draws black boxes, scrubs hidden leftovers (thumbnails, PieceInfo, document JavaScript; XMP rebuilt), writes the document whole and saves it, and offers to delete the file's earlier versions (checked). Flatten Annotations refuses while marks remain. | 2026-10-19 |
 | Encryption | File › Security… sets, changes or removes the passwords and permissions, with AES-256 only. It needs owner access: a file opened with the user password asks for the owner password first. | 2026-10-19 |
 | Permissions | Enforced when a file is opened without owner access. Printing, copying text, editing (content, fields, metadata), comments, filling in forms and page changes are each disabled per the owner's settings, and a notice under the toolbar says what isn't allowed, with Enter Owner Password…. | 2026-10-19 |
 
@@ -157,7 +158,11 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 ## Phase 6: Security and signing (0.6.0)
 
-- [ ] Redaction that removes the content underneath
+- [x] Redaction that removes the content underneath
+  - Tools › Redact (⌃⌘X): drag across text to mark it, or drag out an area. Marks show as red outlines, and can be moved, resized or deleted until applied.
+  - Tools › Apply Redactions…: removes text, image pixels, line art, links, annotations (with replies) and form fields (with their values) under the marks; draws black boxes; removes thumbnails, PieceInfo and document JavaScript and rebuilds XMP; writes the document whole (keeping its encryption) and saves it. Earlier versions of the file are deleted unless the box is unchecked. Can't be undone; signed documents are warned their signatures will no longer be valid.
+  - Any character touching a mark is removed, even if the mark only grazes it, so a generous area can take neighbouring lines too.
+  - Left for later (Low): content inside patterns, soft masks and Type3 glyphs isn't redacted (MuPDF doesn't look inside them).
 - [x] Passwords, encryption and permissions
   - File › Security…: a password to open the document, and an owner password that limits printing, copying, editing, comments and filling in forms. Applying writes the document whole, encrypted with AES-256 (or with no encryption when both are off); undo history is cleared. A signed document is warned that its signatures will no longer be valid.
   - Opened without the owner password, a restricted document disables what its owner doesn't allow (menus, tools, inspector, printing, copying), with a notice under the toolbar and Enter Owner Password….

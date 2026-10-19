@@ -61,6 +61,10 @@ extension PagesView {
         case .highlight, .underline, .strikeOut:
             selectedAnnotation = nil
             textMouseDown(with: event)
+        case .redact where onPage && model.text(page: page).charIndex(at: point) != nil:
+            // Starting on text marks text; anywhere else, an area.
+            selectedAnnotation = nil
+            textMouseDown(with: event)
         default:
             guard onPage else { return }
             selectedAnnotation = nil
@@ -138,7 +142,7 @@ extension PagesView {
             switch finished {
             case .none:
                 textMouseUp(with: event)
-                if tool.marksText, let selection, !selection.isEmpty {
+                if tool.marksText || tool == .redact, let selection, !selection.isEmpty {
                     let ref = try annotations.markText(tool, selection: selection)
                     self.selection = nil
                     _ = ref
@@ -188,7 +192,7 @@ extension PagesView {
         let rect = CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
                           width: abs(current.x - start.x), height: abs(current.y - start.y))
         switch tool {
-        case .rectangle, .textBox: path.addRect(rect)
+        case .rectangle, .textBox, .redact: path.addRect(rect)
         case .oval: path.addEllipse(in: rect)
         case .line, .arrow:
             path.move(to: start)
@@ -201,7 +205,7 @@ extension PagesView {
             }
         default: return
         }
-        let width = tool == .textBox ? 1 / zoom : ToolSettings.lineWidth(for: tool)
+        let width = tool == .textBox || tool == .redact ? 1 / zoom : ToolSettings.lineWidth(for: tool)
         view.setDraft(path, color: ToolSettings.color(for: tool).nsColor, lineWidth: width,
                       transform: model.pageToView(page: page, rotation: rotation), dashed: tool == .textBox)
     }

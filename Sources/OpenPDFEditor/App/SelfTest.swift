@@ -42,6 +42,8 @@ enum SelfTest {
                     manualSaveSteps(document)
                 } else if environment["OPDF_SELFTEST_FORMS"] != nil {
                     formSteps(document)
+                } else if environment["OPDF_SELFTEST_REDACT"] != nil {
+                    redactSteps(document)
                 } else if environment["OPDF_SELFTEST_SECURITY"] != nil {
                     securitySteps(document)
                 } else if environment["OPDF_SELFTEST_CONTENT"] != nil {
@@ -551,6 +553,50 @@ enum SelfTest {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// The Redact tool on text and on an area, then Tools › Apply
+    /// Redactions… through its alert: the text is gone from the saved file,
+    /// and so are its earlier versions.
+    static func redactSteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let viewer = controller.viewer, let window = controller.window else {
+            say("FAIL no viewer")
+            return finish()
+        }
+        window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 860), display: true)
+        let text = viewer.model.text(page: 0)
+        guard let fox = text.search("quick brown fox").first, let r = text.rects(for: fox).first,
+              let visit = text.search("Visit example.com").first, let v = text.rects(for: visit).first else {
+            say("FAIL no text to redact")
+            return finish()
+        }
+        viewer.tool = .redact
+        drag(viewer, page: 0, from: CGPoint(x: r.minX + 1, y: r.midY), to: CGPoint(x: r.maxX - 1, y: r.midY))
+        // An area: from the margin left of the line, across it.
+        drag(viewer, page: 0, from: CGPoint(x: v.minX - 20, y: v.minY - 4), to: CGPoint(x: v.maxX + 10, y: v.maxY + 4))
+        let marks = (try? document.engine!.annotations(page: 0))?.filter { $0.kind == .redact } ?? []
+        say("marks: \(marks.count) (text \(marks.filter { !$0.quads.isEmpty }.count)); tool after: \(viewer.tool.rawValue)")
+        // Saved once, so the file has a version from before.
+        document.save(withDelegate: nil, didSave: nil, contextInfo: nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            snapshot(window, "marked")
+            let url = document.fileURL!
+            say("versions before: \(NSFileVersion.otherVersionsOfItem(at: url)?.count ?? 0)")
+            controller.applyRedactions(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                say("alert: \(window.attachedSheet != nil)")
+                _ = pressSheetButton(window, "Apply Redactions")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                    snapshot(window, "redacted")
+                    let page = viewer.model.text(page: 0).string
+                    say("in the window: quick \(page.contains("quick")), example.com \(page.contains("example.com")), lazy dog \(page.contains("lazy dog")); marks left \(controller.redactionMarkCount()); undo \(document.undoManager?.canUndo == true); edited \(document.isDocumentEdited)")
+                    let saved = (try? EngineDocument(url: url).text(page: 0).string) ?? ""
+                    say("on disk: quick \(saved.contains("quick")), lazy dog \(saved.contains("lazy dog")); versions after: \(NSFileVersion.otherVersionsOfItem(at: url)?.count ?? 0)")
+                    finish()
                 }
             }
         }

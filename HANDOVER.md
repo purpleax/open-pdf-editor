@@ -16,7 +16,9 @@ The state of the work and how it is run, for picking it up in a new session or o
   1. Rebase (`opdf_rebase`, `EngineDocument.rebase`).
   2. Passwords, encryption and permissions: File › Security…, the restriction notice, `DocumentModel.allowed` / `edit(needs:)`, `opdf_allowed`, `opdf_permission_bits` (read from /Encrypt: MuPDF reports every permission to the owner), `opdf_needs_open_password` (recorded at open, since trying "" later would clobber the crypt key). Self-test run `security`.
 
-  Next: step 3, redaction.
+  3. Redaction: `redact_document` in the bridge (run on the rebase copy, so a failure leaves the open document as it was), `opdf_rebase_options.redact`, `EngineDocument.applyRedactions`, the Redact tool, Tools › Apply Redactions…, self-test run `redact`. Marked areas and annotation rects are compared in page space (`pdf_annot_rect`), not the raw /Rect.
+
+  Next: step 4, digital signatures.
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.

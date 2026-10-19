@@ -578,6 +578,14 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
     @objc func flattenAnnotations(_ sender: Any?) {
         guard let viewer, let window else { return }
+        // Baked, a mark would look like a redaction with everything still under it.
+        if redactionMarkCount() > 0 {
+            let alert = NSAlert()
+            alert.messageText = "Apply or delete the redaction marks first."
+            alert.informativeText = "Flattening would draw the marks onto the pages without removing what is under them. Choose Tools › Apply Redactions… to remove it."
+            alert.beginSheetModal(for: window)
+            return
+        }
         let alert = NSAlert()
         alert.messageText = "Flatten all annotations?"
         alert.informativeText = "Highlights, notes, shapes, drawings and stamps become part of the pages and can no longer be changed. Replies are removed. You can undo this until you close the document."
@@ -649,6 +657,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(addHeadersAndFooters(_:)), #selector(addPageNumbers(_:)), #selector(addWatermark(_:)),
              #selector(removeHeadersAndFooters(_:)), #selector(removeWatermarks(_:)):
             return viewer.model.allows(.edit)
+        case #selector(applyRedactions(_:)):
+            return viewer.model.isEditable && viewer.model.allows(.edit)
         case #selector(showSecurity(_:)):
             return viewer.model.isEditable && viewer.model.engine.isPDF
         case #selector(enterOwnerPassword(_:)):

@@ -180,4 +180,81 @@ extension DocumentWindowController {
             }
         }
     }
+
+    // MARK: Redaction
+
+    /// Redaction marks in the whole document.
+    func redactionMarkCount() -> Int {
+        guard let viewer else { return 0 }
+        let engine = viewer.model.engine
+        return (0..<viewer.model.pageCount).reduce(0) { count, page in
+            count + ((try? engine.annotations(page: page))?.filter { $0.kind == .redact }.count ?? 0)
+        }
+    }
+
+    /// Tools › Apply Redactions…: removes what is under every mark, for good,
+    /// then saves, and (if asked) deletes the file's earlier versions.
+    @objc func applyRedactions(_ sender: Any?) {
+        guard let viewer, let window, let document = editorDocument else { return }
+        let marks = redactionMarkCount()
+        guard marks > 0 else {
+            let alert = NSAlert()
+            alert.messageText = "There’s nothing marked for redaction."
+            alert.informativeText = "Mark text or areas with Tools › Redact first."
+            alert.beginSheetModal(for: window)
+            return
+        }
+        let signed = (try? viewer.model.engine.formInfo().isSigned) ?? false
+        let alert = NSAlert()
+        alert.messageText = marks == 1 ? "Apply 1 redaction?" : "Apply \(marks) redactions?"
+        alert.informativeText = "Everything under the marks is removed for good: text, images, drawings, comments, links and form fields. Black boxes are drawn in its place, hidden leftovers such as thumbnails and document scripts are removed, and the document is saved. This can’t be undone."
+            + (signed ? "\n\nThis document is signed: its signatures will no longer be valid." : "")
+        alert.alertStyle = .critical
+        alert.addButton(withTitle: "Apply Redactions")
+        alert.addButton(withTitle: "Cancel")
+        let versions = document.fileURL != nil
+        if versions {
+            alert.showsSuppressionButton = true
+            alert.suppressionButton?.title = "Also delete earlier versions of this file"
+            alert.suppressionButton?.state = .on
+        }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let deleteVersions = versions && alert.suppressionButton?.state == .on
+            do {
+                try document.applyRedactions()
+                viewer.pagesView.selectedAnnotation = nil
+                self.updateRestrictionBanner()
+            } catch {
+                NSAlert(error: error).beginSheetModal(for: window)
+                return
+            }
+            self.saveAfterRedacting(document, deleteVersions: deleteVersions)
+        }
+    }
+
+    /// Saves the redacted document (asking where, if it has never been
+    /// saved), then deletes the file's other versions if asked.
+    private func saveAfterRedacting(_ document: EditorDocument, deleteVersions: Bool) {
+        guard let url = document.fileURL, let type = document.fileType else {
+            document.save(nil)
+            return
+        }
+        document.save(to: url, ofType: type, for: .saveOperation) { [weak self] error in
+            guard let window = self?.window else { return }
+            if let error {
+                NSAlert(error: error).beginSheetModal(for: window)
+                return
+            }
+            guard deleteVersions else { return }
+            do {
+                try NSFileVersion.removeOtherVersionsOfItem(at: url)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "The redacted document is saved, but its earlier versions couldn’t be deleted."
+                alert.informativeText = error.localizedDescription
+                alert.beginSheetModal(for: window)
+            }
+        }
+    }
 }
