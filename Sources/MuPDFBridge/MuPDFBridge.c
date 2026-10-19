@@ -6371,15 +6371,18 @@ static bool append_ocr_word(fz_context *ctx, fz_buffer *buf, const opdf_ocr_word
     if (!(width > 0.01f) || !(height > 0.01f)) return false;
     float dx = (lrx - llx) / width, dy = (lry - lly) / width;
     float size = fz_clamp(height, 1, 2000);
-    float tz = 200 * width / (w->length * size);
+    // The letters fill the box; a trailing space follows it.
+    int letters = w->length > 1 && w->text[w->length - 1] == ' ' ? w->length - 1 : w->length;
+    float tz = 200 * width / (letters * size);
     if (!(tz >= 5 && tz <= 5000)) return false;
     // Text space to page space (y down): x along the baseline, y up to the top.
     fz_matrix tm = fz_concat(fz_make_matrix(dx, dy, dy, -dx, llx, lly), to_pdf);
     fz_append_printf(ctx, buf, "/OPDFOCR0 %g Tf\n%g Tz\n%g %g %g %g %g %g Tm\n", size, tz, tm.a, tm.b, tm.c, tm.d, tm.e, tm.f);
     if (w->right_to_left && w->length > 1) {
         // Text in reading order, drawn from the right (as output-pdfocr.c
-        // does), so copying keeps the order and selection runs leftwards.
-        fz_append_printf(ctx, buf, "[%d", -500 * (w->length - 1));
+        // does), so copying keeps the order and selection runs leftwards; a
+        // trailing space lands left of the box.
+        fz_append_printf(ctx, buf, "[%d", -500 * (letters - 1));
         for (int i = 0; i < w->length; i++) {
             if (i > 0) fz_append_string(ctx, buf, " 1000");
             fz_append_printf(ctx, buf, "<%04x>", w->text[i]);
@@ -6387,8 +6390,14 @@ static bool append_ocr_word(fz_context *ctx, fz_buffer *buf, const opdf_ocr_word
         fz_append_string(ctx, buf, "]TJ\n");
     } else {
         fz_append_byte(ctx, buf, '<');
-        for (int i = 0; i < w->length; i++) fz_append_printf(ctx, buf, "%04x", w->text[i]);
+        for (int i = 0; i < letters; i++) fz_append_printf(ctx, buf, "%04x", w->text[i]);
         fz_append_string(ctx, buf, ">Tj\n");
+        if (letters < w->length) {
+            // The space spans the gap to the next word (so selecting that
+            // word doesn't take the space too).
+            float space_tz = isfinite(w->space_width) && w->space_width > 0 ? 200 * w->space_width / size : tz;
+            fz_append_printf(ctx, buf, "%g Tz\n<0020>Tj\n", fz_clamp(space_tz, 1, 5000));
+        }
     }
     return true;
 }

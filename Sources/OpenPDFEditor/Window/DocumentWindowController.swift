@@ -30,6 +30,9 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
     let contentBar = ContentBarViewController()
     let formatBar = TextFormatBarViewController()
     var contentAccessory: NSTitlebarAccessoryViewController?
+    var scanAccessory: NSTitlebarAccessoryViewController?
+    var scanNoticeDismissed = false
+    var lastScanCheck: (page: Int, revision: Int)?
     private var split: NSSplitViewController?
     private var sidebarItem: NSSplitViewItem?
     private(set) var inspectorItem: NSSplitViewItem?
@@ -152,6 +155,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         setUpFieldBar()
         setUpContentBar()
         setUpRestrictionBanner()
+        setUpScanNotice()
         inspector.content.onChangeLink = { [weak self] ref in self?.changeLinkTarget(ref) }
         inspector.content.onReplaceImage = { [weak self] ref in self?.replaceImage(ref) }
         NotificationCenter.default.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] note in
@@ -159,6 +163,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
             MainActor.assumeIsolated {
                 self?.sidebar?.pagesDidChange(pages)
                 self?.inspector?.refresh()
+                self?.updateScanNotice()
             }
         }
         NotificationCenter.default.addObserver(forName: DocumentModel.structureDidChange, object: model, queue: .main) { [weak self] _ in
@@ -370,6 +375,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         invalidateRestorableState()
         sidebar?.currentPageDidChange()
         inspector?.pageDidChange()
+        updateScanNotice()
     }
 
     private func findDidChange() {
@@ -674,6 +680,8 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         case #selector(addHeadersAndFooters(_:)), #selector(addPageNumbers(_:)), #selector(addWatermark(_:)),
              #selector(removeHeadersAndFooters(_:)), #selector(removeWatermarks(_:)):
             return viewer.model.allows(.edit)
+        case #selector(recognizeText(_:)):
+            return viewer.model.allows(.edit) && viewer.model.engine.isPDF
         case #selector(applyRedactions(_:)):
             return viewer.model.isEditable && viewer.model.allows(.edit)
         case #selector(showSecurity(_:)):

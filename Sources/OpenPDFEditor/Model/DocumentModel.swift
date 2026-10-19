@@ -38,8 +38,10 @@ final class DocumentModel: @unchecked Sendable {
     private var annotationCache: [Int: [Annotation]] = [:]
     private var fieldCache: [Int: [FormField]] = [:]
     private var fieldOrder: [Int] = []
+    private var textInfoCache: [Int: PageTextInfo] = [:]
     private var _revision = 0
     private var pageRevisions: [Int: Int] = [:]
+    private var _changes = 0
 
     private static let maxLists = 40
     private static let maxTexts = 400
@@ -88,6 +90,10 @@ final class DocumentModel: @unchecked Sendable {
 
     /// Bumped whenever rendered output goes out of date.
     var revision: Int { lock.withLock { _revision } }
+
+    /// Bumped by every change to the document (edits, undo and redo), to
+    /// tell whether work begun earlier still applies.
+    var changes: Int { lock.withLock { _changes } }
 
     /// A page's version: changes whenever what the page draws changes.
     func revision(page: Int) -> Int {
@@ -168,6 +174,15 @@ final class DocumentModel: @unchecked Sendable {
             }
         }
         return paragraphs
+    }
+
+    /// What the page's contents draw (for telling scans apart), cached.
+    func textInfo(page: Int) -> PageTextInfo? {
+        if let cached = lock.withLock({ textInfoCache[page] }) { return cached }
+        let before = revision(page: page)
+        guard let info = try? engine.textInfo(page: page) else { return nil }
+        lock.withLock { if unchanged(page, since: before) { textInfoCache[page] = info } }
+        return info
     }
 
     func links(page: Int) -> [PageLink] {
@@ -278,7 +293,9 @@ final class DocumentModel: @unchecked Sendable {
             fieldCache.removeAll()
             fieldOrder.removeAll()
             pageRevisions.removeAll()
+            textInfoCache.removeAll()
             _revision += 1
+            _changes += 1
         }
         NotificationCenter.default.post(name: Self.structureDidChange, object: self)
     }
@@ -297,8 +314,10 @@ final class DocumentModel: @unchecked Sendable {
                 paragraphCache[page] = nil
                 annotationCache[page] = nil
                 fieldCache[page] = nil
+                textInfoCache[page] = nil
                 pageRevisions[page, default: 0] += 1
             }
+            _changes += 1
             listOrder.removeAll { all.contains($0) }
             textOrder.removeAll { all.contains($0) }
             fieldOrder.removeAll { all.contains($0) }
@@ -326,6 +345,7 @@ final class DocumentModel: @unchecked Sendable {
             annotationCache.removeAll()
             fieldCache.removeAll()
             fieldOrder.removeAll()
+            textInfoCache.removeAll()
             _revision += 1
         }
         DispatchQueue.main.async {

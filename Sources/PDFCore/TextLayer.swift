@@ -38,27 +38,33 @@ extension EngineDocument {
 
 /// A word recognised on a page: its text and its box in page space (points,
 /// y down). The baseline runs along the bottom edge, from `lowerLeft` to
-/// `lowerRight`; a word followed by another on its line ends with a space,
-/// its box reaching to the next word.
+/// `lowerRight`. A word followed by another on its line ends with a space,
+/// which is drawn just after its box.
 public struct RecognizedWord: Sendable, Equatable {
     public var text: String
     public var upperLeft: CGPoint
     public var upperRight: CGPoint
     public var lowerLeft: CGPoint
     public var lowerRight: CGPoint
+    /// How far the space after it reaches: the gap to the next word, along
+    /// the baseline (0: as wide as a letter).
+    public var spaceWidth: CGFloat
 
-    public init(text: String, upperLeft: CGPoint, upperRight: CGPoint, lowerLeft: CGPoint, lowerRight: CGPoint) {
+    public init(text: String, upperLeft: CGPoint, upperRight: CGPoint, lowerLeft: CGPoint, lowerRight: CGPoint,
+                spaceWidth: CGFloat = 0) {
         self.text = text
         self.upperLeft = upperLeft
         self.upperRight = upperRight
         self.lowerLeft = lowerLeft
         self.lowerRight = lowerRight
+        self.spaceWidth = spaceWidth
     }
 
     /// An upright word filling `rect`.
-    public init(text: String, rect: CGRect) {
+    public init(text: String, rect: CGRect, spaceWidth: CGFloat = 0) {
         self.init(text: text, upperLeft: CGPoint(x: rect.minX, y: rect.minY), upperRight: CGPoint(x: rect.maxX, y: rect.minY),
-                  lowerLeft: CGPoint(x: rect.minX, y: rect.maxY), lowerRight: CGPoint(x: rect.maxX, y: rect.maxY))
+                  lowerLeft: CGPoint(x: rect.minX, y: rect.maxY), lowerRight: CGPoint(x: rect.maxX, y: rect.maxY),
+                  spaceWidth: spaceWidth)
     }
 
     /// The text as the layer's font can carry it: NFC, characters beyond
@@ -135,6 +141,7 @@ extension EngineDocument {
                 out.length = Int32(c.count)
                 out.quad = (Float(w.upperLeft.x), Float(w.upperLeft.y), Float(w.upperRight.x), Float(w.upperRight.y),
                             Float(w.lowerLeft.x), Float(w.lowerLeft.y), Float(w.lowerRight.x), Float(w.lowerRight.y))
+                out.space_width = Float(w.spaceWidth)
                 out.right_to_left = w.isRightToLeft
                 (words + word).initialize(to: out)
                 offset += c.count

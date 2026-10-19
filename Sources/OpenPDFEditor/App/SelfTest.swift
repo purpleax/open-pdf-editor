@@ -52,6 +52,8 @@ enum SelfTest {
                     securitySteps(document)
                 } else if environment["OPDF_SELFTEST_CONTENT"] != nil {
                     contentSteps(document)
+                } else if environment["OPDF_SELFTEST_OCR"] != nil {
+                    ocrSteps(document)
                 } else {
                     steps(document)
                 }
@@ -789,6 +791,65 @@ enum SelfTest {
                     say("in the window: quick \(page.contains("quick")), example.com \(page.contains("example.com")), lazy dog \(page.contains("lazy dog")); marks left \(controller.redactionMarkCount()); undo \(document.undoManager?.canUndo == true); edited \(document.isDocumentEdited)")
                     let saved = (try? EngineDocument(url: url).text(page: 0).string) ?? ""
                     say("on disk: quick \(saved.contains("quick")), lazy dog \(saved.contains("lazy dog")); versions after: \(NSFileVersion.otherVersionsOfItem(at: url)?.count ?? 0)")
+                    finish()
+                }
+            }
+        }
+    }
+
+    /// A scanned document: the notice, Tools › Recognise Text… through its
+    /// sheet, then finding, selecting and copying a recognised word, undo and
+    /// redo, and the text in the saved file.
+    static func ocrSteps(_ document: EditorDocument) {
+        guard let controller = document.windowControllers.first as? DocumentWindowController,
+              let viewer = controller.viewer, let window = controller.window else {
+            say("FAIL no viewer")
+            return finish()
+        }
+        window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 860), display: true)
+        say("notice on a scan: \(controller.scanAccessory?.isHidden == false)")
+        snapshot(window, "scan-notice")
+        controller.recognizeText(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            say("sheet: \(window.attachedSheet != nil)")
+            _ = pressSheetButton(window, "Recognise")
+            waitForRecognition(document, controller, viewer, window, started: Date())
+        }
+    }
+
+    static func waitForRecognition(_ document: EditorDocument, _ controller: DocumentWindowController, _ viewer: ViewerController,
+                                   _ window: NSWindow, started: Date) {
+        let seconds = Date().timeIntervalSince(started)
+        guard viewer.model.text(page: 0).string.contains("brown") || seconds > 60 else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { waitForRecognition(document, controller, viewer, window, started: started) }
+            return
+        }
+        do {
+            let pages = (0..<viewer.model.pageCount).map { viewer.model.text(page: $0).search("quick brown fox").count }
+            say(String(format: "recognised in %.0fs: “quick brown fox” on pages %@; notice now %@", seconds, "\(pages)",
+                       controller.scanAccessory?.isHidden == false ? "shown" : "hidden"))
+            say("page 4 “Page 5” count: \(viewer.model.text(page: 4).search("Page 5").count); undo \(document.undoManager?.undoActionName ?? "-")")
+            viewer.find.search("brown")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                say("Find “brown”: \(viewer.find.matches.count) matches")
+                let text = viewer.model.text(page: 0)
+                guard let word = text.search("brown").first, let r = text.rects(for: word).first else {
+                    say("FAIL no word to select")
+                    return finish()
+                }
+                viewer.tool = .select
+                drag(viewer, page: 0, from: CGPoint(x: r.minX + 0.5, y: r.midY), to: CGPoint(x: r.maxX - 0.5, y: r.midY))
+                say("selected: “\(viewer.pagesView.selectedText ?? "")”")
+                snapshot(window, "ocr-selection")
+                document.undoManager?.undo()
+                let afterUndo = viewer.model.text(page: 0).string.contains("brown")
+                document.undoManager?.redo()
+                say("after undo: \(afterUndo); after redo: \(viewer.model.text(page: 0).string.contains("brown"))")
+                // Once the autosave the undo started has finished.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { document.save(withDelegate: nil, didSave: nil, contextInfo: nil) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                    let saved = try? EngineDocument(url: document.fileURL!)
+                    say("on disk: “quick brown fox” \((try? saved?.text(page: 0).search("quick brown fox").count) ?? -1), invisible \((try? saved?.textInfo(page: 0).invisibleCharacters) ?? -1)")
                     finish()
                 }
             }

@@ -173,6 +173,8 @@ enum MainMenu {
         tools.addItem(withTitle: "Signatures…", action: #selector(DocumentWindowController.manageSignatures(_:)), keyEquivalent: "")
         tools.addItem(withTitle: "Apply Redactions…", action: #selector(DocumentWindowController.applyRedactions(_:)), keyEquivalent: "")
         tools.addItem(.separator())
+        tools.addItem(withTitle: "Recognise Text…", action: #selector(DocumentWindowController.recognizeText(_:)), keyEquivalent: "")
+        tools.addItem(.separator())
         tools.addItem(withTitle: "Flatten Annotations…", action: #selector(DocumentWindowController.flattenAnnotations(_:)), keyEquivalent: "")
 
         let forms = submenu(in: main, title: "Forms")

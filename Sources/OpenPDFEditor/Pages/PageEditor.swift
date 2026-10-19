@@ -348,29 +348,54 @@ final class PageEditor {
     }
 }
 
-/// A sheet with a spinning progress indicator, for work that takes a while.
+/// A sheet showing progress (a spinner, or a bar), for work that takes a while.
 @MainActor
 final class ProgressSheet {
     private let sheet: NSWindow
     private weak var parent: NSWindow?
+    private let label: NSTextField
+    private let bar: NSProgressIndicator?
 
-    private init(sheet: NSWindow, parent: NSWindow?) {
+    private init(sheet: NSWindow, parent: NSWindow?, label: NSTextField, bar: NSProgressIndicator?) {
         self.sheet = sheet
         self.parent = parent
+        self.label = label
+        self.bar = bar
     }
 
     /// On `window` as a sheet, or with no window as a small panel of its own.
     /// With `cancel`, a Cancel button stops the work.
     static func show(on window: NSWindow?, message: String, cancel: ConversionCancel? = nil) -> ProgressSheet? {
+        show(on: window, message: message, total: 0, onCancel: cancel.map { cancel in { cancel.cancel() } })
+    }
+
+    /// With `total` above 0, a bar that `update(done:message:)` moves along.
+    static func show(on window: NSWindow?, message: String, total: Int, onCancel: (() -> Void)?) -> ProgressSheet? {
         let label = NSTextField(labelWithString: message)
-        let spinner = NSProgressIndicator()
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.startAnimation(nil)
-        var views: [NSView] = [spinner, label]
-        if let cancel {
-            let button = CancelButton(cancel: cancel)
-            views.append(button)
+        var views: [NSView] = []
+        var bar: NSProgressIndicator?
+        if total > 0 {
+            let indicator = NSProgressIndicator()
+            indicator.style = .bar
+            indicator.isIndeterminate = false
+            indicator.minValue = 0
+            indicator.maxValue = Double(total)
+            indicator.widthAnchor.constraint(equalToConstant: 200).isActive = true
+            bar = indicator
+            let column = NSStackView(views: [label, indicator])
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = 6
+            views.append(column)
+        } else {
+            let spinner = NSProgressIndicator()
+            spinner.style = .spinning
+            spinner.controlSize = .small
+            spinner.startAnimation(nil)
+            views = [spinner, label]
+        }
+        if let onCancel {
+            views.append(CancelButton(onCancel))
         }
         let stack = NSStackView(views: views)
         stack.spacing = 10
@@ -386,7 +411,12 @@ final class ProgressSheet {
             sheet.center()
             sheet.makeKeyAndOrderFront(nil)
         }
-        return ProgressSheet(sheet: sheet, parent: window)
+        return ProgressSheet(sheet: sheet, parent: window, label: label, bar: bar)
+    }
+
+    func update(done: Int, message: String? = nil) {
+        bar?.doubleValue = Double(done)
+        if let message { label.stringValue = message }
     }
 
     func close() {
@@ -398,10 +428,10 @@ final class ProgressSheet {
 /// Cancel for a ProgressSheet: stops the work and says so.
 @MainActor
 private final class CancelButton: NSButton {
-    private let cancel: ConversionCancel
+    private let onCancel: () -> Void
 
-    init(cancel: ConversionCancel) {
-        self.cancel = cancel
+    init(_ onCancel: @escaping () -> Void) {
+        self.onCancel = onCancel
         super.init(frame: .zero)
         title = "Cancel"
         bezelStyle = .push
@@ -414,7 +444,7 @@ private final class CancelButton: NSButton {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func clicked(_ sender: Any?) {
-        cancel.cancel()
+        onCancel()
         isEnabled = false
         title = "Cancelling…"
     }

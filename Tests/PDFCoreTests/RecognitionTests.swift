@@ -55,7 +55,7 @@ import Testing
     /// Two made-up words on a line, 72 points in and 100 down from the page's corner.
     private func words(_ bounds: CGRect, first: String = "Hello ", second: String = "world") -> [RecognizedWord] {
         let x = bounds.minX + 72, y = bounds.minY + 100
-        return [RecognizedWord(text: first, rect: CGRect(x: x, y: y, width: 50, height: 14)),
+        return [RecognizedWord(text: first, rect: CGRect(x: x, y: y, width: 45, height: 14), spaceWidth: 5),
                 RecognizedWord(text: second, rect: CGRect(x: x + 50, y: y, width: 40, height: 14))]
     }
 
@@ -79,6 +79,11 @@ import Testing
             #expect(abs(h.quad.lowerLeft.y - (y + 14)) < 1)
             // Upright: the top is above the baseline.
             #expect(h.quad.upperLeft.y < h.quad.lowerLeft.y)
+            // The letters fill their boxes; the space follows "Hello".
+            let o = try #require(text.chars.first { $0.scalar == "o" })
+            #expect(abs(o.quad.upperRight.x - (x + 45)) < 1, "\(o.quad)")
+            let space = try #require(text.chars.first { $0.scalar == " " })
+            #expect(abs(space.quad.upperRight.x - (x + 50)) < 1, "\(space.quad)")
             let d = try #require(text.chars.last { $0.scalar == "d" })
             #expect(abs(d.quad.upperRight.x - (x + 90)) < 1)
             // Still invisible: no visible text was added.

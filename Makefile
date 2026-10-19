@@ -83,6 +83,9 @@ selftest: build corpus
 		OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/sign" \
 		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
 	cat build/selftest/sign/log.txt
+	OPDF_SELFTEST="$(CURDIR)/build/corpus/scanned.pdf" OPDF_SELFTEST_OCR=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/ocr" \
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
+	cat build/selftest/ocr/log.txt
 
 # Copy the app to /Applications.
 install: build

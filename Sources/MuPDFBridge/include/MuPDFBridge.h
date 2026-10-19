@@ -154,10 +154,14 @@ bool opdf_page_text_info(opdf_doc *doc, int page, opdf_text_info *info, opdf_err
 // Multilingual Plane only, no controls; a space after it if one follows on
 // its line) and its box in page space, corners as in opdf_char: upper-left,
 // upper-right, lower-left, lower-right. The baseline runs along the bottom.
+// The letters fill the box; a trailing space is drawn after it, across
+// space_width (the gap to the next word along the baseline; 0 or less: as
+// wide as a letter).
 typedef struct {
     const uint16_t *text;
     int length;
     float quad[8];
+    float space_width;
     bool right_to_left;  // text in reading order that runs right to left
 } opdf_ocr_word;
 

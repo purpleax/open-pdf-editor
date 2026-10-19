@@ -69,11 +69,22 @@ public enum TextRecognizer {
         }
         var words: [RecognizedWord] = []
         for line in lines {
+            let start = words.count
             for word in line {
                 words.append(RecognizedWord(text: word.text, upperLeft: toPage(word.quad[0]), upperRight: toPage(word.quad[1]),
                                             lowerLeft: toPage(word.quad[2]), lowerRight: toPage(word.quad[3])))
-                if words.count >= RecognizedPage.maxWords { return RecognizedPage(page: page, words: words) }
+                if words.count >= RecognizedPage.maxWords { break }
             }
+            // Each space reaches to the next word, along the baseline.
+            for i in start..<max(start, words.count - 1) {
+                let w = words[i], next = words[i + 1]
+                let base = CGPoint(x: w.lowerRight.x - w.lowerLeft.x, y: w.lowerRight.y - w.lowerLeft.y)
+                let length = (base.x * base.x + base.y * base.y).squareRoot()
+                guard length > 0 else { continue }
+                let gap = ((next.lowerLeft.x - w.lowerRight.x) * base.x + (next.lowerLeft.y - w.lowerRight.y) * base.y) / length
+                words[i].spaceWidth = max(gap, 0.01)
+            }
+            if words.count >= RecognizedPage.maxWords { break }
         }
         return RecognizedPage(page: page, words: words)
     }
@@ -94,8 +105,7 @@ public enum TextRecognizer {
     }
 
     /// Vision's lines, each split into words at whitespace (punctuation
-    /// stays with its word), with a space and the gap after every word but
-    /// a line's last.
+    /// stays with its word), with a space after every word but a line's last.
     static func read(_ image: CGImage, languages: [String], cancel: RecognitionCancel) throws -> [[Word]] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
@@ -155,15 +165,9 @@ public enum TextRecognizer {
         }
         var words: [Word] = []
         for (i, range) in ranges.enumerated() {
-            var quad = quads[i]
             var text = String(string[range])
-            if i + 1 < ranges.count {
-                // Reach to the next word, with a space.
-                quad[1] = quads[i + 1][0]
-                quad[3] = quads[i + 1][2]
-                text += " "
-            }
-            words.append(Word(text: text, quad: quad))
+            if i + 1 < ranges.count { text += " " }
+            words.append(Word(text: text, quad: quads[i]))
         }
         return words
     }
