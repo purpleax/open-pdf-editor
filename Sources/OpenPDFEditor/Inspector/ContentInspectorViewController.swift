@@ -11,6 +11,8 @@ final class ContentInspectorViewController: NSViewController {
     }
     /// Asks where a link goes (the window shows the sheet).
     var onChangeLink: ((ContentRef) -> Void)?
+    /// Asks for another image file.
+    var onReplaceImage: ((ContentRef) -> Void)?
 
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(wrappingLabelWithString: "")
@@ -56,14 +58,22 @@ final class ContentInspectorViewController: NSViewController {
         case .link:
             titleLabel.stringValue = "Link"
             detailLabel.stringValue = item.link.map { "Goes to \(ContentController.describe($0))" } ?? ""
-            changeButton.isHidden = false
+            changeButton.title = "Change Target…"
+        case .image:
+            titleLabel.stringValue = "Image"
+            detailLabel.stringValue = item.image.map { "\($0.pixelWidth) × \($0.pixelHeight) pixels. Shift-drag a corner to keep its proportions." } ?? ""
+            changeButton.title = "Replace…"
         }
         changeButton.isEnabled = viewer.model.isEditable
         deleteButton.isEnabled = viewer.model.isEditable
     }
 
     @objc private func changeClicked(_ sender: Any?) {
-        if let ref { onChangeLink?(ref) }
+        guard let ref else { return }
+        switch ref {
+        case .link: onChangeLink?(ref)
+        case .image: onReplaceImage?(ref)
+        }
     }
 
     @objc private func deleteClicked(_ sender: Any?) {

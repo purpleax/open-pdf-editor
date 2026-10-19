@@ -15,6 +15,7 @@ extension DocumentWindowController {
         contentBar.onDone = { [weak self] in self?.setEditingContent(false) }
         viewer.onContentSelectionChange = { [weak self] ref in self?.inspector?.show(content: ref) }
         viewer.onMakeLink = { [weak self] rect, page in self?.makeLink(in: rect, onPage: page) }
+        viewer.onMakeImage = { [weak self] rect, page in self?.makeImage(in: rect, onPage: page) }
     }
 
     func setEditingContent(_ editing: Bool) {
@@ -41,6 +42,60 @@ extension DocumentWindowController {
                 self.contentBar.setTool(.select)
             } catch {
                 NSAlert(error: error).beginSheetModal(for: window)
+            }
+        }
+    }
+
+    /// Asks for an image file and adds it: filling `rect`, or at its own
+    /// proportions (200 points across, within the page) from a clicked point.
+    private func makeImage(in rect: CGRect, onPage page: Int) {
+        chooseImage { [weak self] image in
+            guard let self, let viewer = self.viewer, let window = self.window else { return }
+            var r = rect
+            if r.isEmpty {
+                let width = min(200, viewer.model.pageBounds[page].width)
+                r.size = CGSize(width: width, height: width * image.size.height / max(image.size.width, 1))
+            }
+            do {
+                viewer.pagesView.selectedContent = try viewer.content.addImage(image, page: page, rect: r)
+                viewer.pagesView.contentTool = .select
+                self.contentBar.setTool(.select)
+            } catch {
+                NSAlert(error: error).beginSheetModal(for: window)
+            }
+        }
+    }
+
+    /// Replaces the selected image's picture with another file's.
+    func replaceImage(_ ref: ContentRef) {
+        chooseImage { [weak self] image in
+            guard let self, let viewer = self.viewer, let window = self.window else { return }
+            do {
+                try viewer.content.replaceImage(ref, with: image)
+            } catch {
+                NSAlert(error: error).beginSheetModal(for: window)
+            }
+        }
+    }
+
+    /// An open panel for an image file, read and checked off the main thread.
+    private func chooseImage(_ then: @escaping @MainActor (ImageImport.Prepared) -> Void) {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.message = "Choose an image (at most 100 MB and 40 megapixels)."
+        panel.beginSheetModal(for: window) { response in
+            guard response == .OK, let url = panel.url else { return }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = Result { try ImageImport.prepare(contentsOf: url) }
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        switch result {
+                        case let .success(image): then(image)
+                        case let .failure(error): NSAlert(error: error).beginSheetModal(for: window)
+                        }
+                    }
+                }
             }
         }
     }

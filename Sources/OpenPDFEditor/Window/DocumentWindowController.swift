@@ -142,6 +142,7 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
         setUpFieldBar()
         setUpContentBar()
         inspector.content.onChangeLink = { [weak self] ref in self?.changeLinkTarget(ref) }
+        inspector.content.onReplaceImage = { [weak self] ref in self?.replaceImage(ref) }
         NotificationCenter.default.addObserver(forName: DocumentModel.pagesDidChange, object: model, queue: .main) { [weak self] note in
             let pages = note.userInfo?["pages"] as? Set<Int>
             MainActor.assumeIsolated {

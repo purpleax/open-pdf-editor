@@ -132,7 +132,8 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 ## Phase 5: Content editing (0.5.0)
 
-- [ ] Add, replace, move, resize and delete images
+- [x] Add, replace, move, resize and delete images
+  - Edit Content's Image tool: drag out an area (or click, for the image's own proportions) and choose a file; select an image drawing to move it, resize it (Shift keeps its proportions), delete it or Replace… it (fitted inside the same box). Files are read with ImageIO and handed to MuPDF as JPEG or PNG, at most 100 MB and 40 megapixels. One drawing of an image used twice changes alone.
 - [ ] Headers, footers, watermarks and page numbers
 - [x] Links
   - Edit › Edit Content (⌥⌘E) shows the content bar. With the Link tool, drag out an area and choose a web or email address (http, https, mailto) or a page; links are outlined, and are selected, moved, resized, retargeted (inspector) and deleted like annotations. Each change is one undoable step. MuPDF's pdf_set_link_rect doesn't map page space to PDF space, so the bridge writes /Rect itself.

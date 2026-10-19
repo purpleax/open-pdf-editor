@@ -50,6 +50,7 @@ final class ViewerController: NSViewController, PagesViewDelegate {
     var onContentSelectionChange: ((ContentRef?) -> Void)?
     /// A link's area was dragged out (the window asks where it goes).
     var onMakeLink: ((CGRect, Int) -> Void)?
+    var onMakeImage: ((CGRect, Int) -> Void)?
     var onFieldToolChange: ((FieldTool) -> Void)?
     /// Called when the tool changes (a one-off tool going back to Select).
     var onToolChange: ((AnnotationTool) -> Void)?
@@ -567,6 +568,10 @@ final class ViewerController: NSViewController, PagesViewDelegate {
 
     func pagesView(_ view: PagesView, makeLinkIn rect: CGRect, onPage page: Int) {
         onMakeLink?(rect, page)
+    }
+
+    func pagesView(_ view: PagesView, makeImageIn rect: CGRect, onPage page: Int) {
+        onMakeImage?(rect, page)
     }
 
     func pagesViewDidUseFieldTool(_ view: PagesView) {

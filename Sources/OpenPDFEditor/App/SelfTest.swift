@@ -1,5 +1,6 @@
 #if SELFTEST
 import AppKit
+import ImageIO
 import PDFCore
 
 /// A scripted run through annotating, for builds made with `make selftest`
@@ -400,6 +401,33 @@ enum SelfTest {
             } catch { say("FAIL retarget: \(error)") }
             say("retargeted: page \(viewer.model.links(page: 0).first { $0.id == made.id }?.targetPage ?? -1)")
         }
+        // An image: added, dragged, resized keeping its proportions.
+        let png = out.appendingPathComponent("picture.png")
+        if let context = CGContext(data: nil, width: 80, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
+                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) {
+            context.setFillColor(CGColor(red: 0.1, green: 0.5, blue: 0.9, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 80, height: 40))
+            if let image = context.makeImage(), let destination = CGImageDestinationCreateWithURL(png as CFURL, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(destination, image, nil)
+                CGImageDestinationFinalize(destination)
+            }
+        }
+        do {
+            let prepared = try ImageImport.prepare(contentsOf: png)
+            let ref = try viewer.content.addImage(prepared, page: 0, rect: CGRect(x: 100, y: 500, width: 160, height: 80))
+            viewer.pagesView.selectedContent = ref
+            if let item = viewer.content.item(ref) {
+                drag(viewer, page: 0, from: CGPoint(x: item.rect.midX, y: item.rect.midY), to: CGPoint(x: item.rect.midX + 200, y: item.rect.midY))
+            }
+            let moved = viewer.content.item(ref)?.rect ?? .zero
+            say("image added and moved: \(moved.integral); images on page: \(viewer.model.content(page: 0)?.images.count ?? -1)")
+            document.undoManager?.undo()
+            document.undoManager?.undo()
+            say("after undoing both: \(viewer.model.content(page: 0)?.images.count ?? -1) images")
+            document.undoManager?.redo()
+            document.undoManager?.redo()
+            say("after redoing: \(viewer.content.item(ref)?.rect.integral ?? .zero)")
+        } catch { say("FAIL image: \(error)") }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
             snapshot(window, "content-1-links")
             document.save(withDelegate: nil, didSave: nil, contextInfo: nil)

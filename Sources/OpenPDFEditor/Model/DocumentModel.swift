@@ -31,6 +31,8 @@ final class DocumentModel: @unchecked Sendable {
     private var texts: [Int: PageText] = [:]
     private var textOrder: [Int] = []
     private var linkCache: [Int: [PageLink]] = [:]
+    private var contentCache: [Int: PageContent] = [:]
+    private var contentOrder: [Int] = []
     private var annotationCache: [Int: [Annotation]] = [:]
     private var fieldCache: [Int: [FormField]] = [:]
     private var fieldOrder: [Int] = []
@@ -119,6 +121,22 @@ final class DocumentModel: @unchecked Sendable {
             }
         }
         return text
+    }
+
+    /// The page's text runs and image drawings (Edit Content), cached for
+    /// a few pages; nil if the page's content can't be read.
+    func content(page: Int) -> PageContent? {
+        if let cached = lock.withLock({ contentCache[page] }) { return cached }
+        let before = revision(page: page)
+        guard let content = try? engine.content(page: page) else { return nil }
+        lock.withLock {
+            if contentCache[page] == nil, unchanged(page, since: before) {
+                contentCache[page] = content
+                contentOrder.append(page)
+                if contentOrder.count > 20 { contentCache[contentOrder.removeFirst()] = nil }
+            }
+        }
+        return content
     }
 
     func links(page: Int) -> [PageLink] {
@@ -219,6 +237,8 @@ final class DocumentModel: @unchecked Sendable {
             texts.removeAll()
             textOrder.removeAll()
             linkCache.removeAll()
+            contentCache.removeAll()
+            contentOrder.removeAll()
             annotationCache.removeAll()
             fieldCache.removeAll()
             fieldOrder.removeAll()
@@ -238,6 +258,7 @@ final class DocumentModel: @unchecked Sendable {
                 lists[page] = nil
                 texts[page] = nil
                 linkCache[page] = nil
+                contentCache[page] = nil
                 annotationCache[page] = nil
                 fieldCache[page] = nil
                 pageRevisions[page, default: 0] += 1
@@ -245,6 +266,7 @@ final class DocumentModel: @unchecked Sendable {
             listOrder.removeAll { all.contains($0) }
             textOrder.removeAll { all.contains($0) }
             fieldOrder.removeAll { all.contains($0) }
+            contentOrder.removeAll { all.contains($0) }
         }
         NotificationCenter.default.post(name: Self.pagesDidChange, object: self,
                                         userInfo: pages.map { ["pages": $0] })
@@ -260,6 +282,8 @@ final class DocumentModel: @unchecked Sendable {
             texts.removeAll()
             textOrder.removeAll()
             linkCache.removeAll()
+            contentCache.removeAll()
+            contentOrder.removeAll()
             annotationCache.removeAll()
             fieldCache.removeAll()
             fieldOrder.removeAll()

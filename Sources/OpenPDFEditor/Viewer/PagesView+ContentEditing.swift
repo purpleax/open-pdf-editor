@@ -15,7 +15,7 @@ extension PagesView {
             selectedContent = nil
             return
         }
-        if contentTool == .link {
+        if contentTool == .link || contentTool == .image {
             contentGesture = .create(page: page, start: point, current: point)
             return
         }
@@ -64,15 +64,27 @@ extension PagesView {
             case let .create(page, start, current):
                 let rect = CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
                                   width: abs(current.x - start.x), height: abs(current.y - start.y))
-                // A click, or a sliver, isn't an area for a link.
-                guard rect.width * zoom >= 6, rect.height * zoom >= 6 else { return }
-                delegate?.pagesView(self, makeLinkIn: rect, onPage: page)
+                let sized = rect.width * zoom >= 6 && rect.height * zoom >= 6
+                if contentTool == .image {
+                    // A click places the image at its own proportions.
+                    delegate?.pagesView(self, makeImageIn: sized ? rect : CGRect(origin: start, size: .zero), onPage: page)
+                } else if sized {
+                    delegate?.pagesView(self, makeLinkIn: rect, onPage: page)
+                }
             case let .move(ref, start, current):
                 guard hypot(current.x - start.x, current.y - start.y) * zoom >= 2, let item = content.item(ref) else { return }
-                try content.setRect(ref, item.rect.offsetBy(dx: current.x - start.x, dy: current.y - start.y), actionName: "Move Link")
+                try content.setRect(ref, item.rect.offsetBy(dx: current.x - start.x, dy: current.y - start.y), actionName: "Move \(ref.noun)")
             case let .resize(ref, handle, current):
                 guard let item = content.item(ref), let annotations else { return }
-                try content.setRect(ref, annotations.resizedRect(item.rect, handle: handle, to: current), actionName: "Resize Link")
+                var rect = annotations.resizedRect(item.rect, handle: handle, to: current)
+                // Shift keeps an image's proportions.
+                if case .image = ref, event.modifierFlags.contains(.shift), item.rect.height > 0 {
+                    let aspect = item.rect.width / item.rect.height
+                    if [.top, .bottom].contains(handle) { rect.size.width = rect.height * aspect } else { rect.size.height = rect.width / aspect }
+                    if [.topLeft, .topRight, .top].contains(handle) { rect.origin.y = item.rect.maxY - rect.height }
+                    if [.topLeft, .bottomLeft, .left].contains(handle) { rect.origin.x = item.rect.maxX - rect.width }
+                }
+                try content.setRect(ref, rect, actionName: "Resize \(ref.noun)")
             }
         } catch {
             NSSound.beep()

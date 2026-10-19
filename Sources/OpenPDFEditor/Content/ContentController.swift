@@ -4,21 +4,32 @@ import PDFCore
 /// Something on a page that Edit Content changes.
 enum ContentRef: Hashable {
     case link(page: Int, id: Int)
+    /// An image drawing, by its order on the page.
+    case image(page: Int, op: Int)
 
     var page: Int {
         switch self {
-        case let .link(page, _): page
+        case let .link(page, _), let .image(page, _): page
+        }
+    }
+
+    /// For undo names: "Move Image".
+    var noun: String {
+        switch self {
+        case .link: "Link"
+        case .image: "Image"
         }
     }
 }
 
 /// The content tools in the content bar.
 enum ContentTool: String, CaseIterable {
-    case select, link
+    case select, image, link
 
     var title: String {
         switch self {
         case .select: "Select"
+        case .image: "Image"
         case .link: "Link"
         }
     }
@@ -26,6 +37,7 @@ enum ContentTool: String, CaseIterable {
     var symbol: String {
         switch self {
         case .select: "cursorarrow"
+        case .image: "photo"
         case .link: "link"
         }
     }
@@ -37,6 +49,7 @@ struct ContentItem {
     let rect: CGRect
     /// A link's target, for the inspector.
     var link: PageLink?
+    var image: ImagePlacement?
 }
 
 /// Finds and changes page content: links (and, as Phase 5 goes on, images
@@ -50,10 +63,15 @@ final class ContentController {
         self.model = model
     }
 
+    /// Images, then links (on top).
     func items(page: Int) -> [ContentItem] {
-        model.links(page: page).filter { $0.id != 0 }.map {
+        let images = (model.content(page: page)?.images ?? []).map {
+            ContentItem(ref: .image(page: page, op: $0.op), rect: $0.rect, image: $0)
+        }
+        let links = model.links(page: page).filter { $0.id != 0 }.map {
             ContentItem(ref: .link(page: page, id: $0.id), rect: $0.rect, link: $0)
         }
+        return images + links
     }
 
     func item(_ ref: ContentRef) -> ContentItem? {
@@ -81,6 +99,19 @@ final class ContentController {
         return .link(page: page, id: id)
     }
 
+    /// Adds an image file's picture to a page, filling `rect`; the new drawing is selected.
+    func addImage(_ image: ImageImport.Prepared, page: Int, rect: CGRect) throws -> ContentRef {
+        let r = clamp(rect, page: page)
+        try model.edit("Add Image", pages: [page]) { try $0.addImage(image, page: page, rect: r) }
+        let op = (model.content(page: page)?.images.last?.op) ?? 0
+        return .image(page: page, op: op)
+    }
+
+    func replaceImage(_ ref: ContentRef, with image: ImageImport.Prepared) throws {
+        guard case let .image(page, op) = ref else { return }
+        try model.edit("Replace Image", pages: [page]) { try $0.replaceImage(page: page, op: op, with: image) }
+    }
+
     func setTarget(_ ref: ContentRef, _ target: LinkTarget) throws {
         guard case let .link(page, id) = ref, let item = item(ref) else { return }
         try model.edit("Change Link", pages: [page]) { try $0.updateLink(page: page, id: id, rect: item.rect, to: target) }
@@ -92,6 +123,8 @@ final class ContentController {
         case let .link(page, id):
             let r = clamp(rect, page: page)
             try model.edit(actionName, pages: [page]) { try $0.updateLink(page: page, id: id, rect: r) }
+        case let .image(page, op):
+            try model.edit(actionName, pages: [page]) { try $0.setImageRect(page: page, op: op, rect: rect) }
         }
     }
 
@@ -99,6 +132,8 @@ final class ContentController {
         switch ref {
         case let .link(page, id):
             try model.edit("Delete Link", pages: [page]) { try $0.deleteLink(page: page, id: id) }
+        case let .image(page, op):
+            try model.edit("Delete Image", pages: [page]) { try $0.deleteImage(page: page, op: op) }
         }
     }
 

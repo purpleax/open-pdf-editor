@@ -52,6 +52,9 @@ protocol PagesViewDelegate: AnyObject {
     func pagesView(_ view: PagesView, didSelectContent content: ContentRef?)
     /// A link's area was dragged out: ask where it goes, then make it.
     func pagesView(_ view: PagesView, makeLinkIn rect: CGRect, onPage page: Int)
+    /// An image's area was dragged out (or a point clicked, with an empty
+    /// rectangle): ask for the image, then add it.
+    func pagesView(_ view: PagesView, makeImageIn rect: CGRect, onPage page: Int)
     /// The selected form field changed (while editing fields).
     func pagesView(_ view: PagesView, didSelectField field: FieldRef?)
     /// A field tool has been used (it goes back to Select).
