@@ -108,7 +108,8 @@ opdf_matrix opdf_page_matrix(opdf_rect bounds, float scale, int rotation);
 
 // A page's display list (its drawing commands), loaded under the document
 // lock; rendered with opdf_list_render on any thread. NULL on failure.
-opdf_list *opdf_list_load(opdf_doc *doc, int page, opdf_error *err);
+// contents_only leaves out annotations and form fields.
+opdf_list *opdf_list_load(opdf_doc *doc, int page, bool contents_only, opdf_error *err);
 void opdf_list_drop(opdf_doc *doc, opdf_list *list);
 
 opdf_cookie *opdf_cookie_new(void);
@@ -137,6 +138,17 @@ typedef struct {
 // The page's text as characters in reading order. A new array to free with
 // opdf_free; *count is set. NULL with *count 0 for a page without text.
 opdf_char *opdf_text_load(opdf_doc *doc, int page, int *count, opdf_error *err);
+
+// What a page's contents draw (not its annotations or fields): characters
+// drawn visibly, characters drawn invisibly (text render mode 3, as OCR
+// layers are), and the share of the page (0-1) its images cover.
+typedef struct {
+    int visible;
+    int invisible;
+    float image_coverage;
+} opdf_text_info;
+
+bool opdf_page_text_info(opdf_doc *doc, int page, opdf_text_info *info, opdf_error *err);
 
 // --- Links ------------------------------------------------------------------
 

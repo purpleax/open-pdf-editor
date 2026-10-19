@@ -635,6 +635,58 @@ function makeContent() {
 	doc.save(out + "/contentodd.pdf", "compress")
 }
 
+// --- scanned.pdf: pictures of text, for text recognition --------------------
+// Page 0 a plain scan; 1 drawn sideways and turned upright with /Rotate 90;
+// 2 with an offset CropBox; 3 in four strips over a duplicate (layered)
+// image; 4 with a page number stamped on as real text; 5 a scan that already
+// has an invisible text layer.
+var SCAN_LINES = [
+	[72, 100, 24, "Scanned Report"],
+	[72, 150, 18, "The quick brown fox jumps over the lazy dog."],
+	[72, 180, 18, "Recognised text should be searchable."],
+	[72, 210, 18, "Second paragraph with numbers 12345."],
+]
+
+function makeScanned() {
+	var source = newDocument()
+	addTextPage(source, LETTER, SCAN_LINES)
+	var page = source.loadPage(0)
+	var scale = 200 / 72
+	// The page drawn into a grey pixmap covering rows y0..y1 (in pixels).
+	function render(y0, y1) {
+		var pix = new Pixmap(ColorSpace.DeviceGray, [0, y0, Math.round(612 * scale), y1], false)
+		pix.clear(255)
+		var dev = new DrawDevice(Matrix.identity, pix)
+		page.run(dev, Matrix.scale(scale, scale))
+		dev.close()
+		return pix
+	}
+	var height = Math.round(792 * scale)
+	var doc = newDocument()
+	var scan = doc.addImage(new Image(render(0, height)))
+	function add(box, rotate, xobjects, content) {
+		var p = doc.addPage(box, rotate, { Font: { F1: doc.font }, XObject: xobjects }, content)
+		doc.insertPage(-1, p)
+		return doc.countPages() - 1
+	}
+	add(LETTER, 0, { Im0: scan }, "q 612 0 0 792 0 0 cm /Im0 Do Q\n")
+	add([0, 0, 792, 612], 90, { Im0: scan }, "q 0 612 -792 0 792 0 cm /Im0 Do Q\n")
+	var cropped = add([0, 0, 812, 992], 0, { Im0: scan }, "q 612 0 0 792 100 100 cm /Im0 Do Q\n")
+	doc.findPage(cropped).put("CropBox", [100, 100, 712, 892])
+	var strips = { Im0: scan }, content = "q 612 0 0 792 0 0 cm /Im0 Do Q\n"
+	var band = Math.ceil(height / 4)
+	for (var i = 0; i < 4; i++) {
+		var y0 = i * band, y1 = Math.min(height, y0 + band)
+		strips["S" + i] = doc.addImage(new Image(render(y0, y1)))
+		var top = 792 - y0 / scale, h = (y1 - y0) / scale
+		content += "q 612 0 0 " + h + " 0 " + (top - h) + " cm /S" + i + " Do Q\n"
+	}
+	add(LETTER, 0, strips, content)
+	add(LETTER, 0, { Im0: scan }, "q 612 0 0 792 0 0 cm /Im0 Do Q\nBT /F1 10 Tf 290 30 Td (Page 5) Tj ET\n")
+	add(LETTER, 0, { Im0: scan }, "q 612 0 0 792 0 0 cm /Im0 Do Q\nBT /F1 18 Tf 3 Tr 72 624 Td (The quick brown fox) Tj ET\n")
+	doc.save(out + "/scanned.pdf", "compress")
+}
+
 // --- Hostile files, for the security tests ----------------------------------
 
 // Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
@@ -796,4 +848,5 @@ makeParaBomb()
 makeFormBomb()
 makeXMP()
 makeContent()
+makeScanned()
 print("corpus: wrote the test PDFs to " + out)

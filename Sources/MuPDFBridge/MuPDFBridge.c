@@ -500,19 +500,26 @@ opdf_matrix opdf_page_matrix(opdf_rect bounds, float scale, int rotation) {
 
 static bool is_reply(fz_context *ctx, pdf_annot *annot);
 
-// The page's contents, annotations (but not replies) and form fields.
-static fz_display_list *new_display_list(fz_context *ctx, fz_page *page) {
+// The page's contents, annotations (but not replies) and form fields; or
+// with contents_only, just the contents (what text recognition reads, so
+// comments and field values don't become page text).
+static fz_display_list *new_display_list(fz_context *ctx, fz_page *page, bool contents_only) {
     pdf_page *pp = pdf_page_from_fz_page(ctx, page);
-    if (!pp) return fz_new_display_list_from_page(ctx, page);
+    if (!pp) {
+        if (!contents_only) return fz_new_display_list_from_page(ctx, page);
+        return fz_new_display_list_from_page_contents(ctx, page);
+    }
     fz_display_list *list = fz_new_display_list(ctx, fz_bound_page(ctx, page));
     fz_device *dev = NULL;
     fz_var(dev);
     fz_try(ctx) {
         dev = fz_new_list_device(ctx, list);
         pdf_run_page_contents(ctx, pp, dev, fz_identity, NULL);
-        for (pdf_annot *a = pdf_first_annot(ctx, pp); a; a = pdf_next_annot(ctx, a))
-            if (!is_reply(ctx, a)) pdf_run_annot(ctx, a, dev, fz_identity, NULL);
-        pdf_run_page_widgets(ctx, pp, dev, fz_identity, NULL);
+        if (!contents_only) {
+            for (pdf_annot *a = pdf_first_annot(ctx, pp); a; a = pdf_next_annot(ctx, a))
+                if (!is_reply(ctx, a)) pdf_run_annot(ctx, a, dev, fz_identity, NULL);
+            pdf_run_page_widgets(ctx, pp, dev, fz_identity, NULL);
+        }
         fz_close_device(ctx, dev);
     }
     fz_always(ctx)
@@ -524,7 +531,7 @@ static fz_display_list *new_display_list(fz_context *ctx, fz_page *page) {
     return list;
 }
 
-opdf_list *opdf_list_load(opdf_doc *d, int page_number, opdf_error *err) {
+opdf_list *opdf_list_load(opdf_doc *d, int page_number, bool contents_only, opdf_error *err) {
     clear_error(err);
     fz_context *ctx = d->ctx;
     fz_page *page = NULL;
@@ -534,7 +541,7 @@ opdf_list *opdf_list_load(opdf_doc *d, int page_number, opdf_error *err) {
     lock_doc(d);
     fz_try(ctx) {
         page = fz_load_page(ctx, d->doc, page_number);
-        list = new_display_list(ctx, page);
+        list = new_display_list(ctx, page, contents_only);
     }
     fz_always(ctx)
         fz_drop_page(ctx, page);
@@ -700,6 +707,114 @@ opdf_char *opdf_text_load(opdf_doc *d, int page_number, int *count, opdf_error *
     }
     *count = buf.count;
     return buf.items;
+}
+
+// --- Text info (is this page a scan?) ----------------------------------------
+
+#define TEXT_INFO_GRID 32
+
+// Counts the characters a page draws, visibly and invisibly, and which cells
+// of a grid over the page its images cover (a grid, so strips and layered
+// images aren't counted twice).
+typedef struct {
+    fz_device super;
+    fz_rect page;
+    int visible, invisible, covered;
+    unsigned char cells[TEXT_INFO_GRID * TEXT_INFO_GRID];
+} text_info_device;
+
+static int text_glyphs(const fz_text *text) {
+    int n = 0;
+    for (fz_text_span *span = text->head; span && n < INT_MAX / 2; span = span->next) n += span->len;
+    return n;
+}
+
+static void add_glyphs(int *count, int n) {
+    *count = n > INT_MAX / 2 - *count ? INT_MAX / 2 : *count + n;
+}
+
+static void info_fill_text(fz_context *ctx, fz_device *dev, const fz_text *text, fz_matrix ctm, fz_colorspace *cs,
+                           const float *color, float alpha, fz_color_params params) {
+    add_glyphs(&((text_info_device *)dev)->visible, text_glyphs(text));
+}
+
+static void info_stroke_text(fz_context *ctx, fz_device *dev, const fz_text *text, const fz_stroke_state *stroke,
+                             fz_matrix ctm, fz_colorspace *cs, const float *color, float alpha, fz_color_params params) {
+    add_glyphs(&((text_info_device *)dev)->visible, text_glyphs(text));
+}
+
+static void info_ignore_text(fz_context *ctx, fz_device *dev, const fz_text *text, fz_matrix ctm) {
+    add_glyphs(&((text_info_device *)dev)->invisible, text_glyphs(text));
+}
+
+static void info_cover(text_info_device *dev, fz_matrix ctm) {
+    if (dev->covered >= TEXT_INFO_GRID * TEXT_INFO_GRID) return;
+    fz_rect r = fz_intersect_rect(fz_transform_rect(fz_unit_rect, ctm), dev->page);
+    if (fz_is_empty_rect(r)) return;
+    float w = (dev->page.x1 - dev->page.x0) / TEXT_INFO_GRID, h = (dev->page.y1 - dev->page.y0) / TEXT_INFO_GRID;
+    if (!(w > 0) || !(h > 0)) return;
+    // Cells whose centres the image covers.
+    int x0 = (int)ceilf((r.x0 - dev->page.x0) / w - 0.5f), x1 = (int)floorf((r.x1 - dev->page.x0) / w - 0.5f);
+    int y0 = (int)ceilf((r.y0 - dev->page.y0) / h - 0.5f), y1 = (int)floorf((r.y1 - dev->page.y0) / h - 0.5f);
+    x0 = fz_maxi(x0, 0); y0 = fz_maxi(y0, 0);
+    x1 = fz_mini(x1, TEXT_INFO_GRID - 1); y1 = fz_mini(y1, TEXT_INFO_GRID - 1);
+    for (int y = y0; y <= y1; y++)
+        for (int x = x0; x <= x1; x++) {
+            unsigned char *cell = &dev->cells[y * TEXT_INFO_GRID + x];
+            if (!*cell) {
+                *cell = 1;
+                dev->covered++;
+            }
+        }
+}
+
+static void info_fill_image(fz_context *ctx, fz_device *dev, fz_image *image, fz_matrix ctm, float alpha,
+                            fz_color_params params) {
+    info_cover((text_info_device *)dev, ctm);
+}
+
+static void info_fill_image_mask(fz_context *ctx, fz_device *dev, fz_image *image, fz_matrix ctm, fz_colorspace *cs,
+                                 const float *color, float alpha, fz_color_params params) {
+    info_cover((text_info_device *)dev, ctm);
+}
+
+bool opdf_page_text_info(opdf_doc *d, int page_number, opdf_text_info *info, opdf_error *err) {
+    clear_error(err);
+    memset(info, 0, sizeof *info);
+    fz_context *ctx = d->ctx;
+    fz_page *page = NULL;
+    text_info_device *dev = NULL;
+    bool ok = false;
+    fz_var(page);
+    fz_var(dev);
+    fz_var(ok);
+    lock_doc(d);
+    fz_try(ctx) {
+        page = fz_load_page(ctx, d->doc, page_number);
+        dev = fz_new_derived_device(ctx, text_info_device);
+        dev->super.fill_text = info_fill_text;
+        dev->super.stroke_text = info_stroke_text;
+        dev->super.ignore_text = info_ignore_text;
+        dev->super.fill_image = info_fill_image;
+        dev->super.fill_image_mask = info_fill_image_mask;
+        dev->page = fz_bound_page(ctx, page);
+        pdf_page *pp = pdf_page_from_fz_page(ctx, page);
+        if (pp) pdf_run_page_contents(ctx, pp, &dev->super, fz_identity, NULL);
+        else fz_run_page_contents(ctx, page, &dev->super, fz_identity, NULL);
+        fz_close_device(ctx, &dev->super);
+        info->visible = dev->visible;
+        info->invisible = dev->invisible;
+        info->image_coverage = (float)dev->covered / (TEXT_INFO_GRID * TEXT_INFO_GRID);
+        ok = true;
+    }
+    fz_always(ctx) {
+        fz_drop_device(ctx, dev ? &dev->super : NULL);
+        fz_drop_page(ctx, page);
+    }
+    fz_catch(ctx)
+        set_error(err, ctx);
+    unlock_doc(d);
+    return ok;
 }
 
 // --- Links -------------------------------------------------------------------

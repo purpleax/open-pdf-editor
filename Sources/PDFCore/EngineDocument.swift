@@ -139,9 +139,10 @@ public final class EngineDocument: @unchecked Sendable {
     // MARK: Rendering
 
     /// The page's drawing commands, ready to render at any scale on any thread.
-    public func displayList(page: Int) throws -> DisplayList {
+    /// `contentsOnly` leaves out annotations and form fields.
+    public func displayList(page: Int, contentsOnly: Bool = false) throws -> DisplayList {
         var error = opdf_error()
-        guard let list = opdf_list_load(handle, Int32(page), &error) else { throw EngineError(error) }
+        guard let list = opdf_list_load(handle, Int32(page), contentsOnly, &error) else { throw EngineError(error) }
         return DisplayList(document: self, handle: list)
     }
 
@@ -186,9 +187,9 @@ public final class EngineDocument: @unchecked Sendable {
     }
 
     /// A whole page as an image at `scale` (1 = 72 dpi).
-    public func renderPage(_ page: Int, bounds: CGRect, scale: CGFloat, rotation: Int = 0,
+    public func renderPage(_ page: Int, bounds: CGRect, scale: CGFloat, rotation: Int = 0, contentsOnly: Bool = false,
                            cookie: RenderCookie? = nil) throws -> CGImage {
-        let list = try displayList(page: page)
+        let list = try displayList(page: page, contentsOnly: contentsOnly)
         let size = bounds.applying(Self.pageTransform(bounds: bounds, scale: scale, rotation: rotation)).size
         return try render(list, bounds: bounds, scale: scale, rotation: rotation,
                           rect: CGRect(x: 0, y: 0, width: max(1, size.width.rounded()), height: max(1, size.height.rounded())),
