@@ -10,10 +10,13 @@ final class MarkupBarViewController: NSViewController {
     private let widthPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let sizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let stampPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let signaturePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private var signatureIDs: [String] = []
     private(set) var tool = AnnotationTool.select
 
     /// Called when the user picks a tool.
     var onToolChosen: ((AnnotationTool) -> Void)?
+    var onManageSignatures: (() -> Void)?
 
     static let widths: [CGFloat] = [1, 2, 3, 4, 6, 8, 12]
     static let sizes: [CGFloat] = [8, 9, 10, 11, 12, 14, 16, 18, 24, 36]
@@ -56,7 +59,15 @@ final class MarkupBarViewController: NSViewController {
         stampPopup.toolTip = "Stamp"
         stampPopup.controlSize = .small
 
-        let stack = NSStackView(views: [tools, colorWell, widthPopup, sizePopup, stampPopup])
+        signaturePopup.target = self
+        signaturePopup.action = #selector(signatureChanged(_:))
+        signaturePopup.toolTip = "Signature"
+        signaturePopup.controlSize = .small
+        NotificationCenter.default.addObserver(forName: SavedSignatures.didChange, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reloadSignatures() }
+        }
+
+        let stack = NSStackView(views: [tools, colorWell, widthPopup, sizePopup, stampPopup, signaturePopup])
         stack.orientation = .horizontal
         stack.spacing = 10
         stack.edgeInsets = NSEdgeInsets(top: 5, left: 12, bottom: 5, right: 12)
@@ -89,6 +100,29 @@ final class MarkupBarViewController: NSViewController {
         if let index = Self.sizes.firstIndex(of: ToolSettings.textSize) { sizePopup.selectItem(at: index) }
         stampPopup.isHidden = tool != .stamp
         stampPopup.selectItem(withTitle: ToolSettings.stamp.title)
+        signaturePopup.isHidden = tool != .signature
+        if tool == .signature { reloadSignatures() }
+    }
+
+    /// The saved signatures (read from the keychain only while the tool is chosen).
+    private func reloadSignatures() {
+        guard isViewLoaded, tool == .signature else { return }
+        let all = SavedSignatures.all
+        signatureIDs = all.map(\.id)
+        signaturePopup.removeAllItems()
+        for saved in all { signaturePopup.addItem(withTitle: saved.name) }
+        if !all.isEmpty { signaturePopup.menu?.addItem(.separator()) }
+        signaturePopup.addItem(withTitle: "Manage Signatures…")
+        if let chosen = SavedSignatures.chosen, let index = signatureIDs.firstIndex(of: chosen.id) { signaturePopup.selectItem(at: index) }
+    }
+
+    @objc private func signatureChanged(_ sender: NSPopUpButton) {
+        if signatureIDs.indices.contains(sender.indexOfSelectedItem) {
+            SavedSignatures.choose(signatureIDs[sender.indexOfSelectedItem])
+        } else {
+            reloadSignatures()
+            onManageSignatures?()
+        }
     }
 
     @objc private func toolClicked(_ sender: NSSegmentedControl) {

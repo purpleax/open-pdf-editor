@@ -67,14 +67,34 @@ extension EngineDocument {
     /// Signs an empty signature field with a Keychain identity and goes on
     /// from the signed bytes (undo history is cleared); save the document
     /// afterwards to keep it. The Keychain may ask to allow the key's use.
+    /// `picture` (PNG or JPEG) is drawn in the signature's appearance.
     public func sign(page: Int, field id: Int, identity: SecIdentity, reason: String = "", location: String = "",
-                     openPassword: String? = nil) throws {
+                     picture: Data? = nil, openPassword: String? = nil) throws {
         var error = opdf_error()
         let ok = withOptionalCString(openPassword) { password in
-            opdf_sign_field(handle, Int32(page), Int32(id), Unmanaged.passUnretained(identity).toOpaque(),
-                            reason, location, password, &error)
+            (picture ?? Data()).withUnsafeBytes { bytes in
+                opdf_sign_field(handle, Int32(page), Int32(id), Unmanaged.passUnretained(identity).toOpaque(),
+                                reason, location, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count, password, &error)
+            }
         }
         guard ok else { throw EngineError(error) }
+    }
+}
+
+extension EngineDocument {
+    /// A stamp annotation showing a picture (PNG or JPEG), filling `rect`;
+    /// returns its id.
+    public func createImageStamp(page: Int, rect: CGRect, image: Data, author: String?, actionName: String) throws -> Int {
+        var error = opdf_error()
+        let r = opdf_rect(x0: Float(rect.minX), y0: Float(rect.minY), x1: Float(rect.maxX), y1: Float(rect.maxY))
+        let id = image.withUnsafeBytes { bytes in
+            withOptionalCString(author) { author in
+                opdf_annot_create_image_stamp(handle, Int32(page), r, bytes.bindMemory(to: UInt8.self).baseAddress, bytes.count,
+                                              author, actionName, &error)
+            }
+        }
+        guard id > 0 else { throw EngineError(error) }
+        return Int(id)
     }
 }
 

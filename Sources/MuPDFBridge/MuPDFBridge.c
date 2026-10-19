@@ -2473,6 +2473,41 @@ static void edit_image(fz_context *ctx, pdf_document *pdf, pdf_page *page, image
     if (e->mode != 0 && !e->found) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No such image");
 }
 
+int opdf_annot_create_image_stamp(opdf_doc *d, int page_number, opdf_rect rect, const unsigned char *data, size_t len,
+                                  const char *author, const char *operation, opdf_error *err) {
+    clear_error(err);
+    int id = 0;
+    fz_image *image = NULL;
+    pdf_annot *annot = NULL;
+    fz_var(id);
+    fz_var(image);
+    fz_var(annot);
+    WITH_PAGE_OPERATION(d, page_number, operation, err, {
+        fz_rect r = checked_rect(ctx, rect);
+        image = import_image(ctx, data, len);
+        annot = pdf_create_annot(ctx, pp, PDF_ANNOT_STAMP);
+        fz_try(ctx) {
+            pdf_set_annot_rect(ctx, annot, r);
+            pdf_set_annot_stamp_image(ctx, annot, image);
+            pdf_set_annot_rect(ctx, annot, r);   // setting the image resizes it to the picture
+            if (author) pdf_set_annot_author(ctx, annot, author);
+            pdf_set_annot_modification_date(ctx, annot, (int64_t)time(NULL));
+            pdf_update_annot(ctx, annot);
+            id = annot_id(ctx, annot);
+        }
+        fz_always(ctx) {
+            pdf_drop_annot(ctx, annot);
+            annot = NULL;
+            fz_drop_image(ctx, image);
+            image = NULL;
+        }
+        fz_catch(ctx)
+            fz_rethrow(ctx);
+    });
+    if (err && err->code) id = 0;
+    return id;
+}
+
 bool opdf_image_add(opdf_doc *d, int page_number, opdf_rect rect, const unsigned char *data, size_t len, opdf_error *err) {
     clear_error(err);
     fz_image *image = NULL;
@@ -5413,7 +5448,8 @@ static void make_temp(fz_context *ctx, char *path, size_t size, const char *stem
 }
 
 bool opdf_sign_field(opdf_doc *d, int page_number, int id, const void *identity,
-                     const char *reason, const char *location, const char *open_password, opdf_error *err) {
+                     const char *reason, const char *location, const unsigned char *graphic_data, size_t graphic_len,
+                     const char *open_password, opdf_error *err) {
     clear_error(err);
     fz_context *ctx = d->ctx;
     char copied[1024] = "", signed_path[1024] = "";
@@ -5422,7 +5458,9 @@ bool opdf_sign_field(opdf_doc *d, int page_number, int id, const void *identity,
     opdf_signer *signer = NULL;
     fz_buffer *buf = NULL;
     fz_stream *stm = NULL;
+    fz_image *graphic = NULL;
     bool ok = false;
+    fz_var(graphic);
     fz_var(copy);
     fz_var(fresh);
     fz_var(page);
@@ -5468,8 +5506,11 @@ bool opdf_sign_field(opdf_doc *d, int page_number, int id, const void *identity,
             fz_throw(ctx, FZ_ERROR_ARGUMENT, "That field is already signed.");
         if (pdf_field_flags(ctx, pdf_annot_obj(ctx, widget)) & PDF_FIELD_IS_READ_ONLY)
             fz_throw(ctx, FZ_ERROR_ARGUMENT, "That signature field is locked.");
-        pdf_sign_signature(ctx, widget, &signer->base, PDF_SIGNATURE_DEFAULT_APPEARANCE & ~(PDF_SIGNATURE_SHOW_LOGO | PDF_SIGNATURE_SHOW_DN),
-                           NULL, reason && reason[0] ? reason : NULL, location && location[0] ? location : NULL);
+        if (graphic_data && graphic_len) graphic = import_image(ctx, graphic_data, graphic_len);
+        int flags = PDF_SIGNATURE_DEFAULT_APPEARANCE & ~(PDF_SIGNATURE_SHOW_LOGO | PDF_SIGNATURE_SHOW_DN);
+        if (graphic) flags &= ~PDF_SIGNATURE_SHOW_GRAPHIC_NAME;   // the picture instead of the name drawn large
+        pdf_sign_signature(ctx, widget, &signer->base, flags,
+                           graphic, reason && reason[0] ? reason : NULL, location && location[0] ? location : NULL);
         // Reason and location are drawn, and kept in the signature too: in
         // the signing revision (any change after a signature otherwise
         // starts a new one, outside the signed bytes).
@@ -5511,6 +5552,7 @@ bool opdf_sign_field(opdf_doc *d, int page_number, int id, const void *identity,
     }
     fz_always(ctx) {
         fz_drop_page(ctx, (fz_page *)page);
+        fz_drop_image(ctx, graphic);
         pdf_drop_document(ctx, copy);
         pdf_drop_document(ctx, fresh);
         fz_drop_stream(ctx, stm);

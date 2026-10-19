@@ -382,6 +382,10 @@ void opdf_page_content_free(opdf_page_content *content);
 // upright as the page is shown. Each is one undoable step.
 #define OPDF_MAX_IMAGE_BYTES (100 << 20)
 #define OPDF_MAX_IMAGE_PIXELS 40000000
+// A stamp annotation showing an image (a handwritten signature), filling
+// `rect`; returns its id, or 0.
+int opdf_annot_create_image_stamp(opdf_doc *doc, int page, opdf_rect rect, const unsigned char *data, size_t len,
+                                  const char *author, const char *operation, opdf_error *err);
 // Draws a new image over the page's content, filling `rect`.
 bool opdf_image_add(opdf_doc *doc, int page, opdf_rect rect, const unsigned char *data, size_t len, opdf_error *err);
 // Moves or resizes image drawing `op` so that it fills `rect`.
@@ -584,8 +588,10 @@ bool opdf_rebase(opdf_doc *doc, const opdf_rebase_options *options, opdf_error *
 // unchanged; undo history is cleared. Done on a copy: if anything fails, the
 // open document is as it was. Signing may ask, through the Keychain, to use
 // the private key.
+// `graphic` (a PNG or JPEG, optional) is drawn beside the signer's name.
 bool opdf_sign_field(opdf_doc *doc, int page, int widget, const void *identity,
-                     const char *reason, const char *location, const char *open_password, opdf_error *err);
+                     const char *reason, const char *location, const unsigned char *graphic, size_t graphic_len,
+                     const char *open_password, opdf_error *err);
 
 enum {
     OPDF_SIG_INTEGRITY_VALID = 0,      // the signed bytes are as they were signed

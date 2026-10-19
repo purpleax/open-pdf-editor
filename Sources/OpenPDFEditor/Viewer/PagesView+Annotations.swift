@@ -157,6 +157,7 @@ extension PagesView {
                 switch tool {
                 case .note: created = try annotations.createNote(page: page, at: start)
                 case .stamp: created = try annotations.createStamp(page: page, at: start)
+                case .signature: created = try annotations.createSignature(page: page, at: start)
                 case .pen: created = try annotations.createInk(page: page, points: points)
                 default: created = try annotations.createShape(tool, page: page, from: start, to: current)
                 }

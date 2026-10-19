@@ -148,9 +148,9 @@ final class EditorDocument: NSDocument, EditRecorder {
 
     /// Signs a signature field with a Keychain identity (see
     /// EngineDocument.sign). Can't be undone.
-    func sign(_ field: FormField, identity: SecIdentity, reason: String, location: String) throws {
+    func sign(_ field: FormField, identity: SecIdentity, reason: String, location: String, picture: Data? = nil) throws {
         try rewrite { try $0.sign(page: field.page, field: field.id, identity: identity, reason: reason,
-                                  location: location, openPassword: password) }
+                                  location: location, picture: picture, openPassword: password) }
     }
 
     /// A change that writes the document whole: undo history goes.

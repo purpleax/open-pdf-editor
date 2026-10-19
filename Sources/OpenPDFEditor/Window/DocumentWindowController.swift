@@ -125,7 +125,12 @@ final class DocumentWindowController: NSWindowController, NSWindowDelegate, NSTo
 
         viewer.onStateChange = { [weak self] in self?.viewerStateDidChange() }
         viewer.find.onChange = { [weak self] in self?.findDidChange() }
-        viewer.onToolChange = { [weak self] tool in self?.markupBar.setTool(tool) }
+        viewer.onToolChange = { [weak self] tool in
+            self?.markupBar.setTool(tool)
+            // Nothing to place yet: make one first.
+            if tool == .signature, SavedSignatures.chosen == nil { self?.manageSignatures(nil) }
+        }
+        markupBar.onManageSignatures = { [weak self] in self?.manageSignatures(nil) }
         viewer.onAnnotationSelectionChange = { [weak self] ref in
             self?.inspector?.show(ref)
             self?.sidebar?.annotationSelectionDidChange(ref)

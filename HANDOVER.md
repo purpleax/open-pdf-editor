@@ -20,7 +20,9 @@ The state of the work and how it is run, for picking it up in a new session or o
 
   4. Digital signatures: `CMS.c`/`cms.h` (Security.framework only: CMSEncoder/CMSDecoder/SecTrust; BER lengths, as CMSEncoder writes indefinite ones), `opdf_sign_field` (snapshot to a temp copy, sign, `disallow_new_increments` while adding /Reason and /Location so they stay in the signing revision, real incremental save, reopen from the bytes), `opdf_signatures` (checks the byte-range gap is this signature's /Contents), `Signatures.swift` in PDFCore, the Sign… sheet, the inspector's Signatures section, Settings › Check certificates online, `HAVE_LIBCRYPTO=no`, `signer.p12` in the corpus (imported in memory: macOS 15+), self-test run `sign`. Verified independently with `openssl smime -verify`.
 
-  Next: step 5, handwritten and image signatures.
+  5. Handwritten and image signatures: `opdf_annot_create_image_stamp`, a picture in `opdf_sign_field`, `SavedSignatures.swift` (keychain store: attributes listed, then each item's data read on its own, as the file-based keychain requires; a memory store the self-test always uses; `SignaturePad`; `SignatureManager`), the Signature tool and markup-bar popup. The keychain store itself has no automated test (the self-test must not touch the user's keychain): check it by hand.
+
+  Next: step 6, finish (docs, security review, release 0.6.0 after agreement).
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.

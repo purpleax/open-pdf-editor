@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import ImageIO
 import PDFCore
 import Security
 import Testing
@@ -299,7 +300,8 @@ import Testing
     @Test func encryptedDocumentsSign() throws {
         let doc = try Corpus.open("forms.pdf")
         try doc.rebase(encryption: .aes256(user: "", owner: "owner", permissions: .all))
-        try doc.sign(page: 0, field: try signatureField(doc).id, identity: identity(), openPassword: "owner")
+        try doc.sign(page: 0, field: try signatureField(doc).id, identity: identity(), picture: ImageStampTests.picture(),
+                     openPassword: "owner")
         let out = temporaryURL("signed-encrypted.pdf")
         defer { try? FileManager.default.removeItem(at: out) }
         try doc.save(to: out)
@@ -307,5 +309,53 @@ import Testing
         #expect(reopened.isEncrypted)
         let signature = try #require(try reopened.signatures().first)
         #expect(signature.integrity == .valid && signature.trust == .selfSigned)
+    }
+}
+
+@Suite struct ImageStampTests {
+    /// A 40 × 20 PNG: black on transparent, as a drawn signature is.
+    static func picture() throws -> Data {
+        let context = try #require(CGContext(data: nil, width: 40, height: 20, bitsPerComponent: 8, bytesPerRow: 0,
+                                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 40, height: 20))
+        let image = try #require(context.makeImage())
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, "public.png" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
+    @Test func roundTripsAndDraws() throws {
+        let doc = try Corpus.open("text.pdf")
+        let rect = CGRect(x: 300, y: 400, width: 120, height: 60)
+        let id = try doc.createImageStamp(page: 0, rect: rect, image: Self.picture(), author: "Ada", actionName: "Signature")
+        #expect(doc.canUndo)
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)-stamp.pdf")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try doc.save(to: out)
+        let reopened = try EngineDocument(url: out)
+        let stamp = try #require(try reopened.annotations(page: 0).first { $0.id == id })
+        #expect(stamp.kind == .stamp && stamp.author == "Ada")
+        #expect(abs(stamp.rect.midX - rect.midX) < 1 && abs(stamp.rect.midY - rect.midY) < 1)
+        // Drawn: the middle of the stamp is dark.
+        let bounds = try reopened.pageBounds()[0]
+        let image = try reopened.renderPage(0, bounds: bounds, scale: 1)
+        let context = try #require(CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                                             space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(image, in: CGRect(x: -rect.midX, y: -(bounds.height - rect.midY), width: CGFloat(image.width), height: CGFloat(image.height)))
+        let pixel = try #require(context.data?.assumingMemoryBound(to: UInt8.self))
+        #expect(pixel[0] < 80 && pixel[1] < 80 && pixel[2] < 80)
+    }
+
+    @Test func refusesNonImages() throws {
+        let doc = try Corpus.open("text.pdf")
+        #expect(throws: EngineError.self) {
+            try doc.createImageStamp(page: 0, rect: CGRect(x: 10, y: 10, width: 50, height: 50), image: Data("not an image".utf8),
+                                     author: nil, actionName: "Signature")
+        }
     }
 }

@@ -168,8 +168,9 @@ enum MainMenu {
             item.keyEquivalentModifierMask = [.command, .control]
             item.tag = index
             item.image = NSImage(systemSymbolName: tool.symbol, accessibilityDescription: nil)
-            if tool == .select || tool == .note || tool == .stamp || tool == .redact { tools.addItem(.separator()) }
+            if tool == .select || tool == .note || tool == .signature || tool == .redact { tools.addItem(.separator()) }
         }
+        tools.addItem(withTitle: "Signatures…", action: #selector(DocumentWindowController.manageSignatures(_:)), keyEquivalent: "")
         tools.addItem(withTitle: "Apply Redactions…", action: #selector(DocumentWindowController.applyRedactions(_:)), keyEquivalent: "")
         tools.addItem(.separator())
         tools.addItem(withTitle: "Flatten Annotations…", action: #selector(DocumentWindowController.flattenAnnotations(_:)), keyEquivalent: "")

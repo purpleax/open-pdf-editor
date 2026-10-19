@@ -1,8 +1,14 @@
 import AppKit
 import PDFCore
 
-/// Signing a signature field with a certificate from the Keychain.
+/// Signing a signature field with a certificate from the Keychain, and the
+/// saved handwritten signatures.
 extension DocumentWindowController {
+    @objc func manageSignatures(_ sender: Any?) {
+        guard let window else { return }
+        SignatureManager.present(on: window)
+    }
+
     /// A signature field was clicked: offer to sign it, or show its signature.
     func signField(_ field: FormField) {
         guard let viewer, let window, let document = editorDocument else { return }
@@ -24,12 +30,17 @@ extension DocumentWindowController {
             if let expires = identity.expires { title += " — until " + expires.formatted(date: .abbreviated, time: .omitted) }
             popup.addItem(withTitle: title)
         }
+        let pictures = SavedSignatures.all
+        let picture = NSPopUpButton()
+        picture.addItem(withTitle: "None")
+        for saved in pictures { picture.addItem(withTitle: saved.name) }
         let reason = NSTextField(), location = NSTextField()
         reason.placeholderString = "Reason (optional)"
         location.placeholderString = "Location (optional)"
-        for control in [popup, reason, location] as [NSView] { control.widthAnchor.constraint(equalToConstant: 320).isActive = true }
+        for control in [popup, picture, reason, location] as [NSView] { control.widthAnchor.constraint(equalToConstant: 320).isActive = true }
         let grid = NSGridView(views: [
             [NSTextField(labelWithString: "Certificate:"), popup],
+            [NSTextField(labelWithString: "Picture:"), picture],
             [NSTextField(labelWithString: "Reason:"), reason],
             [NSTextField(labelWithString: "Location:"), location],
         ])
@@ -46,8 +57,9 @@ extension DocumentWindowController {
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             let identity = identities[max(popup.indexOfSelectedItem, 0)].identity
+            let image = picture.indexOfSelectedItem > 0 ? pictures[picture.indexOfSelectedItem - 1].image : nil
             do {
-                try document.sign(field, identity: identity, reason: reason.stringValue, location: location.stringValue)
+                try document.sign(field, identity: identity, reason: reason.stringValue, location: location.stringValue, picture: image)
                 self.updateRestrictionBanner()
             } catch {
                 let failed = NSAlert()

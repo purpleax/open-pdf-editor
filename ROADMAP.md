@@ -40,6 +40,7 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Redaction | Tools › Redact marks text (drag across it) or an area (drag anywhere else). Tools › Apply Redactions… removes, for good, whatever is under the marks: text (any character touching a mark), image pixels, line art touching a mark, links, annotations with their replies, and form fields with their values. It draws black boxes, scrubs hidden leftovers (thumbnails, PieceInfo, document JavaScript; XMP rebuilt), writes the document whole and saves it, and offers to delete the file's earlier versions (checked). Flatten Annotations refuses while marks remain. | 2026-10-19 |
 | Online certificate checks | A Settings switch, Check certificates online, off by default (Risky features): fetching missing intermediate certificates and checking revocation tells the certificates' servers that a signed document is being opened. Off, signatures are checked against this Mac's trust store only. | 2026-10-19 |
 | Signing | Clicking an empty signature field opens Sign…: a Keychain identity, reason and location. The document with its unsaved changes is signed on a copy (a real incremental save, the only kind that finishes a signature), the open document goes on from the signed bytes, and it is saved at once. Signatures are checked when the file's bytes change, not on every edit; a gap in the signed ranges must hold exactly that signature's /Contents. | 2026-10-19 |
+| Saved signatures | Drawn (a pad in Tools › Signatures…) or imported (read with ImageIO, at most 1200 pixels, as PNG) and kept as generic-password items in the login keychain, readable without asking only by this app. The Signature tool (⌃⌘G) places the chosen one as a stamp annotation with that picture; Sign… can draw it in a digital signature's appearance. | 2026-10-19 |
 | Encryption | File › Security… sets, changes or removes the passwords and permissions, with AES-256 only. It needs owner access: a file opened with the user password asks for the owner password first. | 2026-10-19 |
 | Permissions | Enforced when a file is opened without owner access. Printing, copying text, editing (content, fields, metadata), comments, filling in forms and page changes are each disabled per the owner's settings, and a notice under the toolbar says what isn't allowed, with Enter Owner Password…. | 2026-10-19 |
 
@@ -172,7 +173,10 @@ From the first release-time security review (all findings above Low fixed, plus 
   - Click an empty signature field to sign it with a certificate from your keychain (the Keychain may ask to allow the key's use), with an optional reason and location. The signature is a detached CMS (adbe.pkcs7.detached, SHA-256) made by Security.framework; MuPDF is built without OpenSSL on every Mac.
   - The inspector's Signatures section says, for each signature field: who signed and when (by the signer's clock), whether the document has changed since, and whether the certificate is trusted, self-signed, untrusted, expired or revoked. Settings › Check certificates online (off by default) allows fetching certificates and revocation checks.
   - Left for later (Low): PAdES (ETSI.CAdES.detached) and timestamps; verification at the signing time rather than now; whether later changes are ones the signature allows (MDP).
-- [ ] Handwritten and image signatures
+- [x] Handwritten and image signatures
+  - Tools › Signatures…: draw a signature with the mouse or trackpad, or import a picture of one; choose or delete saved ones. They are kept in your login keychain.
+  - The Signature tool (⌃⌘G, or the markup bar) places the chosen signature where you click, as a stamp you can move and resize; the markup bar lists saved signatures and Manage Signatures….
+  - Sign… can show a saved signature beside the signer's name.
 
 ## Phase 7: OCR and export (0.7.0)
 

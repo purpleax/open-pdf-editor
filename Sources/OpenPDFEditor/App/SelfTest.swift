@@ -18,6 +18,8 @@ enum SelfTest {
     }
 
     static func run() {
+        // Saved signatures in memory: the self-test never touches the keychain.
+        SavedSignatures.store = MemorySignatureStore()
         if let outPath = ProcessInfo.processInfo.environment["OPDF_SELFTEST_WELCOME"] {
             out = URL(fileURLWithPath: outPath)
             try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
@@ -571,6 +573,23 @@ enum SelfTest {
             return finish()
         }
         window.setFrame(NSRect(x: 100, y: 100, width: 1200, height: 860), display: true)
+        // The Signature tool with nothing saved opens Signatures…
+        viewer.tool = .signature
+        say("Signatures… after choosing the tool with none saved: \(window.attachedSheet != nil)")
+        _ = pressSheetButton(window, "Done")
+        // A signature drawn on the pad, saved and placed.
+        let pad = SignaturePad(frame: NSRect(x: 0, y: 0, width: 420, height: 150))
+        pad.strokes = [[CGPoint(x: 20, y: 100), CGPoint(x: 70, y: 40), CGPoint(x: 120, y: 110), CGPoint(x: 170, y: 50), CGPoint(x: 260, y: 90)],
+                       [CGPoint(x: 200, y: 30), CGPoint(x: 210, y: 120)]]
+        guard let png = pad.png(), (try? SavedSignatures.add(name: "Self test", image: png)) != nil else {
+            say("FAIL drawn signature not saved")
+            return finish()
+        }
+        viewer.tool = .signature
+        click(viewer, page: 0, at: CGPoint(x: 450, y: 120))
+        let stamps = viewer.model.annotations(page: 0).filter { $0.kind == .stamp }
+        say("signature stamps placed: \(stamps.count), size \(stamps.first.map { "\(Int($0.rect.width))×\(Int($0.rect.height))" } ?? "-"); tool after: \(viewer.tool.rawValue)")
+        viewer.tool = .select
         click(viewer, page: 0, at: CGPoint(x: field.rect.midX, y: field.rect.midY))
         DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
             say("sheet after clicking the field: \(window.attachedSheet != nil)")
@@ -588,7 +607,8 @@ enum SelfTest {
                 return finish()
             }
             do {
-                try document.sign(field, identity: identity as! SecIdentity, reason: "Self test", location: "")
+                try document.sign(field, identity: identity as! SecIdentity, reason: "Self test", location: "",
+                                  picture: SavedSignatures.chosen?.image)
                 controller.updateRestrictionBanner()
                 controller.saveRewritten(document)
             } catch {

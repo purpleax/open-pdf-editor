@@ -230,6 +230,20 @@ final class AnnotationController {
         return AnnotationRef(page: page, id: id)
     }
 
+    /// The chosen saved signature, about 160 points wide, centred on the
+    /// point; nil if there isn't one.
+    func createSignature(page: Int, at point: CGPoint) throws -> AnnotationRef? {
+        guard let signature = SavedSignatures.chosen else { return nil }
+        let pixels = signature.pixelSize
+        var size = CGSize(width: 160, height: 160 * pixels.height / pixels.width)
+        if size.height > 100 { size = CGSize(width: 100 * pixels.width / pixels.height, height: 100) }
+        let rect = clamp(CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height), page: page)
+        let id = try model.edit("Signature", pages: [page], needs: .annotate) {
+            try $0.createImageStamp(page: page, rect: rect, image: signature.image, author: author, actionName: "Signature")
+        }
+        return AnnotationRef(page: page, id: id)
+    }
+
     func createStamp(page: Int, at point: CGPoint) throws -> AnnotationRef {
         let stamp = ToolSettings.stamp
         let width = max(140, CGFloat(stamp.title.count) * 13)
