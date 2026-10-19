@@ -22,7 +22,9 @@ The state of the work and how it is run, for picking it up in a new session or o
 
   5. Handwritten and image signatures: `opdf_annot_create_image_stamp`, a picture in `opdf_sign_field`, `SavedSignatures.swift` (keychain store: attributes listed, then each item's data read on its own, as the file-based keychain requires; a memory store the self-test always uses; `SignaturePad`; `SignatureManager`), the Signature tool and markup-bar popup. The keychain store itself has no automated test (the self-test must not touch the user's keychain): check it by hand.
 
-  Next: step 6, finish (docs, security review, release 0.6.0 after agreement).
+  6. Finish: docs (ROADMAP 0.6.0 notes, README, DEVELOPMENT), security review and re-review, all fixes in (see ROADMAP Phase 6). 135 tests and every self-test run pass.
+
+  Next: release 0.6.0 once the user agrees (dry run first), then ask about installing.
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.

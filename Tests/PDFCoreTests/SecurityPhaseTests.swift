@@ -428,7 +428,8 @@ import Testing
 @Suite struct RedactionLeftoverTests {
     @Test func siblingWidgetsReferencedNotesAndXFA() throws {
         let doc = try Corpus.open("redact.pdf")
-        for rect in [CGRect(x: 70, y: 70, width: 232, height: 24), CGRect(x: 398, y: 70, width: 24, height: 24)] {
+        for rect in [CGRect(x: 70, y: 70, width: 232, height: 24), CGRect(x: 398, y: 70, width: 24, height: 24),
+                     CGRect(x: 398, y: 170, width: 104, height: 24)] {
             var mark = AnnotationChange(kind: .redact)
             mark.rect = rect
             _ = try doc.createAnnotation(page: 0, mark, actionName: "Redact")
@@ -450,6 +451,7 @@ import Testing
         #expect(!bytes.contains("secret-sibling"))
         #expect(!bytes.contains("secret-in-struct"))
         #expect(!bytes.contains("xfa-secret"))
+        #expect(!bytes.contains("secret-link"))
         #expect(try !doc.formInfo().hasXFA)
     }
 }

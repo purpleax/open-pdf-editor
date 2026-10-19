@@ -3965,7 +3965,8 @@ static bool touches_any(const fz_rect *areas, int count, fz_rect r) {
 // another object (the structure tree, say) still refers to it.
 static void strip_annotation(fz_context *ctx, pdf_obj *obj) {
     static const char *const keys[] = { "Contents", "RC", "AP", "AS", "T", "TU", "TM", "Subj", "V", "DV", "RV",
-                                        "DS", "FS", "Sound", "Movie", "RichMediaContent", "Opt", "MK" };
+                                        "DS", "FS", "Sound", "Movie", "RichMediaContent", "Opt", "MK",
+                                        "A", "AA", "PA", "URI", "Dest" };
     for (size_t i = 0; i < sizeof keys / sizeof *keys; i++) pdf_dict_dels(ctx, obj, keys[i]);
     pdf_obj *popup = pdf_dict_get(ctx, obj, PDF_NAME(Popup));
     if (pdf_is_dict(ctx, popup)) {
@@ -4030,16 +4031,19 @@ static void redact_document(fz_context *ctx, pdf_document *doc) {
             // The marked areas: each quad of a mark, or its rectangle (in page
             // space, as pdf_annot_rect gives every annotation's).
             int count = 0, n = 0, widgets = 0;
-            for (pdf_annot *w = pdf_first_widget(ctx, page); w; w = pdf_next_widget(ctx, w))
-                if (++widgets > OPDF_MAX_FIELDS_PER_PAGE) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many form fields to redact", p + 1);
             for (pdf_annot *a = pdf_first_annot(ctx, page); a; a = pdf_next_annot(ctx, a)) {
-                if (++n > OPDF_MAX_ANNOTS_PER_PAGE) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many annotations to redact", p + 1);
+                n++;
                 if (pdf_annot_type(ctx, a) != PDF_ANNOT_REDACT) continue;
                 int q = pdf_annot_quad_point_count(ctx, a);
                 count += q > 0 ? q : 1;
                 if (count > OPDF_MAX_REDACT_AREAS) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many redaction marks", p + 1);
             }
             if (count > 0) {
+                // Only pages with marks are limited (a page elsewhere with
+                // thousands of annotations doesn't stop the redaction).
+                if (n > OPDF_MAX_ANNOTS_PER_PAGE) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many annotations to redact", p + 1);
+                for (pdf_annot *w = pdf_first_widget(ctx, page); w; w = pdf_next_widget(ctx, w))
+                    if (++widgets > OPDF_MAX_FIELDS_PER_PAGE) fz_throw(ctx, FZ_ERROR_LIMIT, "Page %d has too many form fields to redact", p + 1);
                 areas = checked_calloc(ctx, (size_t)count, sizeof *areas);
                 int k = 0;
                 for (pdf_annot *a = pdf_first_annot(ctx, page); a && k < count; a = pdf_next_annot(ctx, a)) {
@@ -4074,6 +4078,19 @@ static void redact_document(fz_context *ctx, pdf_document *doc) {
                     w = next;
                 }
                 redacted = true;
+                // Links aren't in MuPDF's list of annotations: pdf_redact_page
+                // takes them out of /Annots, and they are emptied here first
+                // in case something else (the structure tree) still refers
+                // to them.
+                fz_matrix ctm;
+                pdf_page_transform(ctx, page, NULL, &ctm);
+                pdf_obj *all = pdf_dict_get(ctx, page->obj, PDF_NAME(Annots));
+                for (int j = 0; j < pdf_array_len(ctx, all) && j < OPDF_MAX_ANNOTS_PER_PAGE; j++) {
+                    pdf_obj *link = pdf_array_get(ctx, all, j);
+                    if (!pdf_name_eq(ctx, pdf_dict_get(ctx, link, PDF_NAME(Subtype)), PDF_NAME(Link))) continue;
+                    if (touches_any(areas, count, fz_transform_rect(pdf_dict_get_rect(ctx, link, PDF_NAME(Rect)), ctm)))
+                        strip_annotation(ctx, link);
+                }
                 pdf_redact_options opts = { 1, PDF_REDACT_IMAGE_PIXELS, PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED, PDF_REDACT_TEXT_REMOVE };
                 pdf_redact_page(ctx, doc, page, &opts);
                 pdf_update_page(ctx, page);

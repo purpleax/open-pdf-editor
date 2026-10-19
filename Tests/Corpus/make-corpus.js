@@ -297,8 +297,11 @@ function makeRedactLeftovers() {
 	var note = doc.addObject({ Type: doc.newName("Annot"), Subtype: doc.newName("Text"), Rect: [400, 700, 420, 720],
 		Contents: doc.newString("secret-in-struct"), P: page })
 	page.get("Annots").push(note)
+	var link = doc.addObject({ Type: doc.newName("Annot"), Subtype: doc.newName("Link"), Rect: [400, 600, 500, 620],
+		A: { S: doc.newName("URI"), URI: doc.newString("https://secret-link.example/") }, P: page })
+	page.get("Annots").push(link)
 	doc.getTrailer().get("Root").put("StructTreeRoot", { Type: doc.newName("StructTreeRoot"),
-		K: { Type: doc.newName("OBJR"), Obj: note, Pg: page } })
+		K: [{ Type: doc.newName("OBJR"), Obj: note, Pg: page }, { Type: doc.newName("OBJR"), Obj: link, Pg: page }] })
 	doc.getTrailer().get("Root").get("AcroForm").put("XFA",
 		doc.addStream("<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"><xfa:datasets><secret>xfa-secret</secret></xfa:datasets></xdp:xdp>", {}))
 	doc.save(out + "/redact.pdf", "")
