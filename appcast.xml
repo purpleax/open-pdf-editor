@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 0.7.1</title>
-      <pubDate>Mon, 19 Oct 2026 13:07:22 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.1</link>
-      <sparkle:version>9</sparkle:version>
-      <sparkle:shortVersionString>0.7.1</sparkle:shortVersionString>
+      <title>Open PDF Editor 0.8.0</title>
+      <pubDate>Mon, 19 Oct 2026 20:35:20 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.8.0</link>
+      <sparkle:version>10</sparkle:version>
+      <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.7.1</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Select and type. Select some text and start typing, and it changes, just as in a word processor: no need to switch to editing first. Click anywhere in a paragraph and a cursor appears there for typing; Delete, Backspace and Return work the same way, and Space types a space when there's a cursor or selection (it still scrolls otherwise). Paragraphs whose lines happen to end together are no longer mistaken for justified text, so their spacing stays as it was after an edit.</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.7.1/Open-PDF-Editor-0.7.1.zip" sparkle:edSignature="LTRKU1E6MOmv8L8VPVvgjji9SwZs3a77EafCAFssTk2Wd2p8YlIh/ErfaQ3Rkm/mlP4rupdHPBmd44kAEuJnAw==" length="32366714" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.8.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Recognise text and export. Scanned pages now say so, and Tools › Recognise Text… reads them on this Mac with Apple's text recognition, so their words can be found, selected and copied; it reads pages without text unless you choose others, and works out the language by itself. File › Export… saves the document as a Word document, a web page, plain text, PNG or JPEG pictures of its pages, or one TIFF file, for all pages or some, including changes you haven't saved yet. Word documents and web pages made from recognised scans have the text rather than a picture of it.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.8.0/Open-PDF-Editor-0.8.0.zip" sparkle:edSignature="sQYNiHdq1X8J03+TkpNwouGuqrJAI9GtRAlwqB0KAHuFuW57Gx0ULdc/yJLoFE2043TCiUdUlwHcen6/DiJmBA==" length="32548716" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
