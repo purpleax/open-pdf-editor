@@ -223,8 +223,7 @@ From the first release-time security review (all findings above Low fixed, plus 
 ## Phase 9: 1.0 (1.0.0)
 
 - [ ] User manual, bundled and opened from Help
-- [ ] Homebrew cask
-- [ ] Website or project page
+- Removed (2026-10-20, at the user's request): a Homebrew cask and a website or project page.
 
 ## Releases
 
