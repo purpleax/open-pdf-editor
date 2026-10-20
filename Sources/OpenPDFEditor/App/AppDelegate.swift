@@ -85,6 +85,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
     }
 
+    /// Help › Open PDF Editor Guide: the bundled guide, opened as a copy in
+    /// Caches like any document (with its bookmarks showing). The bundled file
+    /// itself is never opened: saving it would break the app's signature.
+    /// The copy is replaced when the app changes, so notes made on it last
+    /// until the next update.
+    @objc func showGuide(_ sender: Any?) {
+        guard let bundled = Bundle.main.url(forResource: "Open PDF Editor Guide", withExtension: "pdf") else {
+            let alert = NSAlert()
+            alert.messageText = "The guide is missing from this copy of the app."
+            alert.runModal()
+            return
+        }
+        do {
+            let folder = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.purpleax.openpdfeditor", isDirectory: true)
+                .appendingPathComponent("Guide", isDirectory: true)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let copy = folder.appendingPathComponent(bundled.lastPathComponent)
+            if let open = NSDocumentController.shared.document(for: copy) {
+                open.showWindows()
+                return
+            }
+            let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+            let versionKey = "GuideCopyVersion"
+            if UserDefaults.standard.string(forKey: versionKey) != build || !FileManager.default.fileExists(atPath: copy.path) {
+                // Whatever is there (removing a link removes the link itself).
+                try? FileManager.default.removeItem(at: copy)
+                try FileManager.default.copyItem(at: bundled, to: copy)
+                UserDefaults.standard.set(build, forKey: versionKey)
+            }
+            NSDocumentController.shared.openDocument(withContentsOf: copy, display: true) { document, _, error in
+                MainActor.assumeIsolated {
+                    if let error {
+                        NSAlert(error: error).runModal()
+                        return
+                    }
+                    (document?.windowControllers.first as? DocumentWindowController)?.showOutline(nil)
+                }
+            }
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
     @objc func showAcknowledgements(_ sender: Any?) {
         if acknowledgements == nil {
             let text = Bundle.main.url(forResource: "Acknowledgements", withExtension: "txt")

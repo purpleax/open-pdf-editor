@@ -3,16 +3,20 @@ APP := build/Open PDF Editor.app
 EXE := OpenPDFEditor
 SWIFT_BUILD := swift build -c release --arch arm64
 
-.PHONY: mupdf build icon smoke corpus test selftest install dmg release hooks clean distclean
+.PHONY: mupdf build guide guide-images selftest-app icon smoke corpus test selftest install dmg release hooks clean distclean
 
 # MuPDF as Frameworks/MuPDF.xcframework (skipped when up to date).
 mupdf:
 	@test -f thirdparty/mupdf/thirdparty/zlib/zlib.h || scripts/fetch-mupdf-deps.sh
 	scripts/build-mupdf.sh
 
+# The user guide, build/guide/Guide.pdf, from docs/guide (needs mutool).
+guide:
+	scripts/make-guide.sh
+
 # Build the app bundle, signed with SIGN_ID from scripts/signing.env
 # (ad hoc without one).
-build: mupdf
+build: mupdf guide
 	$(SWIFT_BUILD)
 	$(eval BIN := $(shell $(SWIFT_BUILD) --show-bin-path))
 	rm -rf "$(APP)"
@@ -21,6 +25,7 @@ build: mupdf
 	cp Resources/Info.plist "$(APP)/Contents/Info.plist"
 	cp Resources/AppIcon.icns "$(APP)/Contents/Resources/AppIcon.icns"
 	scripts/acknowledgements.sh > "$(APP)/Contents/Resources/Acknowledgements.txt"
+	cp build/guide/Guide.pdf "$(APP)/Contents/Resources/Open PDF Editor Guide.pdf"
 	# Sparkle, thinned to arm64; its XPC services are only for sandboxed apps.
 	ditto --arch arm64 "$(BIN)/Sparkle.framework" "$(APP)/Contents/Frameworks/Sparkle.framework"
 	rm -rf "$(APP)/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices" \
@@ -46,21 +51,35 @@ corpus: mupdf
 # With the Command Line Tools, SwiftPM's macro plugin server often fails to
 # load Swift Testing's macros, so the compiler loads the library itself.
 TESTING_MACROS := $(shell xcode-select -p)/usr/lib/swift/host/plugins/testing/libTestingMacros.dylib
-test: corpus
+test: corpus guide
 	swift build --arch arm64 --build-tests -Xswiftc -load-plugin-library -Xswiftc "$(TESTING_MACROS)"
 	$(if $(UPDATE_GOLDEN),UPDATE_GOLDEN=1) swift test --arch arm64 --skip-build --skip ExportTests
 	# Export's hostile-file runs are heavy, and every MuPDF context shares one
 	# memory lock, so they run on their own rather than slow the timing tests.
 	swift test --arch arm64 --skip-build --filter ExportTests
 
-# Scripted annotation and form runs in a separate build (never released):
-# snapshots and logs in build/selftest and build/selftest/forms.
-selftest: build corpus
+# The self-test build of the app, in build/selftest.
+selftest-app: build corpus
 	swift build -c release --arch arm64 --scratch-path .build-selftest -Xswiftc -DSELFTEST
 	rm -rf build/selftest && mkdir -p build/selftest
 	ditto "$(APP)" "build/selftest/Self Test.app"
 	cp "$$(swift build -c release --arch arm64 --scratch-path .build-selftest --show-bin-path)/$(EXE)" "build/selftest/Self Test.app/Contents/MacOS/$(EXE)"
 	scripts/sign-app.sh "build/selftest/Self Test.app"
+
+# The user guide's screenshots, taken by the self-test into docs/guide/images
+# (run before each release, then make guide).
+guide-images: selftest-app
+	OPDF_SELFTEST="$(CURDIR)/build/corpus/sample.pdf" OPDF_SELFTEST_GUIDE=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/guide" \
+		OPDF_SELFTEST_P12="$(CURDIR)/build/corpus/email.p12" \
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments NO
+	cat build/selftest/guide/log.txt
+	! grep -q FAIL build/selftest/guide/log.txt
+	mkdir -p docs/guide/images
+	cp build/selftest/guide/*.png docs/guide/images/
+
+# Scripted annotation and form runs in a separate build (never released):
+# snapshots and logs in build/selftest and build/selftest/forms.
+selftest: selftest-app
 	OPDF_SELFTEST="$(CURDIR)/build/corpus/text.pdf" OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest" \
 		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
 	cat build/selftest/log.txt
@@ -92,6 +111,10 @@ selftest: build corpus
 	OPDF_SELFTEST="$(CURDIR)/build/corpus/text.pdf" OPDF_SELFTEST_EXPORT=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/export" \
 		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments YES
 	cat build/selftest/export/log.txt
+	OPDF_SELFTEST="$(CURDIR)/build/corpus/sample.pdf" OPDF_SELFTEST_GUIDE=1 OPDF_SELFTEST_OUT="$(CURDIR)/build/selftest/guide" \
+		OPDF_SELFTEST_P12="$(CURDIR)/build/corpus/email.p12" \
+		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments NO
+	cat build/selftest/guide/log.txt
 
 # Copy the app to /Applications.
 install: build

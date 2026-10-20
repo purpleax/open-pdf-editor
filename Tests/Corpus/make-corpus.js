@@ -746,6 +746,101 @@ function makeReviewFiles() {
 	doc.save(out + "/sharedres.pdf", "compress")
 }
 
+// --- sample.pdf: a realistic report, for the user guide's screenshots -------
+// Page 0 a report with headings, paragraphs, a table and a chart; page 1 an
+// application form; page 2 more text.
+function makeSample() {
+	var doc = new PDFDocument()
+	var helv = doc.addSimpleFont(new Font("Helvetica"), "Latin")
+	var bold = doc.addSimpleFont(new Font("Helvetica-Bold"), "Latin")
+	var res = { Font: { F1: helv, F2: bold } }
+	function text(x, y, font, size, s) {
+		return "BT /" + font + " " + size + " Tf " + x + " " + (792 - y) + " Td (" + escapeText(s) + ") Tj ET\n"
+	}
+	function para(x, y, lines) {
+		var c = ""
+		for (var i = 0; i < lines.length; i++) c += text(x, y + i * 15, "F1", 11, lines[i])
+		return c
+	}
+	var c = "0.15 0.35 0.6 rg\n" + text(72, 84, "F2", 24, "Harbour Gardens Annual Report") + "0 g\n" +
+		text(72, 108, "F1", 12, "Community garden cooperative, 2026 season") +
+		"0.8 g 72 690 468 1 re f 0 g\n" +
+		text(72, 140, "F2", 15, "A good year for growing") +
+		para(72, 162, [
+			"This season the cooperative welcomed forty new members and opened a second plot on",
+			"the old railway land. Volunteers built six raised beds, a rainwater store and a tool shed,",
+			"and the weekly market stall sold out on most Saturdays from June to September.",
+			"Thank you to everyone who weeded, watered and carried compost up the hill.",
+		]) +
+		text(72, 238, "F2", 15, "Harvest by crop") +
+		para(72, 260, ["Weights are in kilograms, measured at the gate scales."])
+	// A table.
+	var rows = [["Crop", "2025", "2026", "Change"], ["Tomatoes", "310", "420", "+35%"], ["Beans", "180", "205", "+14%"],
+		["Potatoes", "520", "610", "+17%"], ["Herbs", "45", "70", "+56%"]]
+	var top = 280, rowH = 22, cols = [72, 220, 300, 380, 470]
+	c += "0.93 0.95 0.98 rg 72 " + (792 - top - rowH) + " 398 " + rowH + " re f 0 g\n"
+	for (var r = 0; r < rows.length; r++) {
+		for (var k = 0; k < 4; k++) c += text(cols[k] + 6, top + r * rowH + 15, r === 0 ? "F2" : "F1", 11, rows[r][k])
+		c += "0.7 G 0.5 w 72 " + (792 - top - (r + 1) * rowH) + " m 470 " + (792 - top - (r + 1) * rowH) + " l S 0 G\n"
+	}
+	// A chart.
+	c += text(72, 420, "F2", 15, "Members over five years")
+	var counts = [62, 75, 81, 96, 136], names = ["2022", "2023", "2024", "2025", "2026"]
+	for (var b = 0; b < counts.length; b++) {
+		var x = 90 + b * 80, h = counts[b] * 1.4
+		c += "0.3 0.6 0.4 rg " + x + " " + (792 - 640) + " 50 " + h + " re f 0 g\n"
+		c += text(x + 12, 656, "F1", 10, names[b]) + text(x + 14, 640 - h - 6, "F1", 10, String(counts[b]))
+	}
+	c += "0.5 G 80 152 m 490 152 l S 0 G\n"
+	c += text(72, 700, "F1", 9, "Harbour Gardens is run by its members. Minutes and accounts are available on request.")
+	doc.insertPage(-1, doc.addPage(LETTER, 0, res, c))
+
+	// The form.
+	c = "0.15 0.35 0.6 rg\n" + text(72, 84, "F2", 22, "Membership application") + "0 g\n" +
+		para(72, 112, ["Fill in this form and bring it to the shed on any Saturday morning."]) +
+		text(72, 160, "F1", 11, "Full name") + text(72, 210, "F1", 11, "Email") + text(72, 260, "F1", 11, "Plot preference") +
+		text(96, 312, "F1", 11, "I agree to the cooperative's rules") + text(72, 360, "F1", 11, "Signature") +
+		"0.6 G 0.75 w 72 602 328 22 re 72 552 328 22 re 72 502 178 22 re 72 478 14 14 re 72 352 258 68 re S 0 G\n"
+	doc.insertPage(-1, doc.addPage(LETTER, 0, res, c))
+	var page = doc.findPage(1)
+	var acro = doc.addObject({ Fields: [], DA: doc.newString("/Helv 0 Tf 0 g"),
+		DR: { Font: { Helv: doc.addObject({ Type: doc.newName("Font"), Subtype: doc.newName("Type1"), BaseFont: doc.newName("Helvetica"), Encoding: doc.newName("WinAnsiEncoding") }) } },
+		NeedAppearances: true })
+	doc.getTrailer().get("Root").put("AcroForm", acro)
+	var annots = doc.newArray()
+	page.put("Annots", annots)
+	var da = doc.newString("/Helv 12 Tf 0 g")
+	function field(dict, rect) {
+		dict.Type = doc.newName("Annot")
+		dict.Subtype = doc.newName("Widget")
+		dict.Rect = rect
+		dict.F = 4
+		dict.P = page
+		var w = doc.addObject(dict)
+		annots.push(w)
+		acro.get("Fields").push(w)
+		return w
+	}
+	field({ FT: doc.newName("Tx"), T: doc.newString("name"), DA: da, TU: doc.newString("Your full name") }, [72, 792 - 190, 400, 792 - 168])
+	field({ FT: doc.newName("Tx"), T: doc.newString("email"), DA: da }, [72, 792 - 240, 400, 792 - 218])
+	field({ FT: doc.newName("Ch"), T: doc.newString("plot"), Ff: 1 << 17, DA: da, V: doc.newString("Railway"),
+		Opt: [doc.newString("Hillside"), doc.newString("Railway"), doc.newString("Either")] }, [72, 792 - 290, 250, 792 - 268])
+	field({ FT: doc.newName("Btn"), T: doc.newString("agree"), V: doc.newName("Off"), AS: doc.newName("Off"),
+		AP: stateAppearances(doc, 14, "Yes") }, [72, 792 - 314, 86, 792 - 300])
+	field({ FT: doc.newName("Sig"), T: doc.newString("signature") }, [72, 792 - 440, 330, 792 - 372])
+
+	c = "0.15 0.35 0.6 rg\n" + text(72, 84, "F2", 18, "Plans for next season") + "0 g\n" +
+		para(72, 112, [
+			"Next year the cooperative will add a children's bed, try a no-dig trial on the hillside plot",
+			"and repair the path to the railway gate. Seed swaps will continue on the first Saturday",
+			"of each month, and the compost bins will move closer to the water store.",
+		]) +
+		text(72, 180, "F2", 13, "Volunteer days") +
+		para(72, 200, ["Saturdays 9 to 12, all year. Tools, gloves and tea are provided."])
+	doc.insertPage(-1, doc.addPage(LETTER, 0, res, c))
+	doc.save(out + "/sample.pdf", "compress")
+}
+
 // --- Hostile files, for the security tests ----------------------------------
 
 // Absurd page sizes: a 1 x 10,000,000 point strip, and a page scaled by
@@ -909,4 +1004,5 @@ makeXMP()
 makeContent()
 makeScanned()
 makeReviewFiles()
+makeSample()
 print("corpus: wrote the test PDFs to " + out)

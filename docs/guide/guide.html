@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>Open PDF Editor Guide</title>
+<link rel="stylesheet" href="guide.css"/>
+</head>
+<body>
+
+<div class="title">
+<p class="name">Open PDF Editor</p>
+<p class="subtitle">User Guide</p>
+<p>A free, open-source PDF editor for the Mac.</p>
+</div>
+
+<div class="page-break"></div>
+
+<h1 id="contents">Contents</h1>
+<ol class="contents">
+<li><a href="#getting-started">Getting started</a></li>
+<li><a href="#reading">Reading PDFs</a></li>
+<li><a href="#comments">Comments and markup</a></li>
+<li><a href="#pages">Working with pages</a></li>
+<li><a href="#forms">Forms</a></li>
+<li><a href="#editing">Editing text and images</a></li>
+<li><a href="#redaction">Redaction</a></li>
+<li><a href="#security">Passwords and permissions</a></li>
+<li><a href="#signatures">Signatures</a></li>
+<li><a href="#ocr">Recognising text in scans</a></li>
+<li><a href="#export">Exporting</a></li>
+<li><a href="#saving">Saving and undo</a></li>
+<li><a href="#settings">Settings</a></li>
+<li><a href="#shortcuts">Keyboard shortcuts</a></li>
+<li><a href="#privacy">Privacy, updates and help</a></li>
+</ol>
+<p>This guide is a PDF, so you can use everything it describes on it: the bookmarks in the sidebar take you to each chapter, and <b>Edit › Find › Find…</b> (<kbd>⌘F</kbd>) searches it.</p>
+
+<div class="page-break"></div>
+
+<h1 id="getting-started">Getting started</h1>
+
+<h2 id="opening">Opening documents</h2>
+<p>Open a PDF in any of these ways:</p>
+<ul>
+<li>Choose <b>File › Open…</b> (<kbd>⌘O</kbd>), or pick one from <b>File › Open Recent</b>.</li>
+<li>Drag a PDF onto the app’s icon in the Dock or the Finder.</li>
+<li>Click <b>Open…</b> in the welcome window.</li>
+</ul>
+<p>When no document is open, the welcome window appears, with <b>New PDF</b>, <b>Open…</b> and <b>Guide</b>. <b>File › New</b> (<kbd>⌘N</kbd>) makes a new PDF with one blank page (Letter size in the US and Canada, A4 elsewhere).</p>
+<figure><img class="small" src="images/welcome.png"/><figcaption>The welcome window.</figcaption></figure>
+
+<h2 id="window">The document window</h2>
+<p>Each document has a window with three parts:</p>
+<ul>
+<li><b>The sidebar</b> on the left: page thumbnails, the document’s bookmarks (its outline), search results, comments, attachments and layers. Show or hide it with <b>View › Show Sidebar</b> (<kbd>⌃⌘S</kbd>), and switch between its views with the buttons at its top or <b>View › Thumbnails</b>, <b>Outline</b>, <b>Search Results</b>, <b>Comments</b>, <b>Attachments</b> and <b>Layers</b> (<kbd>⌥⌘1</kbd> to <kbd>⌥⌘6</kbd>).</li>
+<li><b>The pages</b> in the middle.</li>
+<li><b>The inspector</b> on the right: the document’s information, and the settings of whatever is selected (a comment, a form field, an image or a link). Show it with <b>View › Document Info</b> (<kbd>⌥⌘I</kbd>).</li>
+</ul>
+<p>The toolbar has buttons for moving between pages, the page number, zoom, the page layout, turning pages, editing (<b>Edit</b>), the markup tools and searching. Change which buttons it shows with <b>View › Customize Toolbar…</b>, or hide it with <b>View › Show Toolbar</b> (<kbd>⌥⌘T</kbd>).</p>
+<figure><img src="images/window.png"/><figcaption>A document with thumbnails in the sidebar and the document’s information in the inspector.</figcaption></figure>
+
+<h2 id="tabs">Tabs and windows</h2>
+<p>Documents open as tabs in one window; drag a tab out to give a document a window of its own. <b>Window › Merge All Windows</b> gathers every document window into tabs, and <b>Window › Show Next Tab</b> (<kbd>⌃⇥</kbd>) and <b>Show Previous Tab</b> (<kbd>⌃⇧⇥</kbd>) move between them. <b>View › Enter Full Screen</b> (<kbd>⌃⌘F</kbd>) gives a document the whole screen.</p>
+
+<div class="page-break"></div>
+
+<h1 id="reading">Reading PDFs</h1>
+
+<h2 id="moving">Moving around</h2>
+<ul>
+<li>Scroll, or use <b>Go › Previous Page</b> (<kbd>⌥⌘↑</kbd>) and <b>Go › Next Page</b> (<kbd>⌥⌘↓</kbd>). <b>Go › First Page</b> and <b>Go › Last Page</b> use the Home and End keys.</li>
+<li><b>Go › Go to Page…</b> (<kbd>⌥⌘G</kbd>), or type a number in the toolbar’s page field.</li>
+<li>Click a thumbnail, or a bookmark in the sidebar’s outline.</li>
+<li><b>Go › Back</b> (<kbd>⌘[</kbd>) and <b>Go › Forward</b> (<kbd>⌘]</kbd>) retrace your steps after following links and bookmarks.</li>
+</ul>
+
+<h2 id="zoom">Zoom and layout</h2>
+<p><b>View › Zoom In</b> (<kbd>⌘+</kbd>), <b>Zoom Out</b> (<kbd>⌘−</kbd>), <b>Actual Size</b> (<kbd>⌘0</kbd>), <b>Fit Width</b> (<kbd>⌘8</kbd>) and <b>Fit Page</b> (<kbd>⌘9</kbd>) set the size; you can also pinch on a trackpad. Pages stay sharp at any zoom.</p>
+<p>Choose how pages are laid out with <b>View › Single Page</b>, <b>Single Page Continuous</b>, <b>Two Pages</b> or <b>Two Pages Continuous</b>. With two pages side by side, <b>View › Show Cover Page Separately</b> puts the first page on its own, like a book’s cover.</p>
+<p><b>View › Rotate View Left</b> (<kbd>⌥⌘L</kbd>) and <b>Rotate View Right</b> (<kbd>⌥⌘R</kbd>) turn only your view of the pages. To turn the pages themselves, see <a href="#pages">Working with pages</a>.</p>
+
+<h2 id="find">Finding text</h2>
+<p>Type in the search field in the toolbar, or choose <b>Edit › Find › Find…</b> (<kbd>⌘F</kbd>). Every match is highlighted and listed in the sidebar’s search results, with the words around it. <b>Edit › Find › Find Next</b> (<kbd>⌘G</kbd>) and <b>Find Previous</b> (<kbd>⇧⌘G</kbd>) step through them, and <b>Use Selection for Find</b> (<kbd>⌘E</kbd>) searches for the selected text. <b>Match Case</b> and <b>Whole Words</b>, in the same menu, narrow the search.</p>
+<p>Scanned pages have no text to find until it is recognised: see <a href="#ocr">Recognising text in scans</a>.</p>
+
+<h2 id="selecting">Selecting and copying text</h2>
+<p>With the Select tool (the usual tool), drag across text to select it, double-click a word or triple-click a paragraph, then choose <b>Edit › Copy</b> (<kbd>⌘C</kbd>). <b>Edit › Select All</b> (<kbd>⌘A</kbd>) selects the page’s text. Typing over selected text edits it: see <a href="#editing">Editing text and images</a>.</p>
+
+<h2 id="links">Links, attachments and layers</h2>
+<ul>
+<li><b>Links</b> to other places in the document go there when you click them. Links to web pages and email addresses only open when <b>Open web and email links</b> is on in Settings (see <a href="#settings">Settings</a>); pointing at a link shows where it goes either way.</li>
+<li><b>Attachments</b>: files carried inside the PDF are listed in the sidebar’s Attachments view, where you can save them. The app asks first when a file could contain an app or a script, and saved files are checked by macOS before they open.</li>
+<li><b>Layers</b>: some PDFs have layers (optional content, such as a plan’s electrical drawings) that can be shown or hidden in the sidebar’s Layers view.</li>
+</ul>
+
+<h2 id="printing">Printing</h2>
+<p>Choose <b>File › Print…</b> (<kbd>⌘P</kbd>) for the Mac’s print panel, and <b>File › Page Setup…</b> (<kbd>⇧⌘P</kbd>) for paper size. Comments are printed as they appear on the page.</p>
+
+<h2 id="locked">Password-protected documents</h2>
+<p>A document that needs a password to open asks for it before showing anything. A document whose owner has limited what can be done with it (printing, copying, editing and so on) opens normally, with a notice under the toolbar naming what isn’t allowed: see <a href="#security">Passwords and permissions</a>.</p>
+
+<div class="page-break"></div>
+
+<h1 id="comments">Comments and markup</h1>
+<p>Comments (also called annotations) sit on top of a page without changing what is printed underneath. Other PDF apps, such as Preview and Acrobat, show them too.</p>
+
+<h2 id="markup-tools">The markup tools</h2>
+<p>Show the markup toolbar with <b>View › Show Markup Toolbar</b> (<kbd>⇧⌘A</kbd>) or the toolbar’s markup button. It has every tool, a colour and a line width; each tool remembers its own. The same tools are in the Tools menu:</p>
+<table>
+<tr><th>Tool</th><th>What it does</th><th>Shortcut</th></tr>
+<tr><td><b>Select</b></td><td>Selects text and comments; the usual tool.</td><td><kbd>⌃⌘1</kbd></td></tr>
+<tr><td><b>Highlight</b></td><td>Drag across text to highlight it.</td><td><kbd>⌃⌘H</kbd></td></tr>
+<tr><td><b>Underline</b></td><td>Drag across text to underline it.</td><td><kbd>⌃⌘U</kbd></td></tr>
+<tr><td><b>Strikethrough</b></td><td>Drag across text to strike it through.</td><td></td></tr>
+<tr><td><b>Note</b></td><td>Click to add a note, shown as an icon you open.</td><td><kbd>⌃⌘N</kbd></td></tr>
+<tr><td><b>Text Box</b></td><td>Drag out a box of text shown on the page.</td><td><kbd>⌃⌘T</kbd></td></tr>
+<tr><td><b>Rectangle</b>, <b>Oval</b></td><td>Drag out a shape.</td><td><kbd>⌃⌘R</kbd>, <kbd>⌃⌘O</kbd></td></tr>
+<tr><td><b>Line</b>, <b>Arrow</b></td><td>Drag from one end to the other.</td><td><kbd>⌃⌘L</kbd>, <kbd>⌃⌘A</kbd></td></tr>
+<tr><td><b>Draw</b></td><td>Draw freehand with the mouse or trackpad.</td><td><kbd>⌃⌘D</kbd></td></tr>
+<tr><td><b>Stamp</b></td><td>Click to place a stamp such as Approved, Draft, Confidential or For Comment (choose which in the markup toolbar).</td><td><kbd>⌃⌘M</kbd></td></tr>
+<tr><td><b>Signature</b></td><td>Click to place your handwritten signature (see <a href="#signatures">Signatures</a>).</td><td><kbd>⌃⌘G</kbd></td></tr>
+<tr><td><b>Redact</b></td><td>Marks text or areas for removal (see <a href="#redaction">Redaction</a>).</td><td><kbd>⌃⌘X</kbd></td></tr>
+</table>
+<figure><img src="images/markup.png"/><figcaption>The markup toolbar, with a highlight, an underline, a note, an oval and an arrow.</figcaption></figure>
+
+<h2 id="changing-comments">Changing comments</h2>
+<p>Click a comment with the Select tool to select it. Drag it to move it, and drag its handles to resize it. The inspector shows its settings: colour, fill, opacity, line width, text size and its text; each change can be undone. Press Delete, or choose <b>Edit › Delete</b>, to remove the selected comment.</p>
+
+<h2 id="comments-sidebar">The Comments sidebar</h2>
+<p><b>View › Comments</b> (<kbd>⌥⌘4</kbd>) lists every comment in the document by page, with its author, its replies and its review status. Click one to go to it. The menus at the top show only comments of one type, by one author, or with one status.</p>
+<p>Select a comment in the list and click <b>Reply</b> to answer it, or choose a status from <b>Status</b>: Accepted, Rejected, Cancelled, Completed or None. Replies and statuses are stored as Acrobat stores them, so reviewers using other apps see them too.</p>
+<figure><img src="images/comments.png"/><figcaption>The Comments sidebar, with a reply and an Accepted status.</figcaption></figure>
+
+<h2 id="flatten">Flattening comments</h2>
+<p><b>Tools › Flatten Annotations…</b> draws every comment into the pages, so it can no longer be changed or removed, and removes replies. You can undo it until you close the document.</p>
+
+<div class="page-break"></div>
+
+<h1 id="pages">Working with pages</h1>
+<p>Page commands are in the Pages menu, and in the menu you get by Control-clicking thumbnails. They act on the pages selected in the thumbnails, or on the current page when none are selected. Select several thumbnails with ⌘-click or ⇧-click.</p>
+<figure><img src="images/thumbnails.png"/><figcaption>Two pages selected in the thumbnails.</figcaption></figure>
+
+<h2 id="arranging">Turning, moving and deleting pages</h2>
+<ul>
+<li><b>Pages › Rotate Left</b> (<kbd>⌘L</kbd>) and <b>Pages › Rotate Right</b> (<kbd>⌘R</kbd>) turn pages for good (unlike Rotate View).</li>
+<li>Drag thumbnails to put pages in a new order.</li>
+<li><b>Pages › Delete Pages</b> removes the selected pages.</li>
+<li><b>Pages › Insert Blank Page</b> adds a page after the selection.</li>
+<li><b>Pages › Insert Pages from File…</b> copies in every page of another PDF. You can also drop PDFs, images and other documents between the thumbnails.</li>
+</ul>
+
+<h2 id="crop">Cropping</h2>
+<p>Choose <b>Pages › Crop</b> (<kbd>⌃⌘K</kbd>), then drag over a page to the area you want to keep. Press Esc to stop cropping. Cropping hides the rest of the page rather than deleting it, and can be undone.</p>
+
+<h2 id="extract-split">Extracting and splitting</h2>
+<ul>
+<li><b>Pages › Extract Pages…</b> saves the selected pages as a new PDF.</li>
+<li><b>Pages › Split Document…</b> divides the document into several PDFs: every so many pages, or at each top-level bookmark.</li>
+</ul>
+<p>Neither changes the document itself. The new PDFs don’t have its password.</p>
+
+<h2 id="combine">Making and shrinking PDFs</h2>
+<ul>
+<li><b>File › Create PDF from Files…</b> (<kbd>⌥⌘N</kbd>) makes one PDF of several files, in order: PDFs and images always; Word, Excel, PowerPoint, EPUB, HTML and other documents when <b>Convert other documents into PDFs</b> is on in Settings.</li>
+<li><b>File › Reduce File Size…</b> saves a smaller copy, with images reduced and recompressed (high quality, medium or smallest) and unused data removed.</li>
+</ul>
+
+<h2 id="stamps">Headers, footers, page numbers and watermarks</h2>
+<p><b>Pages › Add Headers &amp; Footers…</b> puts text at the top or bottom of pages, on the left, in the centre or on the right. In the text, <b>&lt;&lt;page&gt;&gt;</b> becomes the page number, <b>&lt;&lt;pages&gt;&gt;</b> the number of pages and <b>&lt;&lt;date&gt;&gt;</b> today’s date. <b>Pages › Add Page Numbers…</b> is a quick way to number pages, and <b>Pages › Add Watermark…</b> puts text such as DRAFT across pages, at an angle and opacity you choose.</p>
+<p>They can be added to all pages or some, and taken off again with <b>Pages › Remove Headers &amp; Footers</b> and <b>Pages › Remove Watermarks</b>, which remove only what this app added.</p>
+
+<div class="page-break"></div>
+
+<h1 id="forms">Forms</h1>
+
+<h2 id="filling">Filling in forms</h2>
+<p>With the Select tool, click a field to fill it in. Type into text fields, and press Tab to go on to the next field. Click checkboxes and radio buttons to tick them, and choose from dropdowns and lists. <b>View › Highlight Form Fields</b> tints every field you can fill in, so none are missed.</p>
+<figure><img src="images/form-fill.png"/><figcaption>Filling in a form, with its fields highlighted.</figcaption></figure>
+<div class="note">Scripts in forms never run. Values are kept as you type them, and fields that a form would calculate for you (totals, for example) aren’t recalculated.</div>
+
+<h2 id="edit-fields">Making and changing fields</h2>
+<p>Choose <b>Forms › Edit Fields</b> (<kbd>⌥⌘F</kbd>) to work on the form itself. A bar of field tools appears, and the same tools are in the Forms menu: <b>Select</b>, <b>Text Field</b>, <b>Checkbox</b>, <b>Radio Button</b>, <b>Dropdown</b>, <b>List Box</b> and <b>Signature Field</b>. Click or drag on a page to add a field. Select a field to move it, resize it or delete it, and set its name, tooltip, choices and options in the inspector.</p>
+<figure><img src="images/edit-fields.png"/><figcaption>Editing a form’s fields, with the selected field’s settings in the inspector.</figcaption></figure>
+
+<h2 id="flatten-form">Flattening a form</h2>
+<p><b>Forms › Flatten Form…</b> makes the values you filled in part of the pages, so they can no longer be changed and look the same everywhere.</p>
+
+<div class="page-break"></div>
+
+<h1 id="editing">Editing text and images</h1>
+
+<h2 id="select-type">Select and type</h2>
+<p>Editing a PDF’s text works like a word processor:</p>
+<ul>
+<li><b>Select some text and type</b>, and your typing replaces it.</li>
+<li><b>Click in a paragraph</b> and a blinking cursor appears there; type to insert text.</li>
+<li>Delete, Backspace and Return work as you would expect. Space types a space when there is a cursor or a selection (with neither, it scrolls).</li>
+</ul>
+<p>The paragraph re-wraps in its box as you type, keeping the document’s own font where it has the letters you use; otherwise a matching Mac font is embedded, with just the letters needed. Lines you don’t change stay exactly as they were. Click away from the paragraph to finish; the change is one step you can undo.</p>
+<figure><img src="images/edit-text.png"/><figcaption>Editing a paragraph, with the formatting bar above the page.</figcaption></figure>
+
+<h2 id="edit-content">Edit Content</h2>
+<p>Typing into text turns on <b>Edit › Edit Content</b> (<kbd>⌥⌘E</kbd>) for you; you can also turn it on yourself, or click the toolbar’s Edit button, or Control-click text and choose <b>Edit Text</b>. Its bar has four tools and <b>Done</b>:</p>
+<ul>
+<li><b>Edit</b>: click text for a cursor, or click an image or link to select it (hold ⌥ to select one under text).</li>
+<li><b>Add Text</b>: click, or drag out a width, for a new text box.</li>
+<li><b>Add Image</b>: click, or drag out a box, then choose an image file (JPEG, PNG, HEIC and others, up to 100 MB and 40 megapixels).</li>
+<li><b>Add Link</b>: drag out the area to click, then choose a web page, an email address or a page of the document.</li>
+</ul>
+
+<h2 id="formatting">Formatting text</h2>
+<p>While you edit text, the formatting bar sets the font, size, bold, italic, underline, colour and alignment. The Format menu does the same: <b>Format › Font › Show Fonts</b> (<kbd>⌘T</kbd>), <b>Bold</b> (<kbd>⌘B</kbd>), <b>Italic</b> (<kbd>⌘I</kbd>), <b>Underline</b> (<kbd>⌘U</kbd>), <b>Bigger</b>, <b>Smaller</b> and <b>Show Colors</b> (<kbd>⇧⌘C</kbd>); <b>Format › Text › Align Left</b> (<kbd>⌘{</kbd>), <b>Center</b> (<kbd>⌘|</kbd>), <b>Justify</b> and <b>Align Right</b> (<kbd>⌘}</kbd>).</p>
+<p>Drag the grip on the right of the box you are editing to change the width it wraps at. Text doesn’t flow from one paragraph into the next: if a paragraph grows into what’s below it, its box turns orange and says so.</p>
+<div class="note">Some text can’t be edited, and the app says why when you try: text at an angle, vertical text, right-to-left text, Type3 fonts, invisible text (such as recognised text), text inside reusable graphics, and paragraphs over the size limits. Editing is also off while the view is rotated.</div>
+
+<h2 id="images-links">Images and links</h2>
+<p>Select an image with the Edit tool to move or resize it (hold ⇧ while dragging a corner to keep its proportions), replace it with another file from the inspector, or delete it. Select a link to move or resize it, or choose <b>Change Target…</b> in the inspector.</p>
+
+<h2 id="document-info">Document information</h2>
+<p>The inspector’s Document section (<b>View › Document Info</b>, <kbd>⌥⌘I</kbd>) shows the document’s title, author, subject and keywords, which you can change, and its dates, producer, version, security, pages, page size and file size. <b>File › Show in Finder</b> shows the file.</p>
+
+<div class="page-break"></div>
+
+<h1 id="redaction">Redaction</h1>
+<p>Redaction removes content for good: the text, pictures and drawings under a mark are deleted from the file, not just covered.</p>
+<ol>
+<li>Choose the <b>Redact</b> tool (<kbd>⌃⌘X</kbd>, or in the markup toolbar).</li>
+<li>Drag across text to mark it, or drag anywhere else to mark an area. Marks show as red outlines, and can be moved, resized or deleted until they are applied.</li>
+<li>Choose <b>Tools › Apply Redactions…</b>.</li>
+</ol>
+<figure><img src="images/redact.png"/><figcaption>Two lines marked for redaction.</figcaption></figure>
+<p>Applying removes everything under the marks (text, image pixels, line art, links, comments with their replies, and form fields with their values) and draws black boxes in their place. It also removes hidden leftovers that could give the content away, writes the document again and saves it. Earlier versions of the file are deleted too unless you untick the box.</p>
+<div class="note">Applying redactions can’t be undone. Any character a mark touches is removed, so a generous mark can take neighbouring words. A signed document’s signatures are no longer valid afterwards.</div>
+
+<div class="page-break"></div>
+
+<h1 id="security">Passwords and permissions</h1>
+<p>Choose <b>File › Security…</b> to protect a document:</p>
+<ul>
+<li><b>Require a password to open the document</b>: nobody can read it without the password.</li>
+<li><b>Require a password to change security</b>, with what people may do without it: print, copy text and images, edit content and pages, add comments, and fill in forms.</li>
+</ul>
+<p>The document is encrypted with 256-bit AES. Applying writes the document again (undo history is cleared), and a signed document’s signatures are no longer valid.</p>
+<p>When you open a document whose owner has limited what can be done, a notice under the toolbar says what isn’t allowed, and those commands are turned off. If you have the owner password, click <b>Enter Owner Password…</b> in the notice for full access.</p>
+<figure><img src="images/restricted.png"/><figcaption>A document whose owner allows only printing.</figcaption></figure>
+
+<div class="page-break"></div>
+
+<h1 id="signatures">Signatures</h1>
+
+<h2 id="handwritten">Handwritten signatures</h2>
+<p>Choose <b>Tools › Signatures…</b> to draw your signature with the mouse or trackpad, or to import a picture of it. Your signatures are kept in your login keychain. Then choose the <b>Signature</b> tool (<kbd>⌃⌘G</kbd>, or in the markup toolbar) and click where it should go; it is placed as a stamp you can move and resize.</p>
+<figure><img class="small" src="images/sign-sheet.png"/><figcaption>Tools › Signatures…, with a signature drawn on the pad.</figcaption></figure>
+
+<h2 id="digital">Digital signatures</h2>
+<p>A digital signature proves who signed and that the document hasn’t changed since. To sign, click an empty signature field. Choose a certificate from your keychain, and optionally a reason, a location and your handwritten signature to show in the field. The document, with your changes, is signed and saved. The Keychain may ask to let the app use the certificate’s key.</p>
+<p>Signing needs a certificate with its private key in your keychain, such as a .p12 file from your organisation or a certificate authority, added with Keychain Access.</p>
+
+<h2 id="checking">Checking signatures</h2>
+<p>The inspector’s Signatures section lists each signature field: who signed and when (by the signer’s clock), whether the document has changed since, and whether the certificate is trusted, self-signed, untrusted, expired or revoked. Certificates are checked against the ones on your Mac; turn on <b>Check certificates online</b> in Settings to fetch missing certificates and check for revocation.</p>
+<figure><img src="images/signatures.png"/><figcaption>A signed field, and the Signatures section of the inspector.</figcaption></figure>
+
+<div class="page-break"></div>
+
+<h1 id="ocr">Recognising text in scans</h1>
+<p>A scanned page is a picture: its words can’t be found, selected or copied. When the page you are on is a scan, a notice under the toolbar says so.</p>
+<figure><img src="images/scan-notice.png"/><figcaption>The notice on a scanned page.</figcaption></figure>
+<p>Choose <b>Tools › Recognise Text…</b>, or click <b>Recognise Text…</b> in the notice. Choose which pages to read:</p>
+<ul>
+<li><b>Pages without text</b> (the usual choice),</li>
+<li><b>All pages</b>, replacing text recognised before,</li>
+<li><b>This page</b>, or a range of pages.</li>
+</ul>
+<p>The language is worked out automatically, or you can choose one. Recognition happens on your Mac with Apple’s text recognition: nothing is sent anywhere. A progress bar shows how far it has got, and you can cancel.</p>
+<figure><img class="small" src="images/recognise.png"/><figcaption>Choosing what to recognise.</figcaption></figure>
+<p>The words found are added to the pages invisibly, under the scan, so the pages look the same but their text can be found, selected and copied, in this app and others. It is one step you can undo. Recognising again replaces the earlier text rather than adding to it, and words the page already has as text aren’t added twice.</p>
+<div class="tip">The first recognition after installing the app can take half a minute while macOS prepares its text recognition; after that, a page takes a moment.</div>
+
+<div class="page-break"></div>
+
+<h1 id="export">Exporting</h1>
+<p>Choose <b>File › Export…</b> to save the document in another format. Choose the format and the pages (all, this page, or a range) under the save panel:</p>
+<table>
+<tr><th>Format</th><th>What you get</th></tr>
+<tr><td><b>Word Document</b></td><td>Text, pictures and simple layout, to edit in Word or Pages. Recognised text, and any other invisible text, comes through as ordinary text.</td></tr>
+<tr><td><b>Web Page</b></td><td>One HTML file with the text and pictures, laid out as on the pages.</td></tr>
+<tr><td><b>Plain Text</b></td><td>Just the text, in reading order.</td></tr>
+<tr><td><b>PNG Images</b>, <b>JPEG Images</b></td><td>A picture of each page, at 72 to 600 dots per inch; JPEG with a quality you choose. Several pages go into a new folder named like the file you chose.</td></tr>
+<tr><td><b>TIFF Image</b></td><td>One image file with a page for each page.</td></tr>
+</table>
+<figure><img class="small" src="images/export-options.png"/><figcaption>The export options under the save panel.</figcaption></figure>
+<p>What’s exported is the document as it is now, including changes you haven’t saved. Exports of recognised scans to Word and web pages have the text rather than a picture of it. Export isn’t available when a document’s owner doesn’t allow copying.</p>
+
+<div class="page-break"></div>
+
+<h1 id="saving">Saving and undo</h1>
+
+<h2 id="how-saving">How documents are saved</h2>
+<p>Saving keeps the original file exactly as it was and adds your changes to its end. Digital signatures stay valid, other apps read the changes, and nothing you didn’t change is rewritten. (Redaction and security changes are the exceptions: they write the whole document again.)</p>
+<p>By default, changes are saved when you choose <b>File › Save</b> (<kbd>⌘S</kbd>), and closing a changed document asks first. <b>File › Save As…</b> (<kbd>⇧⌘S</kbd>) saves a copy under another name, and <b>File › Revert to Saved</b> goes back to the last saved version.</p>
+
+<h2 id="autosave">Saving automatically</h2>
+<p>Turn on <b>Save changes automatically</b> in Settings to have documents save themselves as you work, as Preview does. The File menu then has <b>Duplicate</b> (<kbd>⇧⌘S</kbd>), <b>Rename…</b>, <b>Move To…</b> and <b>Revert To</b>, which shows earlier versions of the document to go back to.</p>
+
+<h2 id="undo">Undo</h2>
+<p><b>Edit › Undo</b> (<kbd>⌘Z</kbd>) and <b>Edit › Redo</b> (<kbd>⇧⌘Z</kbd>) work for every change: comments, pages, forms, editing, stamps and recognised text. Undo keeps working after you save, until you close the document. A few changes say first that they can’t be undone: applying redactions, changing security and signing.</p>
+
+<div class="page-break"></div>
+
+<h1 id="settings">Settings</h1>
+<p>Choose <b>Open PDF Editor › Settings…</b> (<kbd>⌘,</kbd>). Each setting is a feature that is off until you turn it on, because it does something you might not expect, or gives a harmful file more of the app to work with.</p>
+<figure><img class="small" src="images/settings.png"/><figcaption>The Settings window.</figcaption></figure>
+<table>
+<tr><th>Setting</th><th>When it’s on</th></tr>
+<tr><td><b>Save changes automatically</b></td><td>Documents save themselves as you work, with earlier versions in File › Revert To. Off, changes are kept only when you choose File › Save.</td></tr>
+<tr><td><b>Open web and email links</b></td><td>Clicking a link in a page or bookmark opens the web page or email address its author chose. Off, only links within the document work.</td></tr>
+<tr><td><b>Convert other documents into PDFs</b></td><td>Create PDF from Files and Insert Pages can read HTML, SVG, EPUB, XPS, text, Word, Excel and PowerPoint files. PDFs and images always work.</td></tr>
+<tr><td><b>Check certificates online</b></td><td>Checking a digital signature fetches certificates its signer left out and asks whether the certificate was revoked. This contacts addresses named in the document’s certificates.</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<h1 id="shortcuts">Keyboard shortcuts</h1>
+<p>⌘ is Command, ⌥ Option, ⇧ Shift and ⌃ Control.</p>
+<table>
+<tr><th class="key">Shortcut</th><th>Command</th></tr>
+<tr><td class="key"><kbd>⌘N</kbd></td><td>File › New</td></tr>
+<tr><td class="key"><kbd>⌘O</kbd></td><td>File › Open…</td></tr>
+<tr><td class="key"><kbd>⌘W</kbd></td><td>File › Close</td></tr>
+<tr><td class="key"><kbd>⌘S</kbd></td><td>File › Save</td></tr>
+<tr><td class="key"><kbd>⇧⌘S</kbd></td><td>File › Save As… (or Duplicate when saving automatically)</td></tr>
+<tr><td class="key"><kbd>⌥⌘N</kbd></td><td>File › Create PDF from Files…</td></tr>
+<tr><td class="key"><kbd>⌘P</kbd>, <kbd>⇧⌘P</kbd></td><td>File › Print…, Page Setup…</td></tr>
+<tr><td class="key"><kbd>⌘Z</kbd>, <kbd>⇧⌘Z</kbd></td><td>Edit › Undo, Redo</td></tr>
+<tr><td class="key"><kbd>⌥⌘E</kbd></td><td>Edit › Edit Content</td></tr>
+<tr><td class="key"><kbd>⌘F</kbd></td><td>Edit › Find › Find…</td></tr>
+<tr><td class="key"><kbd>⌘G</kbd>, <kbd>⇧⌘G</kbd></td><td>Find Next, Find Previous</td></tr>
+<tr><td class="key"><kbd>⌘E</kbd></td><td>Use Selection for Find</td></tr>
+<tr><td class="key"><kbd>⌘0</kbd>, <kbd>⌘8</kbd>, <kbd>⌘9</kbd></td><td>View › Actual Size, Fit Width, Fit Page</td></tr>
+<tr><td class="key"><kbd>⌘+</kbd>, <kbd>⌘−</kbd></td><td>View › Zoom In, Zoom Out</td></tr>
+<tr><td class="key"><kbd>⌥⌘L</kbd>, <kbd>⌥⌘R</kbd></td><td>View › Rotate View Left, Rotate View Right</td></tr>
+<tr><td class="key"><kbd>⌃⌘S</kbd></td><td>View › Show Sidebar</td></tr>
+<tr><td class="key"><kbd>⌥⌘1</kbd> to <kbd>⌥⌘6</kbd></td><td>View › Thumbnails, Outline, Search Results, Comments, Attachments, Layers</td></tr>
+<tr><td class="key"><kbd>⌥⌘I</kbd></td><td>View › Document Info</td></tr>
+<tr><td class="key"><kbd>⇧⌘A</kbd></td><td>View › Show Markup Toolbar</td></tr>
+<tr><td class="key"><kbd>⌥⌘T</kbd></td><td>View › Show Toolbar</td></tr>
+<tr><td class="key"><kbd>⌃⌘F</kbd></td><td>View › Enter Full Screen</td></tr>
+<tr><td class="key"><kbd>⌥⌘↑</kbd>, <kbd>⌥⌘↓</kbd></td><td>Go › Previous Page, Next Page</td></tr>
+<tr><td class="key">Home, End</td><td>Go › First Page, Last Page</td></tr>
+<tr><td class="key"><kbd>⌥⌘G</kbd></td><td>Go › Go to Page…</td></tr>
+<tr><td class="key"><kbd>⌘[</kbd>, <kbd>⌘]</kbd></td><td>Go › Back, Forward</td></tr>
+<tr><td class="key"><kbd>⌘L</kbd>, <kbd>⌘R</kbd></td><td>Pages › Rotate Left, Rotate Right</td></tr>
+<tr><td class="key"><kbd>⌃⌘K</kbd></td><td>Pages › Crop</td></tr>
+<tr><td class="key"><kbd>⌃⌘1</kbd></td><td>Tools › Select</td></tr>
+<tr><td class="key"><kbd>⌃⌘H</kbd>, <kbd>⌃⌘U</kbd></td><td>Tools › Highlight, Underline</td></tr>
+<tr><td class="key"><kbd>⌃⌘N</kbd>, <kbd>⌃⌘T</kbd></td><td>Tools › Note, Text Box</td></tr>
+<tr><td class="key"><kbd>⌃⌘R</kbd>, <kbd>⌃⌘O</kbd></td><td>Tools › Rectangle, Oval</td></tr>
+<tr><td class="key"><kbd>⌃⌘L</kbd>, <kbd>⌃⌘A</kbd></td><td>Tools › Line, Arrow</td></tr>
+<tr><td class="key"><kbd>⌃⌘D</kbd>, <kbd>⌃⌘M</kbd></td><td>Tools › Draw, Stamp</td></tr>
+<tr><td class="key"><kbd>⌃⌘G</kbd>, <kbd>⌃⌘X</kbd></td><td>Tools › Signature, Redact</td></tr>
+<tr><td class="key"><kbd>⌥⌘F</kbd></td><td>Forms › Edit Fields</td></tr>
+<tr><td class="key"><kbd>⌘T</kbd>, <kbd>⇧⌘C</kbd></td><td>Format › Font › Show Fonts, Show Colors</td></tr>
+<tr><td class="key"><kbd>⌘B</kbd>, <kbd>⌘I</kbd>, <kbd>⌘U</kbd></td><td>Format › Font › Bold, Italic, Underline</td></tr>
+<tr><td class="key"><kbd>⌘{</kbd>, <kbd>⌘|</kbd>, <kbd>⌘}</kbd></td><td>Format › Text › Align Left, Center, Align Right</td></tr>
+<tr><td class="key"><kbd>⌃⇥</kbd>, <kbd>⌃⇧⇥</kbd></td><td>Window › Show Next Tab, Show Previous Tab</td></tr>
+<tr><td class="key"><kbd>⌘,</kbd></td><td>Open PDF Editor › Settings…</td></tr>
+<tr><td class="key"><kbd>⌘?</kbd></td><td>Help › Open PDF Editor Guide</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<h1 id="privacy">Privacy, updates and help</h1>
+
+<h2 id="privacy-network">Your documents stay on your Mac</h2>
+<p>Open PDF Editor has no accounts and sends nothing about you or your documents anywhere. It only uses the network when you ask it to:</p>
+<ul>
+<li>checking for updates, when you choose it;</li>
+<li>opening web and email links, when that setting is on;</li>
+<li>checking certificates online, when that setting is on.</li>
+</ul>
+<p>Text recognition and everything else happen on your Mac. Scripts in PDFs never run.</p>
+
+<h2 id="updates">Updates</h2>
+<p>The app never checks for updates by itself. Choose <b>Open PDF Editor › Check for Updates…</b> when you want to; updates are signed, and installed only when you agree. <b>Open PDF Editor › About Open PDF Editor</b> shows the version you have.</p>
+
+<h2 id="help">Help and source</h2>
+<ul>
+<li><b>Help › Open PDF Editor Guide</b> (<kbd>⌘?</kbd>) opens this guide.</li>
+<li><b>Help › Open PDF Editor on GitHub</b> opens the project’s page, where you can report problems and suggest ideas.</li>
+<li><b>Help › Acknowledgements</b> lists the open-source software the app is built on, chiefly the MuPDF engine and Sparkle.</li>
+</ul>
+<p>Open PDF Editor is free software under the GNU Affero General Public License, version 3. Its source code is on GitHub.</p>
+
+</body>
+</html>

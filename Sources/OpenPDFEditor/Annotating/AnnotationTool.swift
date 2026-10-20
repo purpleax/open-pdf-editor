@@ -148,8 +148,12 @@ enum ToolSettings {
         set { defaults.set(Double(newValue), forKey: "TextBoxSize") }
     }
 
+    /// Set only by the self-test, so screenshots show a made-up author.
+    static var authorOverride: String?
+
     /// The author written into new annotations.
     static var author: String {
+        if let authorOverride { return authorOverride }
         let name = NSFullUserName()
         return name.isEmpty ? NSUserName() : name
     }

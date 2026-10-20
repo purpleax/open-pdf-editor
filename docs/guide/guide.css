@@ -1,0 +1,94 @@
+/* Open PDF Editor Guide: laid out by MuPDF's HTML engine (not a browser). */
+body {
+	font-family: sans-serif;
+	font-size: 10.5pt;
+	line-height: 1.4;
+	color: #1d1d1f;
+	margin: 0 8pt;
+}
+h1 {
+	font-size: 22pt;
+	color: #1f4f8a;
+	margin: 0 0 10pt 0;
+	padding-bottom: 4pt;
+	border-bottom: 1pt solid #c9d6e8;
+}
+h2 {
+	font-size: 14pt;
+	color: #1f4f8a;
+	margin: 16pt 0 4pt 0;
+}
+h3 {
+	font-size: 11pt;
+	margin: 10pt 0 2pt 0;
+}
+p { margin: 0 0 7pt 0; }
+ul, ol { margin: 0 0 8pt 0; padding-left: 18pt; }
+li { margin-bottom: 3pt; }
+a { color: #1f5fbf; text-decoration: none; }
+b.menu, span.menu { font-weight: bold; }
+kbd {
+	font-family: sans-serif;
+	font-size: 9.5pt;
+	background-color: #f0f0f2;
+	border: 0.5pt solid #c8c8cc;
+	padding: 0 2pt;
+}
+div.page-break { page-break-after: always; }
+figure {
+	margin: 8pt 0 12pt 0;
+}
+/* Window pictures a little under the column's width; dialogs smaller. */
+figure img {
+	width: 88%;
+	border: 0.5pt solid #c8c8cc;
+}
+figure img.small { width: 55%; }
+figcaption {
+	font-size: 9pt;
+	color: #6e6e73;
+	margin-top: 3pt;
+}
+div.tip {
+	background-color: #eef4fb;
+	border-left: 3pt solid #6c9bd2;
+	padding: 4pt 8pt;
+	margin: 6pt 0 10pt 0;
+	font-size: 10pt;
+}
+div.note {
+	background-color: #fdf5e6;
+	border-left: 3pt solid #e0a43a;
+	padding: 4pt 8pt;
+	margin: 6pt 0 10pt 0;
+	font-size: 10pt;
+}
+table {
+	border-collapse: collapse;
+	width: 100%;
+	margin: 4pt 0 10pt 0;
+	font-size: 10pt;
+}
+th, td {
+	border: 0.5pt solid #c8c8cc;
+	padding: 2pt 5pt;
+	text-align: left;
+	vertical-align: top;
+}
+th { background-color: #eef1f5; }
+td.key, th.key { width: 120pt; }
+div.title {
+	text-align: center;
+	margin-top: 120pt;
+}
+div.title p.name {
+	font-size: 34pt;
+	font-weight: bold;
+	color: #1f4f8a;
+	margin-bottom: 6pt;
+}
+div.title p.subtitle {
+	font-size: 15pt;
+	color: #6e6e73;
+}
+ol.contents { font-size: 11pt; line-height: 1.7; }

@@ -49,7 +49,8 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         let newButton = Self.button("New PDF", symbol: "doc.badge.plus", action: #selector(newPDF(_:)), target: self)
         newButton.keyEquivalent = "\r"
         let openButton = Self.button("Open…", symbol: "folder", action: #selector(openPDF(_:)), target: self)
-        let buttons = NSStackView(views: [newButton, openButton])
+        let guideButton = Self.button("Guide", symbol: "book", action: #selector(openGuide(_:)), target: self)
+        let buttons = NSStackView(views: [newButton, openButton, guideButton])
         buttons.spacing = 12
         buttons.distribution = .fillEqually
 
@@ -59,7 +60,7 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
         stack.spacing = 6
         stack.setCustomSpacing(16, after: logo)
         stack.setCustomSpacing(28, after: subtitle)
-        buttons.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        buttons.widthAnchor.constraint(equalToConstant: 390).isActive = true
         stack.translatesAutoresizingMaskIntoConstraints = false
         let content = NSView()
         content.addSubview(stack)
@@ -91,6 +92,10 @@ final class WelcomeWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func openPDF(_ sender: Any?) {
         NSDocumentController.shared.openDocument(sender)
+    }
+
+    @objc private func openGuide(_ sender: Any?) {
+        (NSApp.delegate as? AppDelegate)?.showGuide(sender)
     }
 
     func windowWillClose(_ notification: Notification) {

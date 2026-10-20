@@ -29,7 +29,8 @@ enum SelfTest {
               let outPath = ProcessInfo.processInfo.environment["OPDF_SELFTEST_OUT"] else { return }
         out = URL(fileURLWithPath: outPath)
         try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
-        let copy = out.appendingPathComponent("selftest.pdf")
+        let environment = ProcessInfo.processInfo.environment
+        let copy = out.appendingPathComponent(environment["OPDF_SELFTEST_GUIDE"] != nil ? "Harbour Gardens Report.pdf" : "selftest.pdf")
         try? FileManager.default.removeItem(at: copy)
         try? FileManager.default.copyItem(at: URL(fileURLWithPath: source), to: copy)
         NSDocumentController.shared.openDocument(withContentsOf: copy, display: true) { document, _, error in
@@ -56,6 +57,8 @@ enum SelfTest {
                     ocrSteps(document)
                 } else if environment["OPDF_SELFTEST_EXPORT"] != nil {
                     exportSteps(document)
+                } else if environment["OPDF_SELFTEST_GUIDE"] != nil {
+                    guideSteps(document)
                 } else {
                     steps(document)
                 }

@@ -233,6 +233,8 @@ enum MainMenu {
         NSApp.windowsMenu = window
 
         let help = submenu(in: main, title: "Help")
+        help.addItem(withTitle: "\(name) Guide", action: #selector(AppDelegate.showGuide(_:)), keyEquivalent: "?")
+        help.addItem(.separator())
         help.addItem(withTitle: "\(name) on GitHub", action: #selector(AppDelegate.openWebsite(_:)), keyEquivalent: "")
         help.addItem(withTitle: "Acknowledgements", action: #selector(AppDelegate.showAcknowledgements(_:)), keyEquivalent: "")
         NSApp.helpMenu = help
