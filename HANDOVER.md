@@ -6,7 +6,7 @@ The state of the work and how it is run, for picking it up in a new session or o
 - **Repository:** `/Users/guybrown/open-pdf-editor` on branch `main`.
   - Keep the clone out of iCloud-synced `~/Documents` and `~/Desktop`. SwiftPM's build database fails there with "disk I/O error".
   - GitHub: `purpleax/open-pdf-editor`.
-- **Released:** 0.8.0 (2026-10-20, `v0.8.0`, commit `d0ddfac`). Installed in /Applications: 0.7.1 (`baa2a00`) until the user says to install 0.8.0. Earlier: 0.6.0 (`d499e63`), 0.7.0 (`0b29475`). DEVELOPMENT.md and ROADMAP.md have what each phase built.
+- **Released:** 1.0.0 (2026-10-20, `v1.0.0`, commit `1baf5ec`) and 0.8.0 (`d0ddfac`). Installed in /Applications: 0.7.1 (`baa2a00`); the user updates with Check for Updates. Earlier: 0.6.0 (`d499e63`), 0.7.0 (`0b29475`). DEVELOPMENT.md and ROADMAP.md have what each phase built.
 - **In progress: Phase 8, OCR and export (0.8.0).** The plan was approved. The user chose OCR on demand with a notice on scanned pages, pages without text by default, and automatic languages. Done and committed locally:
   1. Scan detection: `opdf_page_text_info`, contents-only display lists, `scanned.pdf`.
   2. Text layer: `opdf_text_layers_set` (GlyphLessFont from `output-pdfocr.c`; its own `/OPDFOCR` stream at the front of `/Contents`; replaced on re-run; skips words over real text; spaces span the gap to the next word).
@@ -25,7 +25,7 @@ The state of the work and how it is run, for picking it up in a new session or o
   - `GuideTests` (every menu command named in the guide). Strikethrough moved to ⌃⌘E (clashed with Crop).
   - Security review: the self-test app shared the installed app's bundle id and so its settings; it now has `com.purpleax.openpdfeditor.selftest`. Re-reviewed clean.
   - The user's real "Save changes automatically" had been rewritten by the guide runs; at their request it was set back to off. Their `ChosenSignature` default may point at a self-test signature (the app falls back to the first saved one).
-  - Still to do: release 1.0.0 after the user agrees (dry run first), then ask about installing.
+  - Released as **1.0.0** (2026-10-20, `v1.0.0`, commit `1baf5ec`): on GitHub and in the appcast. The roadmap's phases are all done.
 
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.
