@@ -64,6 +64,10 @@ Where this spec and ROADMAP.md disagree, the Decisions table in ROADMAP.md wins.
 - OCR with Apple's Vision framework that makes scanned documents searchable and selectable, on demand, with a notice on scanned pages.
 - Export to images (PNG, JPEG, multipage TIFF), plain text, Word (DOCX) and HTML.
 
+## Help
+
+- A user guide covering every feature, with screenshots, opened in the app from the Help menu.
+
 ## Out of scope
 
 - Text flowing from one paragraph, column or page to the next.

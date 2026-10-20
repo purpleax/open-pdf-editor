@@ -2,7 +2,7 @@
 
 A free, open-source PDF editor for the Mac, built on the [MuPDF](https://mupdf.com) engine. It aims to cover what commercial editors such as Foxit PDF Editor do: viewing, annotation, forms, page management, editing, redaction, signing and OCR, in a native macOS app.
 
-**Status:** version 0.8.0 views and annotates PDFs, edits their text like a word processor, manages their pages, fills in and edits forms, redacts, protects with passwords, signs, recognises the text in scans and exports to Word, web pages, text and images. A 1.0 release follows: see [ROADMAP.md](ROADMAP.md) for the plan and [SPEC.md](SPEC.md) for the full feature list.
+**Status:** version 1.0 views and annotates PDFs, edits their text like a word processor, manages their pages, fills in and edits forms, redacts, protects with passwords, signs, recognises the text in scans and exports to Word, web pages, text and images. Help › Open PDF Editor Guide opens the user guide ([its source](docs/guide/guide.html)). See [ROADMAP.md](ROADMAP.md) for the history and [SPEC.md](SPEC.md) for the full feature list.
 
 ## What it does today
 

@@ -13,7 +13,8 @@ Everything needed to pick up the work on another Mac: where things stand, how th
 - **Released:** 0.5.0, content editing.
 - **Released:** 0.6.0, security and signing, with saving automatically as a setting.
 - **Released:** 0.7.0, editing like a word processor; 0.7.1, select and type.
-- **Next:** 0.8.0, OCR and export (Phase 8).
+- **Released:** 0.8.0, OCR and export.
+- **Next:** 1.0.0, the user guide (Phase 9).
 - **Known Lows** (accepted, not yet fixed) are listed under each phase's "Security review" item in ROADMAP.md. They are the backlog to pick from when a phase touches the same code.
 - **Version:** `Resources/Info.plist` (`CFBundleShortVersionString`, `CFBundleVersion`), set only by `make release`.
 
@@ -155,13 +156,21 @@ These come from real bugs and review findings. Break one and something crashes o
 ## Releasing
 
 1. Finish the phase: tick ROADMAP.md, and add a `- **x.y.z**: …` entry under Releases (it becomes the GitHub release notes and the update's description).
-2. Run `make test` and `make selftest`.
+2. Run `make guide-images` (the guide's screenshots, from the self-test), look at `docs/guide/images`, and update `docs/guide/guide.html` for anything the phase changed. Then run `make test` and `make selftest`.
 3. **Security review.** A separate reviewer, acting as a security researcher, reviews the phase's changes (`git diff <previous tag>`) without modifying the repository.
    - **Threat model:** untrusted PDFs and other files opened, inserted or converted. Attacker goals: code execution, memory corruption, crashes or hangs that lose work, damage to the user's document, writing outside the chosen place, unexpected overwrites, data leaks, and silently weakened documents.
    - **Method:** build and run proof-of-concept inputs, and mark each finding CONFIRMED or PLAUSIBLE. Give each a severity, file:line and a fix.
    - **Afterwards:** fix everything above Low, re-review, and record the outcome under the phase in ROADMAP.md, with any accepted Lows.
 4. Commit, then `make release VERSION=x.y.z`. It checks the tree is clean and current, sets the version, builds, signs, notarises and staples the DMG and zip, signs the zip for Sparkle, writes `appcast.xml`, commits, tags, pushes, and creates the GitHub release. Installed copies pick it up from `appcast.xml` on `main`.
 5. Quit the app, `make install`, and reopen it.
+
+## User guide (1.0.0)
+
+- **Source:** `docs/guide/guide.html` and `guide.css`, laid out by MuPDF's HTML engine, not a browser: `page-break-before` is ignored (chapters start after `<div class="page-break">`), centring images doesn't work, and images load only by relative path. Pictures are in `docs/guide/images`.
+- **Build:** `make guide` runs `scripts/make-guide.js` with mutool (`scripts/build-mutool.sh`): Letter pages through a `DocumentWriter`, then bookmarks from the HTML's headings and its links added to the PDF, and the title with the version. `make build` copies it into the app as `Open PDF Editor Guide.pdf`.
+- **Screenshots:** `make guide-images` runs the self-test's `guide` run (`SelfTest+Guide.swift`) on `sample.pdf` in light mode at a fixed size, with a made-up author, the settings shown off (and put back) and a test signing identity, and copies the PNGs into `docs/guide/images`. Save panels can't be captured (they are another process), so their accessory view is drawn instead.
+- **App:** `AppDelegate.showGuide` copies the guide into `~/Library/Caches/<bundle id>/Guide` when the build changes and opens the copy with the outline showing.
+- **Tests:** `GuideTests` (bookmarks, links, pictures, and every menu title named in the guide), and the self-test's guide run checks Help opens the copy, once.
 
 ## Forms (0.4.0)
 

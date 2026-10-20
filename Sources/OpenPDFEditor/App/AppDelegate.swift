@@ -88,8 +88,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Help › Open PDF Editor Guide: the bundled guide, opened as a copy in
     /// Caches like any document (with its bookmarks showing). The bundled file
     /// itself is never opened: saving it would break the app's signature.
-    /// The copy is replaced when the app changes, so notes made on it last
-    /// until the next update.
+    /// The copy is replaced when the app's guide changes, so notes made on it
+    /// last until the next update.
     @objc func showGuide(_ sender: Any?) {
         guard let bundled = Bundle.main.url(forResource: "Open PDF Editor Guide", withExtension: "pdf") else {
             let alert = NSAlert()
@@ -107,7 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 open.showWindows()
                 return
             }
-            let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? ""
+            // The bundled guide's size and date: they change with every build.
+            let attributes = try FileManager.default.attributesOfItem(atPath: bundled.path)
+            let build = "\(attributes[.size] ?? 0) \((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
             let versionKey = "GuideCopyVersion"
             if UserDefaults.standard.string(forKey: versionKey) != build || !FileManager.default.fileExists(atPath: copy.path) {
                 // Whatever is there (removing a link removes the link itself).

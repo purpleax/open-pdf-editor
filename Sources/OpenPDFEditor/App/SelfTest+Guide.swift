@@ -232,6 +232,13 @@ extension SelfTest {
                 WelcomeWindowController.show()
                 later {
                     if let welcome = NSApp.windows.first(where: { $0.windowController is WelcomeWindowController }) {
+                        // Without its version, which would date the guide.
+                        func labels(_ view: NSView) -> [NSTextField] {
+                            ((view as? NSTextField).map { [$0] } ?? []) + view.subviews.flatMap(labels)
+                        }
+                        for label in labels(welcome.contentView ?? NSView()) where label.stringValue.hasPrefix("Version ") {
+                            label.stringValue = " "
+                        }
                         shot(welcome, "welcome")
                     } else {
                         say("FAIL no welcome window")

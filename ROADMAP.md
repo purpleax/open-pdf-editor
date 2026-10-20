@@ -46,6 +46,7 @@ Started Oct 18, 2026. [DEVELOPMENT.md](DEVELOPMENT.md) has the current state, ma
 | Signing | Clicking an empty signature field opens Sign…: a Keychain identity, reason and location. The document with its unsaved changes is signed on a copy (a real incremental save, the only kind that finishes a signature), the open document goes on from the signed bytes, and it is saved at once. Signatures are checked when the file's bytes change, not on every edit; a gap in the signed ranges must hold exactly that signature's /Contents. | 2026-10-19 |
 | Saved signatures | Drawn (a pad in Tools › Signatures…) or imported (read with ImageIO, at most 1200 pixels, as PNG) and kept as generic-password items in the login keychain, readable without asking only by this app. The Signature tool (⌃⌘G) places the chosen one as a stamp annotation with that picture; Sign… can draw it in a digital signature's appearance. | 2026-10-19 |
 | Encryption | File › Security… sets, changes or removes the passwords and permissions, with AES-256 only. It needs owner access: a file opened with the user password asks for the owner password first. | 2026-10-19 |
+| User guide | A PDF guide bundled in the app, opened from Help › Open PDF Editor Guide (⌘?) and the welcome window as a copy in Caches (never the bundled file, which saving would change). Written as HTML in `docs/guide` and laid out by MuPDF's HTML engine (`make guide`), with bookmarks from its headings and links from its contents; screenshots are taken by the self-test (`make guide-images`) before each release. A test checks that every menu command is named in it. | 2026-10-20 |
 | Permissions | Enforced when a file is opened without owner access. Printing, copying text, editing (content, fields, metadata), comments, filling in forms and page changes are each disabled per the owner's settings, and a notice under the toolbar says what isn't allowed, with Enter Owner Password…. | 2026-10-19 |
 
 ## Phase 0: Foundations
@@ -222,12 +223,16 @@ From the first release-time security review (all findings above Low fixed, plus 
 
 ## Phase 9: 1.0 (1.0.0)
 
-- [ ] User manual, bundled and opened from Help
+- [x] User manual, bundled and opened from Help
+  - Help › Open PDF Editor Guide (⌘?) and a Guide button in the welcome window open a 27-page guide: every feature, task by task, with screenshots, a keyboard shortcut table, bookmarks for each chapter and a linked contents page.
+  - Strikethrough's shortcut is now ⌃⌘E: it shared ⌃⌘K with Crop, so only Crop's worked.
 - Removed (2026-10-20, at the user's request): a Homebrew cask and a website or project page.
 
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **1.0.0**: Version 1.0, with a user guide. Help › Open PDF Editor Guide (⌘?), or Guide in the welcome window, opens a full guide to the app in the app itself: every feature explained step by step with pictures, a table of keyboard shortcuts, and bookmarks to each chapter. Strikethrough now has a working shortcut of its own, ⌃⌘E (it shared ⌃⌘K with Crop).
 
 - **0.8.0**: Recognise text and export. Scanned pages now say so, and Tools › Recognise Text… reads them on this Mac with Apple's text recognition, so their words can be found, selected and copied; it reads pages without text unless you choose others, and works out the language by itself. File › Export… saves the document as a Word document, a web page, plain text, PNG or JPEG pictures of its pages, or one TIFF file, for all pages or some, including changes you haven't saved yet. Word documents and web pages made from recognised scans have the text rather than a picture of it.
 

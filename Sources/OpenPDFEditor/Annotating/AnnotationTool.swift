@@ -85,7 +85,7 @@ enum AnnotationTool: String, CaseIterable {
         case .select: "1"
         case .highlight: "h"
         case .underline: "u"
-        case .strikeOut: "k"
+        case .strikeOut: "e"
         case .note: "n"
         case .textBox: "t"
         case .rectangle: "r"
