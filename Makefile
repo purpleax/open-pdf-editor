@@ -67,7 +67,6 @@ selftest-app: build corpus
 	ditto "$(APP)" "build/selftest/Self Test.app"
 	cp "$$(swift build -c release --arch arm64 --scratch-path .build-selftest --show-bin-path)/$(EXE)" "build/selftest/Self Test.app/Contents/MacOS/$(EXE)"
 	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.purpleax.openpdfeditor.selftest" "build/selftest/Self Test.app/Contents/Info.plist"
-	/usr/libexec/PlistBuddy -c "Set :CFBundleName Self Test" "build/selftest/Self Test.app/Contents/Info.plist"
 	scripts/sign-app.sh "build/selftest/Self Test.app"
 
 # The user guide's screenshots, taken by the self-test into docs/guide/images
