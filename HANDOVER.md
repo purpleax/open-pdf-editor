@@ -19,6 +19,14 @@ The state of the work and how it is run, for picking it up in a new session or o
   - Released as **0.8.0** (2026-10-20, `v0.8.0`, commit `d0ddfac`): on GitHub and in the appcast. Phase 8 is done; wait for the user before starting Phase 9 (1.0).
   - Self-test note: the `ocr` run saves 2 s after undo/redo. Saving in the same turn deadlocks NSDocument with the autosave that undo started; a person can't do that.
 
+- **In progress: Phase 9, the user guide (1.0.0).** The user dropped the Homebrew cask and the website, and chose a full PDF guide opened in the app, with screenshots from the self-test. Done and committed locally:
+  - `docs/guide/guide.html`/`guide.css` → `make guide` (`scripts/make-guide.js` via mutool) → bundled as `Open PDF Editor Guide.pdf`; Help › Open PDF Editor Guide (⌘?) and a Guide button in the welcome window open a copy in Caches.
+  - `make guide-images` (self-test `guide` run on `sample.pdf`) makes the screenshots; it is now step 2 of the release checklist.
+  - `GuideTests` (every menu command named in the guide). Strikethrough moved to ⌃⌘E (clashed with Crop).
+  - Security review: the self-test app shared the installed app's bundle id and so its settings; it now has `com.purpleax.openpdfeditor.selftest`. Re-reviewed clean.
+  - The user's real "Save changes automatically" had been rewritten by the guide runs; at their request it was set back to off. Their `ChosenSignature` default may point at a self-test signature (the app falls back to the first saved one).
+  - Still to do: release 1.0.0 after the user agrees (dry run first), then ask about installing.
+
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.
 - **Releases:**
