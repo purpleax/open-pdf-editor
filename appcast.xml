@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 0.8.0</title>
-      <pubDate>Mon, 19 Oct 2026 20:35:20 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.8.0</link>
-      <sparkle:version>10</sparkle:version>
-      <sparkle:shortVersionString>0.8.0</sparkle:shortVersionString>
+      <title>Open PDF Editor 1.0.0</title>
+      <pubDate>Tue, 20 Oct 2026 12:25:41 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v1.0.0</link>
+      <sparkle:version>11</sparkle:version>
+      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v0.8.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Recognise text and export. Scanned pages now say so, and Tools › Recognise Text… reads them on this Mac with Apple's text recognition, so their words can be found, selected and copied; it reads pages without text unless you choose others, and works out the language by itself. File › Export… saves the document as a Word document, a web page, plain text, PNG or JPEG pictures of its pages, or one TIFF file, for all pages or some, including changes you haven't saved yet. Word documents and web pages made from recognised scans have the text rather than a picture of it.</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v0.8.0/Open-PDF-Editor-0.8.0.zip" sparkle:edSignature="sQYNiHdq1X8J03+TkpNwouGuqrJAI9GtRAlwqB0KAHuFuW57Gx0ULdc/yJLoFE2043TCiUdUlwHcen6/DiJmBA==" length="32548716" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v1.0.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Version 1.0, with a user guide. Help › Open PDF Editor Guide (⌘?), or Guide in the welcome window, opens a full guide to the app in the app itself: every feature explained step by step with pictures, a table of keyboard shortcuts, and bookmarks to each chapter. Strikethrough now has a working shortcut of its own, ⌃⌘E (it shared ⌃⌘K with Crop).</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v1.0.0/Open-PDF-Editor-1.0.0.zip" sparkle:edSignature="T3ZdKB/HYViErUlzAzqxmGkhn70YWg7Gpe8PS4J/zvBrDYSo6Bnym5a3utNnY5qBdWJNsMhgWl0M+qCMWJA6AQ==" length="35416918" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
