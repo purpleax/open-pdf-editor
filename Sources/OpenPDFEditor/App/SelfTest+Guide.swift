@@ -151,8 +151,9 @@ extension SelfTest {
             },
             // Settings.
             { next in
-                // As they start out (off). The self-test shares the app's
-                // settings, so they are put back afterwards.
+                // As they start out (off), put back afterwards. (The self-test
+                // app has a bundle identifier of its own, so these are never
+                // the installed app's settings.)
                 let saved = (Settings.savesAutomatically, Settings.opensWebLinks, Settings.convertsDocuments, Settings.checksCertificatesOnline)
                 Settings.savesAutomatically = false
                 Settings.opensWebLinks = false

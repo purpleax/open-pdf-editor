@@ -58,12 +58,16 @@ test: corpus guide
 	# memory lock, so they run on their own rather than slow the timing tests.
 	swift test --arch arm64 --skip-build --filter ExportTests
 
-# The self-test build of the app, in build/selftest.
+# The self-test build of the app, in build/selftest. It has its own bundle
+# identifier, so its settings, caches and saved state are its own and never
+# the installed app's.
 selftest-app: build corpus
 	swift build -c release --arch arm64 --scratch-path .build-selftest -Xswiftc -DSELFTEST
 	rm -rf build/selftest && mkdir -p build/selftest
 	ditto "$(APP)" "build/selftest/Self Test.app"
 	cp "$$(swift build -c release --arch arm64 --scratch-path .build-selftest --show-bin-path)/$(EXE)" "build/selftest/Self Test.app/Contents/MacOS/$(EXE)"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier com.purpleax.openpdfeditor.selftest" "build/selftest/Self Test.app/Contents/Info.plist"
+	/usr/libexec/PlistBuddy -c "Set :CFBundleName Self Test" "build/selftest/Self Test.app/Contents/Info.plist"
 	scripts/sign-app.sh "build/selftest/Self Test.app"
 
 # The user guide's screenshots, taken by the self-test into docs/guide/images
@@ -115,6 +119,7 @@ selftest: selftest-app
 		OPDF_SELFTEST_P12="$(CURDIR)/build/corpus/email.p12" \
 		"build/selftest/Self Test.app/Contents/MacOS/$(EXE)" -ApplePersistenceIgnoreState YES -AutosaveDocuments NO
 	cat build/selftest/guide/log.txt
+	! grep -q FAIL build/selftest/guide/log.txt
 
 # Copy the app to /Applications.
 install: build

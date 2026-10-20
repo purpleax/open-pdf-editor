@@ -111,7 +111,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let attributes = try FileManager.default.attributesOfItem(atPath: bundled.path)
             let build = "\(attributes[.size] ?? 0) \((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)"
             let versionKey = "GuideCopyVersion"
-            if UserDefaults.standard.string(forKey: versionKey) != build || !FileManager.default.fileExists(atPath: copy.path) {
+            // Only a plain file of ours is reused: anything else there (a link
+            // to somewhere else, say) is replaced. The check doesn't follow links.
+            let existing = (try? FileManager.default.attributesOfItem(atPath: copy.path))?[.type] as? FileAttributeType
+            if UserDefaults.standard.string(forKey: versionKey) != build || existing != .typeRegular {
                 // Whatever is there (removing a link removes the link itself).
                 try? FileManager.default.removeItem(at: copy)
                 try FileManager.default.copyItem(at: bundled, to: copy)

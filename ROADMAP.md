@@ -226,6 +226,10 @@ From the first release-time security review (all findings above Low fixed, plus 
 - [x] User manual, bundled and opened from Help
   - Help › Open PDF Editor Guide (⌘?) and a Guide button in the welcome window open a 27-page guide: every feature, task by task, with screenshots, a keyboard shortcut table, bookmarks for each chapter and a linked contents page.
   - Strikethrough's shortcut is now ⌃⌘E: it shared ⌃⌘K with Crop, so only Crop's worked.
+- [x] Security review before release: one Medium fixed.
+  - Medium: the self-test app was a copy of the app with the same bundle identifier, so its runs used the installed app's settings: the guide's screenshot run could leave Save changes automatically switched off, the chosen saved signature changed and the cached guide replaced. The self-test app now has its own identifier (`com.purpleax.openpdfeditor.selftest`), and with it its own settings, caches and saved state.
+  - Also fixed: the guide's copy in Caches is reused only when it is a plain file (a link put there is replaced, not followed); the self-test's author override isn't compiled into the app; `make selftest` fails when the guide run does.
+  - Left for later (Low): notes made on the guide's copy are lost when the app updates (and macOS may clear Caches); two different builds running at once share the cached copy; `make -j` could build mutool twice at once.
 - Removed (2026-10-20, at the user's request): a Homebrew cask and a website or project page.
 
 ## Releases
