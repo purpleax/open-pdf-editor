@@ -3,10 +3,8 @@
 The state of the work and how it is run, for picking it up in a new session or on the other Mac. DEVELOPMENT.md has the lasting project guide; this file is the latest snapshot.
 
 ## Where things stand
-- **Repository:** `/Users/guybrown/Github/open-pdf-editor` on branch `main` (moved from `~/open-pdf-editor` on 2026-10-21).
-  - Keep the clone out of iCloud-synced `~/Documents` and `~/Desktop`. SwiftPM's build database fails there with "disk I/O error".
-  - GitHub: `purpleax/open-pdf-editor`.
-- **Released:** 1.0.0 (2026-10-20, `v1.0.0`, commit `1baf5ec`) and 0.8.0 (`d0ddfac`). Installed in /Applications: 0.7.1 (`baa2a00`); the user updates with Check for Updates. Earlier: 0.6.0 (`d499e63`), 0.7.0 (`0b29475`). DEVELOPMENT.md and ROADMAP.md have what each phase built.
+- **Repository:** `purpleax/open-pdf-editor` on GitHub, branch `main`. Each Mac has its own clone, anywhere outside iCloud-synced `~/Documents` and `~/Desktop` (SwiftPM's build database fails there with "disk I/O error").
+- **Released:** 1.0.0 (2026-10-20, `v1.0.0`, commit `1baf5ec`) and 0.8.0 (`d0ddfac`). Earlier: 0.6.0 (`d499e63`), 0.7.0 (`0b29475`). DEVELOPMENT.md and ROADMAP.md have what each phase built.
 - **In progress: Phase 8, OCR and export (0.8.0).** The plan was approved. The user chose OCR on demand with a notice on scanned pages, pages without text by default, and automatic languages. Done and committed locally:
   1. Scan detection: `opdf_page_text_info`, contents-only display lists, `scanned.pdf`.
   2. Text layer: `opdf_text_layers_set` (GlyphLessFont from `output-pdfocr.c`; its own `/OPDFOCR` stream at the front of `/Contents`; replaced on re-run; skips words over real text; spaces span the gap to the next word).
