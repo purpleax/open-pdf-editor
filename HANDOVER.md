@@ -25,6 +25,8 @@ The state of the work and how it is run, for picking it up in a new session or o
   - The user's real "Save changes automatically" had been rewritten by the guide runs; at their request it was set back to off. Their `ChosenSignature` default may point at a self-test signature (the app falls back to the first saved one).
   - Released as **1.0.0** (2026-10-20, `v1.0.0`, commit `1baf5ec`): on GitHub and in the appcast. The roadmap's phases are all done.
 
+- **1.1.0 (2026-11-22): copy and paste pages.** Asked for directly, outside the phases: Pages › Cut, Copy and Paste Pages between open documents. Its security review led to `prune_resources` in the bridge (extracts no longer carry other pages' resources). ROADMAP.md › 1.1.0 has the review and what was left for later.
+
 ## How the user wants to work (agreed in this session)
 - **No manual pushes or releases by the user.** Claude does every push and release, but only after the user agrees in chat. Ask with a wrap-up question and buttons.
 - **Releases:**

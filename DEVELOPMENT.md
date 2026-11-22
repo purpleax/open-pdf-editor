@@ -132,6 +132,7 @@ Both Macs can build and release once each is set up as above, with the same Spar
 
 - Bridge: delete, reorder (`reorder_page_tree`, which gives the root `/Pages` a new `/Kids` and copies inherited attributes onto each page), insert blank, rotate, crop, insert from a PDF (grafting), extract.
 - `PageEditor` runs each as one undoable step and handles panels, errors and file writing (`writeReplacing`, `writeNew`, which never overwrite unexpectedly or leave the chosen folder).
+- Copy, cut and paste of pages (1.1.0) add nothing to the bridge: copying extracts the pages to a PDF on the general pasteboard (type `.pdf`), and pasting writes the pasteboard's PDF to a temporary file and inserts it. Pasted data is as untrusted as an inserted file. With the thumbnails focused, Edit › Cut, Copy and Paste reach `ThumbnailTable`, which passes them on as the Pages commands.
 
 ## Rules that keep it safe
 
@@ -141,7 +142,7 @@ These come from real bugs and review findings. Break one and something crashes o
 - **Every `fz_new_context` must use `shared_locks()` and the shared allocator.**
 - **Variables changed inside `fz_try` and used after it must be `fz_var`'d.** Swift must never be called back from inside `fz_try`.
 - **Don't use `pdf_rearrange_pages`:** it rebuilds the catalog (losing forms, attachments, metadata and page labels) and recurses without limit through outlines.
-- **Grafting copies page contents and resources only**, not annotations, links or form fields.
+- **Grafting copies page contents and resources only**, not annotations, links or form fields. It copies the whole resources dictionary, which other pages may share, so `opdf_extract_pages` prunes afterwards (`prune_resources`): never write grafted pages to a new file without it.
 - **Untrusted input is bounded:** page sizes (`maxPageSide`, render caps), outline depth and count, annotation geometry (`OPDF_MAX_*`), pages per insert or combine. New parsers of file data need limits and a corpus test.
 - **Attachments** are saved with quarantine, and risky types ask first (`AttachmentSafety`).
 - **External links** open only for http, https and mailto.

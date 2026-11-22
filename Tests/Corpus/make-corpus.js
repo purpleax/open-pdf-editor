@@ -744,6 +744,79 @@ function makeReviewFiles() {
 	doc.insertPage(-1, page)
 	doc.findPage(2).get("Contents").put("OPDFOCR", true)
 	doc.save(out + "/sharedres.pdf", "compress")
+
+	// sharedsecret.pdf: two pages share one resources dictionary, as many
+	// generators write them. Page 0 draws a small form; page 1 a form of
+	// 300,000 characters that barely compress. empty.pdf has no pages.
+	doc = newDocument()
+	function form(content) {
+		return doc.addStream(content, { Type: doc.newName("XObject"), Subtype: doc.newName("Form"), BBox: LETTER,
+			Resources: { Font: { F1: doc.font } } })
+	}
+	var noise = "", seed = 12345
+	for (var n = 0; n < 300000; n++) {
+		seed = (seed * 16807) % 2147483647
+		noise += String.fromCharCode(97 + seed % 26)
+	}
+	shared = doc.addObject({ Font: { F1: doc.font }, XObject: {
+		P0: form("BT /F1 12 Tf 72 700 Td (Public page) Tj ET"),
+		P1: form("BT /F1 12 Tf 72 700 Td (Private page) Tj ET\nBT /F1 1 Tf 72 100 Td (" + noise + ") Tj ET") } })
+	for (var s = 0; s < 2; s++) {
+		page = doc.addPage(LETTER, 0, {}, "/P" + s + " Do\n")
+		page.put("Resources", shared)
+		doc.insertPage(-1, page)
+	}
+	doc.save(out + "/sharedsecret.pdf", "compress")
+	new PDFDocument().save(out + "/empty.pdf", "")
+
+	// sharednested.pdf: the same, with every form, the tiling pattern and the
+	// form it draws all pointing at the one shared dictionary too. Page 0 draws
+	// Outer0 (which draws Inner0) and fills with the pattern (which draws PIn0).
+	doc = newDocument()
+	shared = doc.addObject({})
+	function sharing(content, extra) {
+		var dict = { Type: doc.newName("XObject"), Subtype: doc.newName("Form"), BBox: LETTER }
+		if (extra) dict = extra
+		var stream = doc.addStream(content, dict)
+		stream.put("Resources", shared)
+		return stream
+	}
+	var xobjects = {}, patterns = {}
+	for (var t = 0; t < 2; t++) {
+		var bulk = t === 1 ? "\nBT /F1 1 Tf 72 100 Td (" + noise + ") Tj ET" : ""
+		xobjects["Inner" + t] = sharing("BT /F1 12 Tf 72 700 Td (Nested " + t + ") Tj ET")
+		xobjects["Outer" + t] = sharing("/Inner" + t + " Do")
+		xobjects["PIn" + t] = sharing("0 0 5 5 re f" + bulk)
+		patterns["Pat" + t] = sharing("/PIn" + t + " Do", { Type: doc.newName("Pattern"), PatternType: 1, PaintType: 1,
+			TilingType: 1, BBox: [0, 0, 10, 10], XStep: 10, YStep: 10 })
+	}
+	shared.put("Font", { F1: doc.font })
+	shared.put("XObject", xobjects)
+	shared.put("Pattern", patterns)
+	for (var u = 0; u < 2; u++) {
+		page = doc.addPage(LETTER, 0, {}, "/Outer" + u + " Do\n/Pattern cs /Pat" + u + " scn 72 300 100 100 re f\n")
+		page.put("Resources", shared)
+		doc.insertPage(-1, page)
+	}
+	doc.save(out + "/sharednested.pdf", "compress")
+
+	// sharedodd.pdf: a shared dictionary again. Page 0 uses entries named like
+	// MuPDF's built-in names (H, Helv, ZaDb), and draws a form whose own
+	// resources lack the font it uses, which readers then find in the page's.
+	doc = newDocument()
+	var poor = doc.addStream("BT /F1 14 Tf 72 600 Td (Borrowed font) Tj ET", { Type: doc.newName("XObject"),
+		Subtype: doc.newName("Form"), BBox: LETTER, Resources: { ProcSet: [doc.newName("PDF"), doc.newName("Text")] } })
+	shared = doc.addObject({ Font: { F1: doc.font, Helv: doc.font, ZaDb: doc.font },
+		ExtGState: { H: { CA: 0.3, ca: 0.3 } },
+		XObject: { Poor: poor, Big: form("BT /F1 1 Tf 72 100 Td (" + noise + ") Tj ET") } })
+	var odd = ["BT /Helv 20 Tf 72 700 Td (Odd names) Tj ET\nq /H gs 0 0 1 rg 72 500 200 50 re f Q\n/Poor Do\nBT /ZaDb 12 Tf 72 400 Td (Last name) Tj ET\n",
+		"BT /F1 12 Tf 72 700 Td (Other page) Tj ET\n/Big Do\n"]
+	for (var v = 0; v < 2; v++) {
+		page = doc.addPage(LETTER, 0, {}, odd[v])
+		page.put("Resources", shared)
+		doc.insertPage(-1, page)
+	}
+	doc.save(out + "/sharedodd.pdf", "compress")
 }
 
 // --- sample.pdf: a realistic report, for the user guide's screenshots -------

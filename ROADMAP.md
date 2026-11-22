@@ -232,9 +232,26 @@ From the first release-time security review (all findings above Low fixed, plus 
   - Left for later (Low): notes made on the guide's copy are lost when the app updates (and macOS may clear Caches); two different builds running at once share the cached copy; `make -j` could build mutool twice at once.
 - Removed (2026-10-20, at the user's request): a Homebrew cask and a website or project page.
 
+## 1.1.0: Copy and paste pages
+
+- [x] Cut, copy and paste pages between open documents
+  - Pages › Cut Pages, Copy Pages and Paste Pages, the same in the thumbnails' menu, and ⌘X, ⌘C and ⌘V with the thumbnails focused. The pasteboard holds an ordinary PDF, so pages go to and from other apps too. Paste is one undoable step.
+- [x] Security review before release: one Medium fixed.
+  - Medium (already in Extract Pages and Split Document, and now reachable by copying): pages that share one resources dictionary took every other page's pictures and forms with them, unseen but recoverable. Each extracted page, and each form, pattern, soft-mask group and Type 3 font it draws, now gets a resources dictionary of its own with only the entries it may use (`prune_resources`): every name in its own content and in the content of all it draws. Content streams aren't rewritten, so pages look as they did. The extract is also written without object streams, which held freed objects. It took three rounds of review: MuPDF's own sanitising missed nested forms, took exponential time on some files and changed colours; a first pruner removed entries that content further down relied on, and tripped over a MuPDF bug (`pdf_dict_get` can miss the last key of a sorted dictionary when given a built-in name, so the pruner looks up by string).
+  - Also fixed: a document that doesn't allow copying doesn't allow copying or cutting its pages; inserting or pasting a PDF with no pages is an error (it used to leave an undo step that undid the edit before it); Cut deletes only once the clipboard has the pages; the temporary folders are private to the user; ⌘X, ⌘C and ⌘V go to the controller that validated them.
+  - Left for later (Low):
+    - Pruning. A page keeps every resource, shared or not, when its content or a form's has an inline image or a syntax error, draws itself, or nests more than 32 deep. An entry is kept wherever a name used further down matches it, so same-named entries of other pages can stay. In a file that breaks the rules twice over (a form draws something its own resources lack, which in turn needs a name only that form holds) a used entry is lost; the reviewer's sketch of a per-page fix is not adopted yet. A form's own extra entries (such as `/PieceInfo`) are copied with it.
+    - Extract Pages and Split Document still ignore the copy permission (their panels say the copy won't have the password).
+    - Pages copied from a locked document sit unencrypted on the clipboard, where other apps and Universal Clipboard can read them.
+    - Cut and paste drops comments, links, form fields and redaction marks without asking (the guide says so, and undo restores them).
+    - A pasted PDF that is locked is refused rather than asking for its password; pasting reads the whole PDF into memory on the main thread.
+    - Found on the way, not part of this change: layers that are switched off become visible on extracted pages; after Flatten the open document can draw slightly differently from the saved one until reopened; the same MuPDF bug may affect Reduce File Size (`do_garbage` 2 or more).
+
 ## Releases
 
 Each entry is the release notes for that version, written for users.
+
+- **1.1.0**: Copy and paste pages. Select pages in the thumbnails and press ⌘C (or choose Pages › Copy Pages), then press ⌘V in the same document or another open one to put them after the selected pages. ⌘X, or Pages › Cut Pages, copies the pages and removes them. The same commands are in the menu you get by Control-clicking thumbnails. Comments, links, form fields and redaction marks aren’t copied with a page, so to move pages within a document, drag their thumbnails instead. A PDF copied in another app can be pasted in as pages too. Extract Pages, Split Document and Copy Pages now leave out everything the chosen pages don’t use: in some documents, other pages’ pictures used to travel with them, unseen.
 
 - **1.0.0**: Version 1.0, with a user guide. Help › Open PDF Editor Guide (⌘?), or Guide in the welcome window, opens a full guide to the app in the app itself: every feature explained step by step with pictures, a table of keyboard shortcuts, and bookmarks to each chapter. Strikethrough now has a working shortcut of its own, ⌃⌘E (it shared ⌃⌘K with Crop).
 

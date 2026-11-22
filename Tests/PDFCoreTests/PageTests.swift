@@ -113,6 +113,104 @@ import UniformTypeIdentifiers
         #expect(try doc.pageCount() == 3)
     }
 
+    /// Copy and paste between two open documents: pages extracted from one
+    /// (unsaved changes included) go into the other, which then saves.
+    @Test func copyPagesBetweenDocumentsAndSave() throws {
+        let source = try Corpus.open("mixed.pdf")
+        let target = try Corpus.open("text.pdf")
+        try source.rotatePages([0], by: 90)
+        let turned = try source.pageBounds()[0].size
+        let clip = temporaryURL("clip.pdf")
+        let saved = temporaryURL("pasted.pdf")
+        defer { [clip, saved].forEach { try? FileManager.default.removeItem(at: $0) } }
+        try source.extractPages([0, 2], to: clip)
+        #expect(try target.insertPages(from: clip, at: 3) == 2)
+        #expect(try titles(target) == ["Chapter One", "Chapter Two", "Chapter Three", titles(source)[0], titles(source)[2]])
+        #expect(try target.pageBounds()[3].size == turned)
+        #expect(try source.pageCount() == 5)
+        try target.save(to: saved)
+        let reopened = try EngineDocument(url: saved)
+        #expect(try titles(reopened) == titles(target))
+        try target.undo()
+        #expect(try target.pageCount() == 3)
+    }
+
+    /// Pages that share a resources dictionary: an extract of one doesn't
+    /// carry what only the other draws.
+    @Test func extractLeavesOutOtherPagesResources() throws {
+        let doc = try Corpus.open("sharedsecret.pdf")
+        let one = temporaryURL("one.pdf")
+        let two = temporaryURL("two.pdf")
+        defer { [one, two].forEach { try? FileManager.default.removeItem(at: $0) } }
+        try doc.extractPages([0], to: one)
+        try doc.extractPages([1], to: two)
+        let size = { (url: URL) in try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0 }
+        #expect(try size(one) < 20000)
+        #expect(try size(two) > 100_000)
+        #expect(try titles(EngineDocument(url: one)) == ["Public page"])
+        #expect(try titles(EngineDocument(url: two)) == ["Private page"])
+    }
+
+    /// The same when forms within forms, and a pattern and its form, all
+    /// share the dictionary: the extract looks the same and is small.
+    @Test func extractPrunesNestedSharedResources() throws {
+        let colours = try extractedPageLooksTheSame("sharednested.pdf", title: "Nested 0")
+        // The text and the pattern's fill were both drawn.
+        #expect(colours.contains { $0 != [255, 255, 255] && $0 != [0, 0, 0] } || colours.count >= 2)
+        let doc = try Corpus.open("sharednested.pdf")
+        let bounds = try doc.pageBounds()[0]
+        #expect(try Pixels(doc.renderPage(0, bounds: bounds, scale: 1)).rgb(at: CGPoint(x: 73, y: 792 - 393)) != [255, 255, 255])
+    }
+
+    /// Entries named like MuPDF's built-in names, and a font that a form
+    /// finds in the page's resources, are all kept.
+    @Test func extractKeepsWhatThePageUses() throws {
+        let colours = try extractedPageLooksTheSame("sharedodd.pdf", title: "Odd names")
+        // The translucent fill is neither white nor full blue.
+        #expect(colours.contains { $0[2] == 255 && $0[0] > 100 && $0[0] < 250 })
+    }
+
+    /// Extracts page 0 of a two-page corpus file whose second page is big:
+    /// the extract is small, has the page's text, and renders exactly as
+    /// the page does. Returns the colours on the page.
+    private func extractedPageLooksTheSame(_ name: String, title: String) throws -> Set<[UInt8]> {
+        let doc = try Corpus.open(name)
+        let one = temporaryURL("one-\(name)")
+        let two = temporaryURL("two-\(name)")
+        defer { [one, two].forEach { try? FileManager.default.removeItem(at: $0) } }
+        try doc.extractPages([0], to: one)
+        try doc.extractPages([1], to: two)
+        let size = { (url: URL) in try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0 }
+        #expect(try size(one) < 20000)
+        #expect(try size(two) > 100_000)
+        let extracted = try EngineDocument(url: one)
+        #expect(try titles(extracted) == [title])
+        let bounds = try doc.pageBounds()[0]
+        let before = try Pixels(doc.renderPage(0, bounds: bounds, scale: 1))
+        let after = try Pixels(extracted.renderPage(0, bounds: bounds, scale: 1))
+        var colours = Set<[UInt8]>()
+        var same = before.width == after.width && before.height == after.height
+        for y in 0..<before.height where same {
+            for x in 0..<before.width {
+                let colour = before.rgb(x, y)
+                colours.insert(colour)
+                if after.rgb(x, y) != colour { same = false; break }
+            }
+        }
+        #expect(same, "the extracted page of \(name) doesn't look like the original")
+        return colours
+    }
+
+    /// Inserting nothing is an error rather than an empty undo step.
+    @Test func insertFileWithNoPages() throws {
+        let doc = try Corpus.open("text.pdf")
+        try doc.rotatePages([0], by: 90)
+        #expect(throws: EngineError.self) { try doc.insertPages(from: Corpus.root.appendingPathComponent("empty.pdf"), at: 0) }
+        #expect(try doc.pageCount() == 3)
+        try doc.undo()
+        #expect(!doc.canUndo)
+    }
+
     @Test func insertLockedFile() throws {
         let doc = try Corpus.open("text.pdf")
         let locked = Corpus.root.appendingPathComponent("encrypted.pdf")

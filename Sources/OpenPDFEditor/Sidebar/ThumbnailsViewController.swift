@@ -193,6 +193,10 @@ final class ThumbnailsViewController: NSViewController, NSTableViewDataSource, N
         guard clicked >= 0 else { return }
         let count = table.selectedRowIndexes.count
         let noun = count == 1 ? "Page" : "\(count) Pages"
+        menu.addItem(withTitle: "Cut", action: #selector(DocumentWindowController.cutPages(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Copy", action: #selector(DocumentWindowController.copyPages(_:)), keyEquivalent: "")
+        menu.addItem(withTitle: "Paste", action: #selector(DocumentWindowController.pastePages(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Rotate Left", action: #selector(DocumentWindowController.rotatePagesLeft(_:)), keyEquivalent: "")
         menu.addItem(withTitle: "Rotate Right", action: #selector(DocumentWindowController.rotatePagesRight(_:)), keyEquivalent: "")
         menu.addItem(.separator())
@@ -225,6 +229,25 @@ final class ThumbnailTable: NSTableView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    // With the thumbnails focused, Edit > Cut, Copy and Paste work on pages.
+    // They go to the controller that validated them.
+    private var controller: DocumentWindowController? { window?.windowController as? DocumentWindowController }
+    @objc func cut(_ sender: Any?) { controller?.cutPages(sender) }
+    @objc func copy(_ sender: Any?) { controller?.copyPages(sender) }
+    @objc func paste(_ sender: Any?) { controller?.pastePages(sender) }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        let pagesAction: Selector? = switch item.action {
+        case #selector(cut(_:)): #selector(DocumentWindowController.cutPages(_:))
+        case #selector(copy(_:)): #selector(DocumentWindowController.copyPages(_:))
+        case #selector(paste(_:)): #selector(DocumentWindowController.pastePages(_:))
+        default: nil
+        }
+        guard let pagesAction else { return super.validateUserInterfaceItem(item) }
+        guard let controller else { return false }
+        return controller.validatePageAction(pagesAction, setState: { _ in }) ?? false
     }
 }
 

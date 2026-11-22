@@ -187,6 +187,18 @@ enum SelfTest {
         controller.showThumbnails(nil)
         guard let thumbnails = controller.sidebar?.thumbnails else { say("FAIL thumbnails"); return finish() }
         say("pages: \(titles(viewer))")
+        // Copy and paste pages (the pasteboard holds a PDF), then undo.
+        let original = titles(viewer)
+        thumbnails.select([0, 2])
+        controller.copyPages(nil)
+        thumbnails.select([1])
+        let canPaste = controller.validatePageAction(#selector(DocumentWindowController.pastePages(_:)), setState: { _ in }) ?? false
+        controller.pastePages(nil)
+        let pasted = titles(viewer)
+        let expected = [original[0], original[1], original[0], original[2], original[2]]
+        say("\(pasted == expected && canPaste ? "" : "FAIL ")copied 1 and 3, pasted after 2: \(pasted); Paste Pages enabled \(canPaste); selected \(thumbnails.selectedPages); undo name: \(document.undoManager?.undoActionName ?? "")")
+        document.undoManager?.undo()
+        say("\(titles(viewer) == original ? "" : "FAIL ")after undoing the paste: \(titles(viewer))")
         let before = viewer.model.pageBounds
         thumbnails.select([0, 2])
         say("selected: \(viewer.targetPages)")

@@ -19,6 +19,15 @@ extension DocumentWindowController {
         viewer.pages.chooseFilesToInsert(at: last + 1)
     }
 
+    @objc func copyPages(_ sender: Any?) { viewer.map { _ = $0.pages.copy($0.targetPages) } }
+    @objc func cutPages(_ sender: Any?) { viewer.map { $0.pages.cut($0.targetPages) } }
+
+    /// After the selected pages (or the current page).
+    @objc func pastePages(_ sender: Any?) {
+        guard let viewer, let last = viewer.targetPages.max() else { return }
+        viewer.pages.paste(at: last + 1)
+    }
+
     @objc func toggleCropMode(_ sender: Any?) {
         guard let viewer else { return }
         if !viewer.pagesView.isCropping { viewer.tool = .select }
@@ -174,6 +183,12 @@ extension DocumentWindowController {
             return editable
         case #selector(deletePages(_:)):
             return editable && viewer.targetPages.count < viewer.model.pageCount
+        case #selector(copyPages(_:)):
+            return viewer.model.engine.isPDF && viewer.model.allowed.contains(.copy)
+        case #selector(cutPages(_:)):
+            return editable && viewer.model.allowed.contains(.copy) && viewer.targetPages.count < viewer.model.pageCount
+        case #selector(pastePages(_:)):
+            return editable && PageEditor.canPaste
         case #selector(toggleCropMode(_:)):
             setState(viewer.pagesView.isCropping)
             return editable

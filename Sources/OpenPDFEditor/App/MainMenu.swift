@@ -149,7 +149,11 @@ enum MainMenu {
         pages.addItem(withTitle: "Crop", action: #selector(DocumentWindowController.toggleCropMode(_:)), keyEquivalent: "k")
             .keyEquivalentModifierMask = [.command, .control]
         pages.addItem(.separator())
-        pages.addItem(withTitle: "Insert Blank Page", action: #selector(DocumentWindowController.insertBlankPage(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Cut Pages", action: #selector(DocumentWindowController.cutPages(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Copy Pages", action: #selector(DocumentWindowController.copyPages(_:)), keyEquivalent: "")
+        pages.addItem(withTitle: "Paste Pages", action: #selector(DocumentWindowController.pastePages(_:)), keyEquivalent: "")
+        pages.addItem(.separator())
+        pages.addItem(withTitle: "Insert Blank Page",action: #selector(DocumentWindowController.insertBlankPage(_:)), keyEquivalent: "")
         pages.addItem(withTitle: "Insert Pages from File…", action: #selector(DocumentWindowController.insertPagesFromFile(_:)), keyEquivalent: "")
         pages.addItem(withTitle: "Delete Pages", action: #selector(DocumentWindowController.deletePages(_:)), keyEquivalent: "")
         pages.addItem(.separator())

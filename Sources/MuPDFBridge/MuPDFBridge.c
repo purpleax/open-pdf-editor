@@ -6763,6 +6763,9 @@ bool opdf_insert_file(opdf_doc *d, int at, const char *path, const char *passwor
             fz_throw(ctx, FZ_ERROR_ARGUMENT, "The file is password protected");
         int pages = pdf_count_pages(ctx, src);
         if (pages > 10000) fz_throw(ctx, FZ_ERROR_LIMIT, "The file has too many pages");
+        // An operation that changes nothing leaves no journal entry, and the
+        // caller's undo step would then undo the edit before it.
+        if (pages <= 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "The file has no pages");
         int total = pdf_count_pages(ctx, pdf);
         int where = (at < 0 || at > total) ? total : at;
         map = pdf_new_graft_map(ctx, pdf);
@@ -6777,6 +6780,286 @@ bool opdf_insert_file(opdf_doc *d, int at, const char *path, const char *passwor
     if (err && err->code) return false;
     *inserted = n;
     return true;
+}
+
+// --- Pruning the resources of extracted pages ---------------------------------
+//
+// Grafting copies a page's whole resources dictionary, and many files share
+// one dictionary between pages (and between the forms and patterns they
+// draw), so an extract of one page would carry every other page's pictures,
+// unseen but recoverable. Here each page, form, tiling pattern, soft-mask
+// group and Type 3 font ("owner") of a new document that has a resources
+// dictionary is given one of its own, holding only the entries it may use.
+//
+// Content streams are read for their names and never rewritten, so a page
+// looks exactly as it did. What an owner may use is every name in its own
+// content and in the content of everything it draws: MuPDF (like other
+// readers) finds a name missing from a form's own resources in those of
+// whatever drew it, so a name used far down keeps the entry of that name all
+// the way up. Whenever the names can't be known for sure (an inline image,
+// whose data can't be lexed; a syntax error; a stream that doesn't decode;
+// a form that draws itself; too many names, too much content, too deep) the
+// owner and everything
+// above it keep every entry, and their dictionaries are left alone.
+//
+// Lookups here are by string (pdf_dict_gets): MuPDF 1.28.5's pdf_dict_get
+// can miss the last key of a sorted dictionary when asked for a built-in
+// name, and dictionaries sort themselves past 100 entries.
+
+#define PRUNE_MAX_NAMES 4096
+#define PRUNE_MAX_BYTES ((int64_t)256 << 20)
+#define PRUNE_MAX_WORK 5000000
+#define PRUNE_MAX_DEPTH 32   // each level nests an fz_try or two, of MuPDF's 256
+
+enum { PRUNE_NEW = 0, PRUNE_BUSY, PRUNE_KNOWN, PRUNE_UNKNOWN };
+
+typedef struct {
+    pdf_document *doc;
+    int len;                // the arrays below are by object number
+    unsigned char *state;
+    unsigned char *applied;
+    pdf_obj **names;        // a set (dictionary) of the names an owner and all it draws use
+    int64_t bytes;          // content read so far
+    int64_t work;
+    pdf_lexbuf lex;
+} prune_state;
+
+// The categories whose entries can have content, and so resources, of their own.
+static const char *const prune_drawing[] = { "XObject", "Pattern", "ExtGState", "Font" };
+static const char *const prune_categories[] = { "XObject", "Pattern", "ExtGState", "Font", "ColorSpace", "Shading", "Properties" };
+
+static bool prune_is_type3(fz_context *ctx, pdf_obj *obj) {
+    return pdf_is_dict(ctx, obj) && !pdf_is_stream(ctx, obj)
+        && pdf_name_eq(ctx, pdf_dict_gets(ctx, obj, "Subtype"), PDF_NAME(Type3));
+}
+
+// The soft-mask group and Type 3 font of a graphics state dictionary.
+static int prune_gstate_owners(fz_context *ctx, pdf_obj *gstate, pdf_obj **out) {
+    int n = 0;
+    pdf_obj *mask = pdf_dict_gets(ctx, gstate, "SMask");
+    if (pdf_is_dict(ctx, mask) && pdf_is_stream(ctx, pdf_dict_gets(ctx, mask, "G"))) out[n++] = pdf_dict_gets(ctx, mask, "G");
+    pdf_obj *font = pdf_array_get(ctx, pdf_dict_gets(ctx, gstate, "Font"), 0);
+    if (prune_is_type3(ctx, font)) out[n++] = font;
+    return n;
+}
+
+// The owners (at most two) behind one entry of a resources category.
+static int prune_owners(fz_context *ctx, int category, pdf_obj *entry, pdf_obj **out) {
+    switch (category) {
+    case 0:
+        if (pdf_is_stream(ctx, entry) && pdf_name_eq(ctx, pdf_dict_gets(ctx, entry, "Subtype"), PDF_NAME(Form))) { out[0] = entry; return 1; }
+        return 0;
+    case 1:
+        if (pdf_is_stream(ctx, entry)) { out[0] = entry; return 1; }
+        return prune_gstate_owners(ctx, pdf_dict_gets(ctx, entry, "ExtGState"), out);   // a shading pattern
+    case 2:
+        return prune_gstate_owners(ctx, entry, out);
+    default:
+        if (prune_is_type3(ctx, entry)) { out[0] = entry; return 1; }
+        return 0;
+    }
+}
+
+// Adds a name to the set, and to `order` when it is new. False past the limits.
+static bool prune_add(fz_context *ctx, prune_state *s, pdf_obj *names, pdf_obj *order, const char *name) {
+    if (++s->work > PRUNE_MAX_WORK) return false;
+    if (pdf_dict_gets(ctx, names, name)) return true;
+    if (pdf_dict_len(ctx, names) >= PRUNE_MAX_NAMES) return false;
+    pdf_dict_puts(ctx, names, name, PDF_TRUE);
+    pdf_array_push_name(ctx, order, name);
+    return true;
+}
+
+// Adds the names in one content stream. False when they can't all be known.
+static bool prune_scan(fz_context *ctx, prune_state *s, pdf_obj *contents, bool is_page, pdf_obj *names, pdf_obj *order) {
+    if (!contents) return true;
+    if (s->bytes > PRUNE_MAX_BYTES) return false;
+    fz_stream *stm = NULL;
+    bool ok = false;
+    fz_var(stm);
+    fz_var(ok);
+    fz_try(ctx) {
+        stm = is_page ? pdf_open_contents_stream(ctx, s->doc, contents) : pdf_open_stream(ctx, contents);
+        for (;;) {
+            pdf_token tok = pdf_lex(ctx, stm, &s->lex);
+            if (tok == PDF_TOK_EOF) { ok = true; break; }
+            if (tok == PDF_TOK_ERROR) break;
+            if (tok == PDF_TOK_KEYWORD && !strcmp(s->lex.scratch, "BI")) break;
+            if (tok == PDF_TOK_NAME) {
+                // A name the lexer may have cut short matches nothing.
+                if (strlen(s->lex.scratch) > 200) break;
+                if (!prune_add(ctx, s, names, order, s->lex.scratch)) break;
+            }
+            if (s->bytes + fz_tell(ctx, stm) > PRUNE_MAX_BYTES) break;
+        }
+    }
+    fz_always(ctx) {
+        if (stm) s->bytes += fz_tell(ctx, stm);
+        fz_drop_stream(ctx, stm);
+    }
+    fz_catch(ctx) {
+        if (fz_caught(ctx) == FZ_ERROR_SYSTEM) fz_rethrow(ctx);
+        fz_ignore_error(ctx);
+        ok = false;
+    }
+    return ok;
+}
+
+// An owner's resources: its own, or none (it then draws with those of
+// whatever drew it, and its names count as theirs).
+static pdf_obj *prune_own_resources(fz_context *ctx, pdf_obj *owner, bool is_page) {
+    pdf_obj *res = is_page ? pdf_dict_get_inheritable(ctx, owner, PDF_NAME(Resources)) : pdf_dict_gets(ctx, owner, "Resources");
+    return pdf_is_dict(ctx, res) ? res : NULL;
+}
+
+// The names `owner` and everything it draws use, or NULL when unknown.
+static pdf_obj *prune_names(fz_context *ctx, prune_state *s, pdf_obj *owner, bool is_page, int depth) {
+    int num = pdf_to_num(ctx, owner);
+    if (num <= 0 || num >= s->len) return NULL;
+    if (s->state[num] == PRUNE_KNOWN) return s->names[num];
+    if (s->state[num] == PRUNE_UNKNOWN) return NULL;
+    if (s->state[num] == PRUNE_BUSY) return NULL;   // it draws itself: everything involved keeps all it has
+    if (depth > PRUNE_MAX_DEPTH) return NULL;
+    s->state[num] = PRUNE_BUSY;
+    pdf_obj *order = NULL;
+    bool known = true;
+    fz_var(order);
+    fz_var(known);
+    fz_try(ctx) {
+        pdf_obj *names = s->names[num] = pdf_new_dict(ctx, s->doc, 16);
+        order = pdf_new_array(ctx, s->doc, 16);
+        if (is_page) {
+            known = prune_scan(ctx, s, pdf_dict_gets(ctx, owner, "Contents"), true, names, order);
+        } else if (pdf_is_stream(ctx, owner)) {
+            known = prune_scan(ctx, s, owner, false, names, order);
+        } else {
+            pdf_obj *procs = pdf_dict_gets(ctx, owner, "CharProcs");
+            int n = pdf_dict_len(ctx, procs);
+            for (int i = 0; known && i < n; i++) {
+                known = ++s->work <= PRUNE_MAX_WORK && prune_scan(ctx, s, pdf_dict_get_val(ctx, procs, i), false, names, order);
+            }
+        }
+        pdf_obj *res = prune_own_resources(ctx, owner, is_page);
+        // `order` grows as what is drawn adds its names, which may name more to draw.
+        for (int i = 0; known && res && i < pdf_array_len(ctx, order); i++) {
+            const char *name = pdf_to_name(ctx, pdf_array_get(ctx, order, i));
+            for (int c = 0; known && c < (int)nelem(prune_drawing); c++) {
+                pdf_obj *entry = pdf_dict_gets(ctx, pdf_dict_gets(ctx, res, prune_drawing[c]), name);
+                if (!entry) continue;
+                pdf_obj *drawn[2];
+                int count = prune_owners(ctx, c, entry, drawn);
+                for (int k = 0; known && k < count; k++) {
+                    pdf_obj *theirs = prune_names(ctx, s, drawn[k], false, depth + 1);
+                    if (!theirs) { known = false; break; }
+                    int m = pdf_dict_len(ctx, theirs);
+                    for (int j = 0; known && j < m; j++)
+                        known = prune_add(ctx, s, names, order, pdf_to_name(ctx, pdf_dict_get_key(ctx, theirs, j)));
+                }
+            }
+        }
+    }
+    fz_always(ctx)
+        pdf_drop_obj(ctx, order);
+    fz_catch(ctx) {
+        s->state[num] = PRUNE_UNKNOWN;
+        fz_rethrow(ctx);
+    }
+    s->state[num] = known ? PRUNE_KNOWN : PRUNE_UNKNOWN;
+    return known ? s->names[num] : NULL;
+}
+
+// Gives `owner` its pruned resources, then the same for what it draws.
+static void prune_apply(fz_context *ctx, prune_state *s, pdf_obj *owner, bool is_page, int depth) {
+    int num = pdf_to_num(ctx, owner);
+    if (num <= 0 || num >= s->len || s->applied[num] || depth > PRUNE_MAX_DEPTH) return;
+    s->applied[num] = 1;
+    pdf_obj *names = prune_names(ctx, s, owner, is_page, depth);
+    pdf_obj *res = prune_own_resources(ctx, owner, is_page);
+    if (!res) return;   // what it draws is in the resources of whatever drew it
+    pdf_obj *copy = NULL;
+    pdf_obj *sub = NULL;
+    fz_var(copy);
+    fz_var(sub);
+    pdf_keep_obj(ctx, res);
+    fz_try(ctx) {
+        if (names) {
+            int count = pdf_dict_len(ctx, names);
+            copy = pdf_copy_dict(ctx, res);
+            for (int c = 0; c < (int)nelem(prune_categories); c++) {
+                pdf_obj *category = pdf_dict_gets(ctx, res, prune_categories[c]);
+                if (!pdf_is_dict(ctx, category)) continue;
+                sub = pdf_new_dict(ctx, s->doc, 8);
+                for (int i = 0; i < count; i++) {
+                    const char *name = pdf_to_name(ctx, pdf_dict_get_key(ctx, names, i));
+                    pdf_obj *entry = pdf_dict_gets(ctx, category, name);
+                    if (entry) pdf_dict_puts(ctx, sub, name, entry);
+                }
+                if (c == 4) {
+                    // The default colour spaces are used without being named.
+                    static const char *const defaults[] = { "DefaultGray", "DefaultRGB", "DefaultCMYK" };
+                    for (int i = 0; i < (int)nelem(defaults); i++) {
+                        pdf_obj *entry = pdf_dict_gets(ctx, category, defaults[i]);
+                        if (entry && !pdf_dict_gets(ctx, sub, defaults[i])) pdf_dict_puts(ctx, sub, defaults[i], entry);
+                    }
+                }
+                // Deleted first: on a sorted dictionary a put of a built-in name
+                // can add a second key rather than replace (the same MuPDF bug).
+                pdf_dict_dels(ctx, copy, prune_categories[c]);
+                pdf_dict_puts(ctx, copy, prune_categories[c], sub);
+                pdf_drop_obj(ctx, sub);
+                sub = NULL;
+            }
+            if (is_page) pdf_dict_put(ctx, owner, PDF_NAME(Resources), copy);
+            else {
+                pdf_dict_dels(ctx, owner, "Resources");
+                pdf_dict_puts(ctx, owner, "Resources", copy);
+            }
+        }
+        // What it draws: of the entries kept, or of them all when it keeps them all.
+        pdf_obj *from = copy ? copy : res;
+        for (int c = 0; c < (int)nelem(prune_drawing); c++) {
+            pdf_obj *category = pdf_dict_gets(ctx, from, prune_drawing[c]);
+            int n = pdf_dict_len(ctx, category);
+            for (int i = 0; i < n && ++s->work <= PRUNE_MAX_WORK; i++) {
+                pdf_obj *drawn[2];
+                int count = prune_owners(ctx, c, pdf_dict_get_val(ctx, category, i), drawn);
+                for (int k = 0; k < count; k++) prune_apply(ctx, s, drawn[k], false, depth + 1);
+            }
+        }
+    }
+    fz_always(ctx) {
+        pdf_drop_obj(ctx, sub);
+        pdf_drop_obj(ctx, copy);
+        pdf_drop_obj(ctx, res);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
+}
+
+// Every page of `doc`, a document just made by grafting.
+static void prune_resources(fz_context *ctx, pdf_document *doc) {
+    prune_state s = { .doc = doc };
+    s.len = pdf_xref_len(ctx, doc);
+    if (s.len <= 0) return;
+    fz_var(s);
+    pdf_lexbuf_init(ctx, &s.lex, PDF_LEXBUF_SMALL);
+    fz_try(ctx) {
+        s.state = fz_calloc(ctx, s.len, 1);
+        s.applied = fz_calloc(ctx, s.len, 1);
+        s.names = fz_calloc(ctx, s.len, sizeof *s.names);
+        int pages = pdf_count_pages(ctx, doc);
+        for (int i = 0; i < pages; i++)
+            prune_apply(ctx, &s, pdf_lookup_page_obj(ctx, doc, i), true, 0);
+    }
+    fz_always(ctx) {
+        if (s.names) for (int i = 0; i < s.len; i++) pdf_drop_obj(ctx, s.names[i]);
+        fz_free(ctx, s.names);
+        fz_free(ctx, s.applied);
+        fz_free(ctx, s.state);
+        pdf_lexbuf_fin(ctx, &s.lex);
+    }
+    fz_catch(ctx)
+        fz_rethrow(ctx);
 }
 
 bool opdf_extract_pages(opdf_doc *d, const int *pages, int count, const char *path, opdf_error *err) {
@@ -6802,10 +7085,14 @@ bool opdf_extract_pages(opdf_doc *d, const int *pages, int count, const char *pa
             n++;
         }
         if (n == 0) fz_throw(ctx, FZ_ERROR_ARGUMENT, "No pages to extract");
+        // What the pages don't use is then collected as garbage.
+        prune_resources(ctx, dst);
         pdf_write_options opts = pdf_default_write_options;
         opts.do_garbage = 1;
         opts.do_compress = 1;
-        opts.do_use_objstms = 1;
+        // No object streams: MuPDF packs objects that garbage collection
+        // freed into them as well, where they could still be read.
+        opts.do_use_objstms = 0;
         pdf_save_document(ctx, dst, path, &opts);
         ok = true;
     }

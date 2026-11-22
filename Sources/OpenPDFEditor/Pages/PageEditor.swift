@@ -145,6 +145,84 @@ final class PageEditor {
         }
     }
 
+    // MARK: Copy and paste
+
+    /// Whether the pasteboard holds pages (a PDF, from this app or another).
+    static var canPaste: Bool {
+        NSPasteboard.general.availableType(from: [.pdf]) != nil
+    }
+
+    /// Puts these pages on the pasteboard as a PDF, to paste into this or
+    /// another document (or another app). False if it didn't work.
+    @discardableResult
+    func copy(_ pages: [Int]) -> Bool {
+        let pages = valid(pages)
+        guard !pages.isEmpty else { return false }
+        guard model.allowed.contains(.copy) else {
+            present(message: "The pages couldn’t be copied.", info: "The document’s owner doesn’t allow copying from it.")
+            return false
+        }
+        do {
+            let folder = try Self.privateTemporaryFolder()
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let url = folder.appendingPathComponent("pages.pdf")
+            try model.engine.extractPages(pages, to: url)
+            let data = try Data(contentsOf: url)
+            NSPasteboard.general.clearContents()
+            // Cut deletes the pages next, so the copy must really be there.
+            guard NSPasteboard.general.setData(data, forType: .pdf) else {
+                throw EngineError(code: -1, message: "The clipboard didn’t take the pages.")
+            }
+            return true
+        } catch {
+            present(error, message: "The pages couldn’t be copied.")
+            return false
+        }
+    }
+
+    /// Copies these pages, then deletes them.
+    func cut(_ pages: [Int]) {
+        let pages = valid(pages)
+        guard !pages.isEmpty else { return }
+        guard pages.count < model.pageCount else {
+            present(message: "A document needs at least one page.", info: "Select fewer pages to cut.")
+            return
+        }
+        guard copy(pages) else { return }
+        let first = pages[0]
+        perform(pages.count == 1 ? "Cut Page" : "Cut Pages") { try $0.deletePages(pages) } then: {
+            self.show([min(first, self.model.pageCount - 1)])
+        }
+    }
+
+    /// Inserts the pages on the pasteboard before page `index`.
+    func paste(at index: Int) {
+        guard let data = NSPasteboard.general.data(forType: .pdf) else {
+            NSSound.beep()
+            return
+        }
+        let at = min(max(index, 0), model.pageCount)
+        var inserted = 0
+        perform("Paste Pages") {
+            let folder = try Self.privateTemporaryFolder()
+            defer { try? FileManager.default.removeItem(at: folder) }
+            let url = folder.appendingPathComponent("pasted.pdf")
+            try data.write(to: url)
+            inserted = try $0.insertPages(from: url, at: at)
+        } then: {
+            self.show(Array(at..<min(at + inserted, self.model.pageCount)))
+        }
+    }
+
+    /// A new folder only this user can read, for pages on their way to or
+    /// from the pasteboard (the caller removes it).
+    private static func privateTemporaryFolder() throws -> URL {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("opdf-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o700])
+        return folder
+    }
+
     // MARK: Writing pages out
 
     /// Asks where to save these pages as a new PDF.
