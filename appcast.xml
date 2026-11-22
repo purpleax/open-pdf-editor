@@ -6,16 +6,16 @@
     <description>Updates for Open PDF Editor</description>
     <language>en</language>
     <item>
-      <title>Open PDF Editor 1.0.0</title>
-      <pubDate>Tue, 20 Oct 2026 12:25:41 +0000</pubDate>
-      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v1.0.0</link>
-      <sparkle:version>11</sparkle:version>
-      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <title>Open PDF Editor 1.1.0</title>
+      <pubDate>Sun, 22 Nov 2026 11:01:09 +0000</pubDate>
+      <link>https://github.com/purpleax/open-pdf-editor/releases/tag/v1.1.0</link>
+      <sparkle:version>12</sparkle:version>
+      <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v1.0.0</sparkle:fullReleaseNotesLink>
-      <description sparkle:format="markdown">Version 1.0, with a user guide. Help › Open PDF Editor Guide (⌘?), or Guide in the welcome window, opens a full guide to the app in the app itself: every feature explained step by step with pictures, a table of keyboard shortcuts, and bookmarks to each chapter. Strikethrough now has a working shortcut of its own, ⌃⌘E (it shared ⌃⌘K with Crop).</description>
-      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v1.0.0/Open-PDF-Editor-1.0.0.zip" sparkle:edSignature="T3ZdKB/HYViErUlzAzqxmGkhn70YWg7Gpe8PS4J/zvBrDYSo6Bnym5a3utNnY5qBdWJNsMhgWl0M+qCMWJA6AQ==" length="35416918" type="application/octet-stream"/>
+      <sparkle:fullReleaseNotesLink>https://github.com/purpleax/open-pdf-editor/releases/tag/v1.1.0</sparkle:fullReleaseNotesLink>
+      <description sparkle:format="markdown">Copy and paste pages. Select pages in the thumbnails and press ⌘C (or choose Pages › Copy Pages), then press ⌘V in the same document or another open one to put them after the selected pages. ⌘X, or Pages › Cut Pages, copies the pages and removes them. The same commands are in the menu you get by Control-clicking thumbnails. Comments, links, form fields and redaction marks aren’t copied with a page, so to move pages within a document, drag their thumbnails instead. A PDF copied in another app can be pasted in as pages too. Extract Pages, Split Document and Copy Pages now leave out everything the chosen pages don’t use: in some documents, other pages’ pictures used to travel with them, unseen.</description>
+      <enclosure url="https://github.com/purpleax/open-pdf-editor/releases/download/v1.1.0/Open-PDF-Editor-1.1.0.zip" sparkle:edSignature="anJ9If1zytcrvC5sd1CgZK65URBvTHZClTsK/uwZjYqYOjaPLQflwFspt5A3t83NKaeHG8S2AhYbgaUcS6MuBQ==" length="35032810" type="application/octet-stream"/>
     </item>
   </channel>
 </rss>
